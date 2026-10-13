@@ -1,0 +1,24 @@
+# ---- 研究/逆向产物：仅本地保留，不入库 ----
+work/
+docs/
+resource/
+aiotieba/
+tieba-api-catalog/
+
+# ---- 本机工具（仅测试看门狗入库）----
+tools/*
+!tools/run_tests_safe.ps1
+
+# ---- 构建产物与缓存 ----
+app/build/
+app/.dart_tool/
+app/flutter_*.log
+__pycache__/
+*.pyc
+.codegraph/
+.playwright-mcp/
+
+# ---- 本地工作上下文（不入库）----
+/AGENTS.md
+/逆向分析报告.md
+

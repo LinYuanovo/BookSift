@@ -1,0 +1,85 @@
+{
+  "pack_name": "seed_pack_lite",
+  "pack_version": 1,
+  "tier": "lite",
+  "schema_version": 1,
+  "min_app_version": "1.0.0",
+  "built_at": "2026-10-13T08:55:31+08:00",
+  "builder": "repack_deflate.py (from _build/seed_lite.db)",
+  "source": {
+    "db": "E:\\Programs\\BooksScanner\\work\\unified\\unified.db",
+    "size_bytes": 818970624,
+    "sha256": "6f1dbeaeecffa489f256cf06f144b4c188a74aa71eca3bb19dee7c6dec5fe57a",
+    "unified_built_at": "2026-10-12 16:23:52"
+  },
+  "db_file": "seed.db",
+  "db_size_bytes": 164859904,
+  "db_sha256": "790f97bd381426a61f9f145bc69da6a4af565bb88785cb39a17da536af48d009",
+  "features": {
+    "fts_prebuilt": false,
+    "raw_content": false,
+    "url_original": false,
+    "comment_max_chars": 300,
+    "src_trace_columns": true
+  },
+  "rows": {
+    "posts": 29686,
+    "floors": 46765,
+    "images": 5350,
+    "book_entries": 74498,
+    "book_groups": 22546,
+    "experts": 10,
+    "nouns": 89,
+    "site_links": 10,
+    "search_history": 0,
+    "bookmarks": 0,
+    "favorites": 0,
+    "collection_state": 0,
+    "collection_logs": 0,
+    "settings": 0
+  },
+  "data_window": {
+    "entry_date_min": "2010-02-04",
+    "entry_date_max": "2025-04-30",
+    "post_date_min": "2010-02-04",
+    "post_date_max": "2025-04-30"
+  },
+  "build_seconds": 3.8,
+  "lite_target_bytes": 57671680,
+  "fts_rebuild_desktop_seconds": {
+    "book_fts": 16.2,
+    "floor_fts": 12.5,
+    "create_and_rebuild_total": 28.7,
+    "db_size_after_rebuild": 306667520
+  },
+  "repack_reason": "Dart archive 无 Zip-LZMA 解码 → lite 换 deflate；deflate@comment500=60.8MiB 超 55MiB 线 → comment≤300",
+  "full_pack": {
+    "pack_name": "seed_pack",
+    "pack_version": 1,
+    "zip_file": "seed_pack_v1.zip",
+    "zip_size_bytes": 346492031,
+    "zip_sha256": "5ea0c1e3471f780538fec486e65d859750d8776c00ff4d9a6982c3909092d87b",
+    "db_sha256": "c92e8f1f6b44e35f23053400eeb2f1d0dbf69e0fcf7cae2063b8c616a4d77fb3",
+    "fts_prebuilt": true
+  },
+  "compression": {
+    "method": "deflate",
+    "method_choice_reason": "Dart archive 不支持 Zip-LZMA → deflate（App 端解压兼容唯一稳妥项）",
+    "zip_file": "seed_pack_lite_v1.zip",
+    "zip_size_bytes": 56985556,
+    "zip_sha256": "b79ec7ced35f7348044f7985a67e5519068f36e1801fe49dccdf76c551b77a68",
+    "seconds": 4.5
+  },
+  "lite_target_met": true,
+  "repack_attempts": [
+    {
+      "comment_max_chars": 300,
+      "drop_trace_columns": false,
+      "db_size_bytes": 164859904,
+      "zip_size_bytes": 56985556,
+      "seconds": 4.5,
+      "sha256": "b79ec7ced35f7348044f7985a67e5519068f36e1801fe49dccdf76c551b77a68",
+      "target_met": true
+    }
+  ]
+}
