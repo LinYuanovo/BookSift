@@ -2,9 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:saoshuhui/core/fonts/font_tokens.dart';
-import 'package:saoshuhui/theme/app_typography.dart';
-import 'package:saoshuhui/theme/book_theme.dart';
+import 'package:booksift/core/fonts/font_tokens.dart';
+import 'package:booksift/theme/app_typography.dart';
+import 'package:booksift/theme/book_theme.dart';
 
 /// 守卫测试（设计系统 v1.4 §2.2 治理）：字体家族不得硬编码在主题/设置层，
 /// 只能来自 FontFamilySet（FontSlot 解析结果）与 FontFamily 常量唯一定义处。

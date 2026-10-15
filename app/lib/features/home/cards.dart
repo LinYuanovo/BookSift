@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/constants.dart';
+import '../../core/icons.dart';
 import '../../data/repo/queries.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_motion.dart';
@@ -11,10 +12,22 @@ import '../../theme/app_typography.dart';
 // 共享展示组件（M1-④）：语义徽标/色条卡/书名 chip/计数对比/分段控件/空态/stagger。
 // 规格出处：设计系统 v1.3 §4 组件规格；色值/圆角/间距/动效全走 token（§5.2/§6.2 治理）。
 
-/// 语义色调（§5.2：推荐绿 / 排雷红 / 求书灰弱标记 / 中性不标）。
-enum SemanticTone { recommend, avoid, ask, neutral }
+/// 按**字符**（rune）截断到最多 [max] 个，超出补「…」。
+///
+/// 用于推荐人（扫书作者名）显示上限 6 字：按 runes 切才不会把代理对（emoji/生僻字）
+/// 劈成半个；行内另有 ellipsis 兜底（字阶放大/窄屏时按可用宽再收）。
+String _capRunes(String text, int max) {
+  final List<int> runes = text.runes.toList();
+  return runes.length > max ? '${String.fromCharCodes(runes.take(max))}…' : text;
+}
+
+/// 语义色调（§5.2：推荐绿 / 排雷红 / 求书灰弱标记 / 扫书中性灰 / 中性不标）。
+enum SemanticTone { recommend, avoid, ask, scan, neutral }
 
 /// 条目/帖 → 语义色调（flag 与 category 联合判定，§8.9）。
+///
+/// flag==0 时再按类别分档：扫书条目只是「被扫到」、没有原帖背书颜色（entryFlagOf 口径），
+/// 给一枚中性灰「扫书」徽标把话说清楚，好过什么都不标（读者会以为漏标）。
 SemanticTone toneOf({required int flag, String? category}) {
   if (flag == 1) {
     return SemanticTone.recommend;
@@ -22,10 +35,32 @@ SemanticTone toneOf({required int flag, String? category}) {
   if (flag == -1) {
     return SemanticTone.avoid;
   }
+  if (category == CategoryKind.scan) {
+    return SemanticTone.scan;
+  }
   if (category == CategoryKind.ask) {
     return SemanticTone.ask;
   }
   return SemanticTone.neutral;
+}
+
+/// 帖子级语义色调（post_kind 单判，不看 posts.recommend_flag）。
+///
+/// 帖子没有条目那样的「原帖背书颜色」——recommend_flag 只是 post_kind 的派生存列
+/// （classifier.dart：扫书+1 / 排雷−1 / 求书 0），拿它判推荐会让全部扫书帖挂绿标，
+/// 与条目级新口径（只认颜色标记）自相矛盾。故帖子级一律按类别定档：扫书灰「扫书」、
+/// 排雷红、求书灰「求书」、其余不标。
+SemanticTone postToneOf({required String? postKind}) {
+  switch (postKind) {
+    case CategoryKind.avoid:
+      return SemanticTone.avoid;
+    case CategoryKind.scan:
+      return SemanticTone.scan;
+    case CategoryKind.ask:
+      return SemanticTone.ask;
+    default:
+      return SemanticTone.neutral;
+  }
 }
 
 /// 语义色条颜色（卡片左 3px）。
@@ -35,11 +70,13 @@ Color barColorOf(BuildContext context, SemanticTone tone) {
     SemanticTone.recommend => c.recommend,
     SemanticTone.avoid => c.danger,
     SemanticTone.ask => c.borderStrong,
+    // 扫书档比 neutral 的 border 略深：有色条才看得出「这是一张有语义的卡」，又不抢推荐/排雷。
+    SemanticTone.scan => c.borderStrong,
     SemanticTone.neutral => c.border,
   };
 }
 
-/// 推荐/排雷/求书徽标（badge h24 pill；MI-5 pop-in：instant+spring，比卡片晚一拍）。
+/// 推荐/排雷/求书/扫书徽标（badge h24 pill；MI-5 pop-in：instant+spring，比卡片晚一拍）。
 class SemanticBadge extends StatelessWidget {
   const SemanticBadge({super.key, required this.tone, this.animate = true});
 
@@ -50,6 +87,7 @@ class SemanticBadge extends StatelessWidget {
     SemanticTone.recommend => '推荐',
     SemanticTone.avoid => '排雷',
     SemanticTone.ask => '求书',
+    SemanticTone.scan => '扫书',
     SemanticTone.neutral => '',
   };
 
@@ -60,10 +98,14 @@ class SemanticBadge extends StatelessWidget {
     }
     final AppColors c = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
-    final (Color bg, Color fg, IconData? icon) = switch (tone) {
-      SemanticTone.recommend => (c.recommendSoft, c.recommend, Icons.check_rounded),
-      SemanticTone.avoid => (c.dangerSoft, c.danger, Icons.warning_amber_rounded),
+    // 徽标内图标走设计稿 SVG（index.html:1465/1479：`.ic.xs` #i-check / #i-alert，13px → -s 档），
+    // 不用 Material check_rounded/warning_amber（用户红线：不得随意采用默认 Material 图标）。
+    final (Color bg, Color fg, String? icon) = switch (tone) {
+      SemanticTone.recommend => (c.recommendSoft, c.recommend, 'check'),
+      SemanticTone.avoid => (c.dangerSoft, c.danger, 'alert'),
       SemanticTone.ask => (c.surfaceSunken, c.textMuted, null),
+      // 扫书档 = 与求书同规格的灰徽标（无图标），字色比 ask 深一档以保可读（sunken 底上 textMuted 偏淡）。
+      SemanticTone.scan => (c.surfaceSunken, c.textSecondary, null),
       SemanticTone.neutral => (c.surfaceSunken, c.textMuted, null),
     };
     final Widget badge = Container(
@@ -74,7 +116,7 @@ class SemanticBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           if (icon != null) ...<Widget>[
-            Icon(icon, size: 13, color: fg),
+            AppIcon(icon, size: 13, color: fg),
             SizedBox(width: AppSpacing.of(context).space1 / 2),
           ],
           Text(labelOf(tone), style: t.label.copyWith(fontWeight: FontWeight.w600, color: fg, letterSpacing: 0)),
@@ -131,7 +173,18 @@ class OriginBadge extends StatelessWidget {
       height: AppMetrics.badgeHeight,
       padding: const EdgeInsets.symmetric(horizontal: 10),
       decoration: BoxDecoration(color: bg, borderRadius: AppRadius.pillBorder),
-      child: Text(labelOf(origin), style: t.label.copyWith(fontWeight: FontWeight.w600, color: fg, letterSpacing: 0)),
+      // 垂直居中走 Center（widthFactor/heightFactor=1 收缩裹内容）；
+      // 不得用 Container.alignment —— 其在有界约束下会把徽标膨胀到整宽（Wrap/松散槽内实测复现）。
+      child: Center(
+        widthFactor: 1,
+        heightFactor: 1,
+        child: Text(
+          labelOf(origin),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: t.label.copyWith(fontWeight: FontWeight.w600, color: fg, letterSpacing: 0),
+        ),
+      ),
     );
   }
 }
@@ -154,8 +207,13 @@ class MetaChip extends StatelessWidget {
         height: AppMetrics.badgeHeight,
         padding: const EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(color: c.surfaceSunken, borderRadius: AppRadius.pillBorder),
-        alignment: Alignment.center,
-        child: Text(label, style: t.caption.copyWith(color: c.textSecondary)),
+        // Dynamic Type：外层为 Flexible 时可收缩省略（1.0 缩放下取固有宽，视觉不变）。
+        // 居中用 Center(factor 1) 而非 Container.alignment —— 后者在有界约束下膨胀到整宽。
+        child: Center(
+          widthFactor: 1,
+          heightFactor: 1,
+          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.caption.copyWith(color: c.textSecondary)),
+        ),
       ),
     );
   }
@@ -188,12 +246,16 @@ class BookNameChip extends StatelessWidget {
           color: c.bookname.withValues(alpha: 0.08),
           borderRadius: AppRadius.pillBorder,
         ),
-        alignment: Alignment.center,
-        child: Text(
-          '《${stripBrackets(name)}》',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: t.cardTitle.copyWith(color: c.bookname),
+        // 居中用 Center(factor 1) 而非 Container.alignment —— 后者在有界约束下膨胀到整宽。
+        child: Center(
+          widthFactor: 1,
+          heightFactor: 1,
+          child: Text(
+            '《${stripBrackets(name)}》',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: t.cardTitle.copyWith(color: c.bookname),
+          ),
         ),
       ),
     );
@@ -258,7 +320,7 @@ class PostCard extends StatelessWidget {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
     final post = data.post;
-    final SemanticTone tone = toneOf(flag: post.recommendFlag, category: post.postKind);
+    final SemanticTone tone = postToneOf(postKind: post.postKind);
     final String title = (post.title?.isNotEmpty ?? false)
         ? post.title!
         : (data.books.isNotEmpty ? '《${BookNameChip.stripBrackets(data.books.first.name)}》' : '无题');
@@ -304,19 +366,35 @@ class PostCard extends StatelessWidget {
           SizedBox(height: s.space3),
           Row(
             children: <Widget>[
+              // 作者名槽用 Expanded（紧约束）而非 Flexible：loose 槽比文本宽时富余空白会堆到行尾，
+              // 把日期从右边缘顶回来（实测短作者名下日期左移 58dp）。紧约束下文本在槽内左对齐、
+              // 槽宽恒定 → 日期恒贴右边缘，作者名过长时才 ellipsis。
               if ((post.author ?? '').isNotEmpty) ...<Widget>[
-                Flexible(
+                Expanded(
+                  flex: 2,
                   child: Text(post.author!, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.caption.copyWith(color: c.textMuted)),
                 ),
                 SizedBox(width: s.space2),
               ],
+              // chips 取固有宽（不套 Flexible，否则弹性槽均分余量会把标签撑宽/挤爆推荐人）。
               MetaChip(label: post.channel, onTap: onChannelTap == null ? null : () => onChannelTap!(post.channel)),
               SizedBox(width: s.space2),
               OriginBadge(origin: post.origin),
-              const Spacer(),
-              Text(
-                post.date ?? '',
-                style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted)),
+              // 日期槽 = Expanded(flex 5) 紧约束 + textAlign.end：一是贴死行右缘（原 loose 槽比文本宽时
+              // 日期悬在行中，看着像掉了右对齐），二是让日期在弹性余量里拿大头（作者名 flex 2）→
+              // 常规字阶下作者名与日期同时完整（真机反馈「日期显示不全」的修法：旧口径作者/Spacer/日期
+              // 三等分，日期只剩 ~64dp 被砍成「2025-0…」）。字阶继续放大时先削作者名，日期最后才省略；
+              // 实测 textScaler 2.0 下光日期就占行宽 78%（240/311dp），「日期永不截断」与「零 overflow」
+              // 不可兼得 → 取后者（质量预算 Dynamic Type 门禁，test/quality/dynamic_type_test.dart）。
+              Expanded(
+                flex: 5,
+                child: Text(
+                  post.date ?? '',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.end,
+                  style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted)),
+                ),
               ),
             ],
           ),
@@ -337,7 +415,8 @@ class BookEntryCard extends StatefulWidget {
     this.onSourceTap,
     this.showRecommender = false,
     this.expandableComment = false,
-    this.commentMaxCollapsed = 200,
+    this.commentMaxCollapsed = 100,
+    this.hideBookName = false,
   });
 
   final EntryRow entry;
@@ -349,11 +428,18 @@ class BookEntryCard extends StatefulWidget {
   /// 点推荐人 → 以推荐人搜索（§5.5）。
   final ValueChanged<String>? onRecommenderTap;
 
-  /// 点「原帖↗」（§5.5：有帖溯源进详情，否则外链复制）。
+  /// 点「原帖↗」（§5.5：有帖溯源进详情，否则交系统外链打开）。
   final VoidCallback? onSourceTap;
   final bool showRecommender;
+
+  /// 折叠态是否可「展开全文」（仅 comment 超过 [commentMaxCollapsed] 字符时生效）。
   final bool expandableComment;
+
+  /// 折叠态摘录长度（**字符数**，非行数）：超出即截断补 '…'，展开显示全文。
   final int commentMaxCollapsed;
+
+  /// 首行不渲染书名（书聚合页整页同书，书名已在页头大标题，卡内再写一遍是冗余）。
+  final bool hideBookName;
 
   @override
   State<BookEntryCard> createState() => _BookEntryCardState();
@@ -369,9 +455,16 @@ class _BookEntryCardState extends State<BookEntryCard> {
     final AppSpacing s = AppSpacing.of(context);
     final EntryRow e = widget.entry;
     final SemanticTone tone = toneOf(flag: e.recommendFlag, category: e.category);
-    final String comment = e.comment ?? '';
-    final bool collapsible = widget.expandableComment && comment.length > widget.commentMaxCollapsed;
-    final String shown = (collapsible && !_expanded) ? comment : comment;
+    // 预览原文 = 条目评语，空则回退楼层正文（种子库 4169 条 comment 为空但楼层正文在场；
+    // 不回退会让书聚合/分类预览卡片正文整块空白）。截断在 UI 侧按字符做（可展开全文）。
+    final String comment = e.previewSource ?? '';
+    // 折叠态摘录按**字符**截（不是按行数）：行数截断的实际长度随字阶/屏宽漂移，
+    // 而这里要的是稳定的「开头 N 字」；按 runes 切才不会把代理对（emoji）劈成半个。
+    final List<int> runes = comment.runes.toList();
+    final bool collapsible = widget.expandableComment && runes.length > widget.commentMaxCollapsed;
+    final String shown = (collapsible && !_expanded)
+        ? '${String.fromCharCodes(runes.take(widget.commentMaxCollapsed))}…'
+        : comment;
 
     Widget? commentBlock;
     if (shown.isNotEmpty) {
@@ -380,8 +473,6 @@ class _BookEntryCardState extends State<BookEntryCard> {
         children: <Widget>[
           Text(
             shown,
-            maxLines: (collapsible && !_expanded) ? 3 : null,
-            overflow: (collapsible && !_expanded) ? TextOverflow.ellipsis : null,
             style: t.secondary.copyWith(
               color: tone == SemanticTone.avoid ? c.danger : c.textSecondary, // 排雷摘要砖红（设计系统 §3 #04）
             ),
@@ -407,24 +498,37 @@ class _BookEntryCardState extends State<BookEntryCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
+          // 首行三段同一中线：徽标是 h24 pill、书名是 cardTitle、日期是 caption，
+          // 原来用 CrossAxisAlignment.start 会把日期顶到行首基线之上（真机反馈「日期飘高」）。
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
               SemanticBadge(tone: tone),
               SizedBox(width: s.space2),
+              // 书名槽恒占 Expanded（tight）：既吃掉全部余量把日期顶到行尾右贴边，
+              // hideBookName 时留空槽也保持同一几何（日期位置不随书名有无跳动）。
               Expanded(
-                child: GestureDetector(
-                  onTap: widget.onBookTap == null ? null : () => widget.onBookTap!(BookNameChip.stripBrackets(e.name)),
-                  child: Text(
-                    '《${BookNameChip.stripBrackets(e.name)}》',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: t.cardTitle.copyWith(color: c.bookname),
-                  ),
-                ),
+                child: widget.hideBookName
+                    ? const SizedBox.shrink()
+                    : GestureDetector(
+                        onTap: widget.onBookTap == null ? null : () => widget.onBookTap!(BookNameChip.stripBrackets(e.name)),
+                        child: Text(
+                          '《${BookNameChip.stripBrackets(e.name)}》',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: t.cardTitle.copyWith(color: c.bookname),
+                        ),
+                      ),
               ),
+              // 日期取固有宽（不套 Flexible）：弹性槽余量不足时会截成「2025-0…」，
+              // 而日期是这张卡的时间锚点，宁可书名单行省略也要让它完整。
               if ((e.date ?? '').isNotEmpty)
-                Text(e.date!, style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted))),
+                Text(
+                  e.date!,
+                  maxLines: 1,
+                  textAlign: TextAlign.end,
+                  style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted)),
+                ),
             ],
           ),
           if ((e.author ?? '').isNotEmpty) ...<Widget>[
@@ -435,14 +539,22 @@ class _BookEntryCardState extends State<BookEntryCard> {
           SizedBox(height: s.space3),
           Row(
             children: <Widget>[
+              // chips 取固有宽（不套 Flexible，避免弹性槽均分余量撑宽标签/挤爆推荐人）；
+              // Dynamic Type 收缩由推荐人/原帖文本槽承担（可省略）。
               if (widget.showRecommender && (e.recommender ?? '').isNotEmpty) ...<Widget>[
-                GestureDetector(
-                  onTap: widget.onRecommenderTap == null ? null : () => widget.onRecommenderTap!(e.recommender!),
-                  child: Text(
-                    e.recommender!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: t.caption.copyWith(color: c.accentStrong, fontWeight: FontWeight.w600),
+                // 推荐人（扫书作者名）是这行的主角：弹性份额 20 压过右侧 Spacer 的 8
+                // → 保证 6 个中文字符完整显示（用户口径「最多六个中文字符」），
+                // 超出 6 字才截断（见 _capRunes），不再动辄截成「扫书人…」。
+                Flexible(
+                  flex: 20,
+                  child: GestureDetector(
+                    onTap: widget.onRecommenderTap == null ? null : () => widget.onRecommenderTap!(e.recommender!),
+                    child: Text(
+                      _capRunes(e.recommender!, 6),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: t.caption.copyWith(color: c.accentStrong, fontWeight: FontWeight.w600),
+                    ),
                   ),
                 ),
                 SizedBox(width: s.space2),
@@ -450,17 +562,13 @@ class _BookEntryCardState extends State<BookEntryCard> {
               MetaChip(label: e.channel),
               SizedBox(width: s.space2),
               OriginBadge(origin: e.origin),
-              const Spacer(),
+              const Spacer(flex: 8),
               if (widget.onSourceTap != null)
+                // 「查看」= 进原帖详情（楼层流，非外链跳转）；取固有宽贴右（不套 Flexible：
+                // 弹性槽与 Spacer 均分余量时槽宽可能小于文案宽而截断，推荐人槽承担收缩）。
                 GestureDetector(
                   onTap: widget.onSourceTap,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text('原帖', style: t.caption.copyWith(color: c.info)),
-                      Icon(Icons.north_east_rounded, size: 13, color: c.info),
-                    ],
-                  ),
+                  child: Text('查看', maxLines: 1, style: t.caption.copyWith(color: c.info)),
                 ),
             ],
           ),
@@ -484,37 +592,54 @@ class CountDuo extends StatelessWidget {
     final AppColors c = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
+    // 设计 04 行 1449–1452 + CSS 542–555：`[衬线700 17 tabular 彩色数字][标签]`，数字在前、标签在后；
+    // 推荐=recommend 绿 / 排雷=danger 红（仅数字着色，标签走 --text-body-strong 继承文字色）；
+    // button min-h44 / padding 0 space5 / hover·pressed sunken；无 Material 图标（原 circle 圆点已删）。
     Widget half(String label, int n, Color fg, VoidCallback? onTap) {
-      return InkWell(
-        onTap: onTap,
-        borderRadius: AppRadius.pillBorder,
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: s.space3, vertical: s.space1),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              Icon(Icons.circle, size: 8, color: fg),
-              SizedBox(width: s.space1),
-              Text(label, style: t.caption.copyWith(color: fg)),
-              SizedBox(width: s.space1),
-              Text('$n', style: AppTypography.tabular(t.bodyStrong.copyWith(color: fg))),
-            ],
+      return Material(
+        // 透明 Material 作墨渍画布：hover/highlight 的 sunken 底才盖得到 surfaceRaised 之上。
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onTap,
+          hoverColor: c.surfaceSunken,
+          highlightColor: c.surfaceSunken,
+          splashColor: c.surfaceSunken,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: AppMetrics.minTouchTarget), // CSS 548：min-height 44
+            padding: EdgeInsets.symmetric(horizontal: s.space5), // CSS 548：padding 0 var(--space-5)
+            // 垂直居中由 Row 在 minHeight 约束内默认 crossAxisAlignment.center 承担；
+            // 不得用 Container.alignment —— 其会把半边膨胀到整行宽（实测把胶囊撑满屏宽）。
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                // `.n`（CSS 553）：衬线 700 17px/1 tabular；headline 槽 = --font-serif，对齐 rank-no 17px 序号。
+                Text(
+                  '$n',
+                  style: AppTypography.tabular(
+                    t.headline.copyWith(fontSize: 17, fontWeight: FontWeight.w700, height: 1, color: fg),
+                  ),
+                ),
+                const SizedBox(width: 6), // CSS 548：gap 6px（组件级几何，无对应 spacing token）
+                Text(label, style: t.bodyStrong.copyWith(color: c.text)),
+              ],
+            ),
           ),
         ),
       );
     }
 
     return Container(
+      clipBehavior: Clip.antiAlias, // CSS 544：overflow hidden，hover 墨渍裁进 pill
       decoration: BoxDecoration(
         color: c.surfaceRaised,
         borderRadius: AppRadius.pillBorder,
-        border: Border.all(color: c.border, width: AppMetrics.hairline),
+        border: Border.all(color: c.borderStrong, width: AppMetrics.hairline), // CSS 545：border-strong
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           half('推荐', recommend, c.recommend, onRecommendTap),
-          Container(width: AppMetrics.hairline, height: 20, color: c.border),
+          Container(width: AppMetrics.hairline, height: 26, color: c.borderStrong), // CSS 552：sep 1×26 border-strong
           half('排雷', avoid, c.danger, onAvoidTap),
         ],
       ),
@@ -545,23 +670,28 @@ class SegmentedPill<T> extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          // Dynamic Type：各段 loose-Flexible，放大时收缩省略；1.0 缩放取固有宽（min Row），视觉不变。
           for (final (T value, String label) in options)
-            InkWell(
-              onTap: () => onChanged(value),
-              borderRadius: AppRadius.pillBorder,
-              child: AnimatedContainer(
-                duration: motion.switch_.duration,
-                curve: motion.switch_.curve,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: value == selected ? c.surfaceRaised : c.surfaceSunken.withValues(alpha: 0),
-                  borderRadius: AppRadius.pillBorder,
-                ),
-                child: Text(
-                  label,
-                  style: t.caption.copyWith(
-                    color: value == selected ? c.text : c.textMuted,
-                    fontWeight: value == selected ? FontWeight.w600 : FontWeight.w400,
+            Flexible(
+              child: InkWell(
+                onTap: () => onChanged(value),
+                borderRadius: AppRadius.pillBorder,
+                child: AnimatedContainer(
+                  duration: motion.switch_.duration,
+                  curve: motion.switch_.curve,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: value == selected ? c.surfaceRaised : c.surfaceSunken.withValues(alpha: 0),
+                    borderRadius: AppRadius.pillBorder,
+                  ),
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.caption.copyWith(
+                      color: value == selected ? c.text : c.textMuted,
+                      fontWeight: value == selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
                   ),
                 ),
               ),
@@ -582,6 +712,7 @@ class CountChip extends StatelessWidget {
     this.onTap,
     this.dangerTint = false,
     this.compact = true,
+    this.showChev = false,
   });
 
   final String label;
@@ -592,6 +723,23 @@ class CountChip extends StatelessWidget {
   /// 「分类·排雷」红染（设计系统 §3 #02）。
   final bool dangerTint;
   final bool compact;
+
+  /// 尾部 chev（13px）：仅「点开值域浮层」的下拉触发器传 true（搜索六维 chips）；
+  /// 值选择 chip（分类页/浮层内）与动作 chip（排序切换/清空）不显示（设计系统 §4 值 chip = 值名+计数，无 chev）。
+  final bool showChev;
+
+  /// 千分位分组计数（设计稿 .ct：74,498 / 10,705 精确值，不做 k 缩写）。
+  static String formatCount(int n) {
+    final String digits = '$n';
+    final StringBuffer buf = StringBuffer();
+    for (int i = 0; i < digits.length; i++) {
+      buf.write(digits[i]);
+      if ((digits.length - i - 1) % 3 == 0 && i < digits.length - 1) {
+        buf.write(',');
+      }
+    }
+    return buf.toString();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -616,7 +764,8 @@ class CountChip extends StatelessWidget {
             width: AppMetrics.hairline,
           ),
         ),
-        alignment: Alignment.center,
+        // 垂直居中由 Row 在固定高度内默认 crossAxisAlignment.center 承担；
+        // 不得用 Container.alignment —— 其会把 chip 膨胀到整宽（Wrap 内实测复现）。
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
@@ -631,11 +780,16 @@ class CountChip extends StatelessWidget {
             if (count != null) ...<Widget>[
               SizedBox(width: s.space1),
               Text(
-                '${count! >= 10000 ? '${(count! / 1000).round()}k' : count!}',
+                formatCount(count!),
                 style: AppTypography.tabular(
                   t.label.copyWith(color: selected ? fg : c.textMuted, letterSpacing: 0),
                 ),
               ),
+            ],
+            // 设计 :1297–1304 六维下拉触发 chip 尾部 i-chev（xs 13px→stroke2 自动 -s 资产），色随 chip 前景。
+            if (showChev) ...<Widget>[
+              SizedBox(width: s.space1),
+              AppIcon('chev', size: 13, color: fg),
             ],
           ],
         ),
@@ -708,12 +862,14 @@ class SectionTitle extends StatelessWidget {
 enum AppButtonKind { primary, accent, outline }
 
 class AppButton extends StatelessWidget {
-  const AppButton({super.key, required this.label, this.onPressed, this.kind = AppButtonKind.primary, this.icon});
+  const AppButton({super.key, required this.label, this.onPressed, this.kind = AppButtonKind.primary, this.svgIcon});
 
   final String label;
   final VoidCallback? onPressed;
   final AppButtonKind kind;
-  final IconData? icon;
+
+  /// 可选前缀图标（设计稿 SVG symbol 名；.btn .ic sm 16px，index.html:324/333）。
+  final String? svgIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -737,11 +893,12 @@ class AppButton extends StatelessWidget {
             height: AppMetrics.buttonHeight,
             padding: EdgeInsets.symmetric(horizontal: AppSpacing.of(context).buttonPaddingH),
             decoration: BoxDecoration(borderRadius: AppRadius.mdBorder, border: border),
-            alignment: Alignment.center,
+            // 垂直居中由 Row 在固定高度内默认 crossAxisAlignment.center 承担；
+            // 不得用 Container.alignment —— 其会把按钮膨胀到整宽（设计按钮裹内容）。
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                if (icon != null) ...<Widget>[Icon(icon, size: 16, color: fg), const SizedBox(width: 6)],
+                if (svgIcon != null) ...<Widget>[AppIcon(svgIcon!, size: 16, color: fg), const SizedBox(width: 6)],
                 Text(label, style: t.bodyStrong.copyWith(color: fg)),
               ],
             ),
@@ -770,12 +927,23 @@ class SkeletonBlock extends StatelessWidget {
 }
 
 /// 空态（线稿 accent 64px + headline + caption + 可选动作，§4）。
+///
+/// 图标槽单一口径：[svgIcon]（AppIcon symbol 名）渲染设计稿 SVG 线稿 accent 64px；
+/// 不接受 Material IconData（全仓图标红线，test/icon_guard_test.dart 守卫）。
 class AppEmptyState extends StatelessWidget {
-  const AppEmptyState({super.key, required this.title, this.message, this.icon = Icons.auto_stories_outlined, this.action});
+  const AppEmptyState({
+    super.key,
+    required this.title,
+    required this.svgIcon,
+    this.message,
+    this.action,
+  });
 
   final String title;
   final String? message;
-  final IconData icon;
+
+  /// 设计稿 SVG symbol 名（assets/icons/*.svg）。
+  final String svgIcon;
   final Widget? action;
 
   @override
@@ -788,7 +956,7 @@ class AppEmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(icon, size: AppMetrics.emptyStateIconSize, color: c.accent),
+          AppIcon(svgIcon, size: AppMetrics.emptyStateIconSize, color: c.accent),
           SizedBox(height: s.space4),
           Text(title, textAlign: TextAlign.center, style: t.headline.copyWith(color: c.text)),
           if (message != null) ...<Widget>[
@@ -972,3 +1140,4 @@ class _StaggerItemState extends State<StaggerItem> with SingleTickerProviderStat
     );
   }
 }
+

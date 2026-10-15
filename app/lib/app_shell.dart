@@ -3,18 +3,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/constants.dart';
+import 'core/icons.dart';
 import 'core/window_size.dart';
 import 'data/repo/queries.dart';
+import 'data/repo/queries_providers.dart';
 import 'features/content/content_detail_page.dart';
 import 'features/content/detail_slot.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_spacing.dart';
 import 'theme/app_typography.dart';
 
-typedef _TabSpec = ({String label, IconData icon, IconData selectedIcon});
+typedef _TabSpec = ({String label, String icon});
 
 /// 自适应应用骨架（M1-②）：
-/// compact(<600dp) → 底部 NavigationBar 5 Tab；
+/// compact(<600dp) → 底部 NavigationBar 4 Tab；
 /// medium(600–1024dp，**含 1024**) → NavigationRail；
 /// expanded(>1024dp) → extended NavigationRail（品牌头）+ list-detail 双栏（右栏为详情槽位）。
 class AppShell extends StatelessWidget {
@@ -23,12 +25,37 @@ class AppShell extends StatelessWidget {
   final StatefulNavigationShell navigationShell;
 
   static const List<_TabSpec> _tabs = <_TabSpec>[
-    (label: '首页', icon: Icons.home_outlined, selectedIcon: Icons.home),
-    (label: '分类', icon: Icons.category_outlined, selectedIcon: Icons.category),
-    (label: '搜索', icon: Icons.search, selectedIcon: Icons.search),
-    (label: '采集', icon: Icons.cloud_download_outlined, selectedIcon: Icons.cloud_download),
-    (label: '我的', icon: Icons.person_outline, selectedIcon: Icons.person),
+    (label: '首页', icon: 'home'),
+    (label: '搜索', icon: 'search'),
+    (label: '采集', icon: 'collect'),
+    (label: '我的', icon: 'user'),
   ];
+
+  /// 导航图标（M2-①：设计稿 symbol sprite → assets/icons SVG，index.html:271 `.nav-item .ic{24px}`）。
+  /// 选中态 = accent-strong、未选中 = text-muted（index.html:266–272 `.nav-item`/`.nav-item.active`，
+  /// Rail 同语义 index.html:866–873；extended Rail 未选中 = text-secondary，index.html:882）。
+  /// 同图不同色，icon/selectedIcon 均传 AppIcon。
+  Widget _navIcon(BuildContext context, String name, {required bool selected, bool extended = false}) {
+    final AppColors c = AppColors.of(context);
+    final Color color = selected ? c.accentStrong : (extended ? c.textSecondary : c.textMuted);
+    return AppIcon(name, size: 24, color: color);
+  }
+
+  /// 导航标签：选中 = accent-strong + 600（`.nav-item.active{font-weight:600}` index.html:272），
+  /// 未选中 = text-muted（`.nav-item` index.html:266–270 / `.rail-item` index.html:866）。
+  /// extended Rail 行内标签按 `.rail-ext-item`（index.html:882）：body-strong 字阶 + text-secondary。
+  Widget _navLabel(BuildContext context, String label, {required bool selected, bool extended = false}) {
+    final AppColors c = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    final TextStyle base = extended ? t.bodyStrong : t.label;
+    return Text(
+      label,
+      style: base.copyWith(
+        color: selected ? c.accentStrong : (extended ? c.textSecondary : c.textMuted),
+        fontWeight: selected ? FontWeight.w600 : base.fontWeight,
+      ),
+    );
+  }
 
   void _onDestinationSelected(int index) {
     // 重复点击当前 Tab 回到该分支根位置（go_router 惯例）。
@@ -40,33 +67,57 @@ class AppShell extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         return switch (WindowSize.fromWidth(constraints.maxWidth)) {
-          WindowSizeClass.compact => _compact(),
-          WindowSizeClass.medium => _withRail(extended: false),
-          WindowSizeClass.expanded => _expanded(),
+          WindowSizeClass.compact => _compact(context),
+          WindowSizeClass.medium => _withRail(context, extended: false),
+          WindowSizeClass.expanded => _expanded(context),
         };
       },
     );
   }
 
-  Widget _compact() {
+  Widget _compact(BuildContext context) {
+    final int selected = navigationShell.currentIndex;
+    final AppColors c = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
     return Scaffold(
       body: navigationShell,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: navigationShell.currentIndex,
-        onDestinationSelected: _onDestinationSelected,
-        destinations: <NavigationDestination>[
-          for (final tab in _tabs)
-            NavigationDestination(icon: Icon(tab.icon), selectedIcon: Icon(tab.selectedIcon), label: tab.label),
-        ],
+      // 局部主题仅覆盖 label 字样（设计 `.nav-item.active`：accent-strong + 600 /
+      // 未选中 text-muted，index.html:266–272；NavigationDestination.label 只收 String，
+      // 样式只能走 labelTextStyle）。其余几何逐项照抄全局 navigationBarTheme，不动结构。
+      bottomNavigationBar: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          backgroundColor: c.surface,
+          elevation: 0,
+          height: AppMetrics.bottomNavHeight,
+          indicatorColor: c.accentSoft,
+          labelTextStyle: WidgetStateProperty.resolveWith(
+            (Set<WidgetState> states) => t.label.copyWith(
+              color: states.contains(WidgetState.selected) ? c.accentStrong : c.textMuted,
+              fontWeight: states.contains(WidgetState.selected) ? FontWeight.w600 : FontWeight.w500,
+            ),
+          ),
+        ),
+        child: NavigationBar(
+          selectedIndex: selected,
+          onDestinationSelected: _onDestinationSelected,
+          destinations: <NavigationDestination>[
+            for (int i = 0; i < _tabs.length; i++)
+              NavigationDestination(
+                icon: _navIcon(context, _tabs[i].icon, selected: false),
+                selectedIcon: _navIcon(context, _tabs[i].icon, selected: true),
+                label: _tabs[i].label,
+              ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _withRail({required bool extended}) {
+  Widget _withRail(BuildContext context, {required bool extended}) {
     return Scaffold(
       body: Row(
         children: <Widget>[
-          _rail(extended),
+          _rail(context, extended),
           const _HairlineV(),
           Expanded(child: navigationShell),
         ],
@@ -74,11 +125,11 @@ class AppShell extends StatelessWidget {
     );
   }
 
-  Widget _expanded() {
+  Widget _expanded(BuildContext context) {
     return Scaffold(
       body: Row(
         children: <Widget>[
-          _rail(true),
+          _rail(context, true),
           const _HairlineV(),
           // list-detail 双栏：左 = 当前 Tab 列表区，右 = 详情槽位（内容详情页于 M1-④ 接入右槽）。
           Expanded(flex: 3, child: navigationShell),
@@ -89,18 +140,23 @@ class AppShell extends StatelessWidget {
     );
   }
 
-  Widget _rail(bool extended) {
+  Widget _rail(BuildContext context, bool extended) {
+    final int selected = navigationShell.currentIndex;
     return NavigationRail(
       extended: extended,
       // §9.5：extended Rail 顶部品牌头（rail-mark + serif 品牌名 + 库容量 caption）。
       // QA ISSUE-3。标准 Rail 保持原几何（M1-② 已验收 V3），不加 leading。
       leading: extended ? const _RailBrand() : null,
-      selectedIndex: navigationShell.currentIndex,
+      selectedIndex: selected,
       onDestinationSelected: _onDestinationSelected,
       labelType: extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
       destinations: <NavigationRailDestination>[
-        for (final tab in _tabs)
-          NavigationRailDestination(icon: Icon(tab.icon), selectedIcon: Icon(tab.selectedIcon), label: Text(tab.label)),
+        for (int i = 0; i < _tabs.length; i++)
+          NavigationRailDestination(
+            icon: _navIcon(context, _tabs[i].icon, selected: false, extended: extended),
+            selectedIcon: _navIcon(context, _tabs[i].icon, selected: true, extended: extended),
+            label: _navLabel(context, _tabs[i].label, selected: i == selected, extended: extended),
+          ),
       ],
     );
   }
@@ -198,8 +254,8 @@ class _DetailSlot extends ConsumerWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
-          // 空态规格（§4）：线稿 accent · 64px。
-          Icon(Icons.auto_stories_outlined, size: AppMetrics.emptyStateIconSize, color: colors.accent),
+          // 空态规格（§4）：线稿 accent · 64px。阅读语义 → 设计稿 i-book。
+          AppIcon('book', size: AppMetrics.emptyStateIconSize, color: colors.accent),
           SizedBox(height: AppSpacing.of(context).space4),
           Text('选择左侧内容查看详情', style: typography.secondary.copyWith(color: colors.textMuted)),
         ],

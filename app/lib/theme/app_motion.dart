@@ -18,6 +18,7 @@ class AppMotionTheme extends ThemeExtension<AppMotionTheme> {
     this.normal = const Duration(milliseconds: 300),
     this.slow = const Duration(milliseconds: 500),
     this.staggerDelay = const Duration(milliseconds: 40),
+    this.pulse = const Duration(milliseconds: 1600),
     this.decelerate = Curves.easeOutCubic,
     this.accelerate = Curves.easeInCubic,
     this.emphasize = Curves.easeInOutCubicEmphasized,
@@ -45,6 +46,10 @@ class AppMotionTheme extends ThemeExtension<AppMotionTheme> {
 
   /// `--motion-stagger` 40ms：列表 cascade 单位（规格区间 30–50ms 取中值，上限 8 项）。
   final Duration staggerDelay;
+
+  /// 循环脉冲周期 1600ms（设计稿 index.html:528 pulseRing 1.6s，采集四步轨 active 点）。
+  /// 非退化档：reduceMotion 下整体关闭（控制器不 repeat）而非缩短，退化集取 [Duration.zero]。
+  final Duration pulse;
 
   /// enter 曲线 cubic-bezier(.33,1,.68,1) = easeOutCubic。
   final Curve decelerate;
@@ -79,6 +84,7 @@ class AppMotionTheme extends ThemeExtension<AppMotionTheme> {
     normal: Duration(milliseconds: 100),
     slow: Duration(milliseconds: 100),
     staggerDelay: Duration.zero,
+    pulse: Duration.zero,
   );
 
   /// 读取动效 token，并联动系统「减弱动态效果」（MediaQuery.disableAnimations）：
@@ -118,6 +124,7 @@ class AppMotionTheme extends ThemeExtension<AppMotionTheme> {
     Duration? normal,
     Duration? slow,
     Duration? staggerDelay,
+    Duration? pulse,
     Curve? decelerate,
     Curve? accelerate,
     Curve? emphasize,
@@ -132,6 +139,7 @@ class AppMotionTheme extends ThemeExtension<AppMotionTheme> {
       normal: normal ?? this.normal,
       slow: slow ?? this.slow,
       staggerDelay: staggerDelay ?? this.staggerDelay,
+      pulse: pulse ?? this.pulse,
       decelerate: decelerate ?? this.decelerate,
       accelerate: accelerate ?? this.accelerate,
       emphasize: emphasize ?? this.emphasize,
@@ -156,6 +164,7 @@ class AppMotionTheme extends ThemeExtension<AppMotionTheme> {
       normal: lerpDuration(normal, other.normal),
       slow: lerpDuration(slow, other.slow),
       staggerDelay: lerpDuration(staggerDelay, other.staggerDelay),
+      pulse: lerpDuration(pulse, other.pulse),
       decelerate: t < 0.5 ? decelerate : other.decelerate,
       accelerate: t < 0.5 ? accelerate : other.accelerate,
       emphasize: t < 0.5 ? emphasize : other.emphasize,

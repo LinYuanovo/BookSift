@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:saoshuhui/core/window_size.dart';
+import 'package:booksift/core/window_size.dart';
 
 void main() {
   test('Material 3 断点：<600 compact / 600–1024 medium（含 1024）/ >1024 expanded', () {

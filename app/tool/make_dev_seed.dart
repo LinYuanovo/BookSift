@@ -1,33 +1,36 @@
 // 开发/测试用小型种子库生成器（M1-④）。
 //
-// 从 work/seed_pack/_build/seed_lite.db（桌面 ETL 产物，表结构对齐 App schema）分层抽样
-// 2000 条 book_entries + 对应 posts/floors/images/book_groups，写入 app/test/fixtures/dev_seed.db。
+// 从 work/seed_pack/_build/seed_lite.db（**发行包同源**的清洗库：comment≤300、已去重、
+// posts 带 v3 post_kind/recommend_flag、category 已镜像同步；由 app/tool/bake_clean_seed.dart
+// 就地清洗产出）分层抽样 2000 条 book_entries + 对应 posts/floors/images/book_groups，
+// 写入 app/test/fixtures/dev_seed.db。
 // schema 由 drift onCreate 生成（与 lib/data/db/app_database.dart 恒同步，含 book_fts/floor_fts
-// 与触发器、user_version=2），派生列按原型 §8.9：
-//   - posts.post_kind：标题起首排雷意图词（R1 简化集）→ 排雷；否则取 post_type（扫书/求书/日常）
-//   - posts.recommend_flag：扫书→+1 / 排雷→−1 / 求书·日常→0
-//   - book_entries.category：R1 排雷帖的条目改标 排雷，其余沿用种子值（大佬条目语义另按 book_grade）
-//   - origin：抽样内 12 个 yy小说吧 2025 帖标 collected、6 个大佬帖标 imported（覆盖三档徽标），余 builtin
+// 与触发器、v4 起的查询索引、user_version = 当期 schemaVersion），派生列口径：
+//   - posts.post_kind / recommend_flag：**直迁源库的 v3 分类结果**。源库缺这两列即硬失败
+//     （不再用 R1 标题前缀启发式自派生——那会盖掉 v3 成果、与发行包口径不一致）
+//   - book_entries.category：**直迁源库值**。源库的 category 已由 maintenance 的 v3 回填镜像成
+//     所属帖的 post_kind，故 fixture 与发行包同口径，本地不必再改标（此前按帖 kind 改标，
+//     是当年源库 category 尚未同步时的补丁）
+//   - origin：抽样内 15 个 yy小说吧帖标 collected、10 个大佬帖标 imported（覆盖三档徽标），余 builtin
 //
-// 运行：dart run tool/make_dev_seed.dart [seed_lite.db 路径]
-// 仅供 widget 测试（test/features_test.dart），不进发行包。
+// 运行：dart run tool/make_dev_seed.dart [源库路径]
+// 仅供 widget 测试（test/features_test.dart、test/rank/rank_queries_test.dart），不进发行包。
 import 'dart:io';
 
+import 'package:drift/drift.dart' show QueryRow;
 import 'package:drift/native.dart';
-import 'package:saoshuhui/data/db/app_database.dart';
+import 'package:booksift/data/db/app_database.dart';
 
 const int _entryTarget = 2000;
 
-/// §8.9 R1：标题**起首**排雷意图词（简化为 LIKE 前缀集）。
-const List<String> _avoidPrefixes = <String>['排雷', '避雷', '踩雷', '扫雷', '雷点', '毒点盘点', '慎入', '剧毒', '粪作'];
-
-String get _avoidTitleSql => _avoidPrefixes.map((String w) => "p.title LIKE '$w%'").join(' OR ');
+/// 缺省源库：发行包同源的清洗库（打包输入，见 work/seed_pack/种子包说明.md §12）。
+const String _defaultSeed = '../work/seed_pack/_build/seed_lite.db';
 
 Future<void> main(List<String> args) async {
-  final String seedPath =
-      args.isNotEmpty ? args[0] : File('../work/seed_pack/_build/seed_lite.db').absolute.path;
+  final String seedPath = args.isNotEmpty ? args[0] : File(_defaultSeed).absolute.path;
   if (!File(seedPath).existsSync()) {
-    stderr.writeln('seed_lite.db 不存在: $seedPath');
+    stderr.writeln('源库不存在: $seedPath'
+        '（先在 app/ 下跑 dart run tool/bake_clean_seed.dart）');
     exitCode = 1;
     return;
   }
@@ -38,7 +41,7 @@ Future<void> main(List<String> args) async {
   }
 
   final AppDatabase db = AppDatabase(NativeDatabase(out));
-  // 触发 onCreate：createAll + FTS5 虚拟表/触发器 + user_version=2。
+  // 触发 onCreate：createAll + FTS5 虚拟表/触发器 + user_version = schemaVersion。
   await db.customSelect('SELECT 1').get();
   await db.customStatement("ATTACH DATABASE '${seedPath.replaceAll("'", "''")}' AS seed");
 
@@ -46,16 +49,30 @@ Future<void> main(List<String> args) async {
   Future<int> scalar(String sql) async =>
       ((await db.customSelect(sql).get()).single.data.values.first as num).toInt();
 
+  // 源库必须已带 v3 分类列（= 清洗库形态）；缺列说明传了未清洗的 seed_lite.db，
+  // 继续下去会静默退回粗分类，故硬失败而不是兜底派生。
+  final List<QueryRow> seedPostCols =
+      await db.customSelect('PRAGMA seed.table_info(posts)').get();
+  final Set<String> colNames =
+      seedPostCols.map((QueryRow r) => r.data['name'] as String).toSet();
+  if (!colNames.contains('post_kind') || !colNames.contains('recommend_flag')) {
+    stderr.writeln('源库 posts 缺 post_kind/recommend_flag：$seedPath\n'
+        '本工具直迁 v3 分类结果，请先跑 dart run tool/bake_clean_seed.dart 生成清洗库。');
+    await db.close();
+    exitCode = 1;
+    return;
+  }
+
   // ── 抽样集合（TEMP 表，确定性排序：RANDOM() 换成 id 散列保证可复现）──
   const String hashOrder = '((id * 2654435761) % 4294967296)';
   await exec('CREATE TEMP TABLE sel_e (id INTEGER PRIMARY KEY)');
   await exec('CREATE TEMP TABLE sel_p (id INTEGER PRIMARY KEY)');
 
-  // a) 排雷帖（R1 标题）的条目：UI 排雷红条/徽标与「类别=排雷」维度的真实语料。
+  // a) v3 判定为排雷的帖，其条目：UI 排雷红条/徽标与「类别=排雷」维度的真实语料。
   await exec('''
     INSERT OR IGNORE INTO sel_e
     SELECT be.id FROM seed.book_entries be JOIN seed.posts p ON p.id = be.post_ref
-    WHERE $_avoidTitleSql LIMIT 300''');
+    WHERE p.post_kind = '排雷' LIMIT 300''');
   // b) 大佬评级三档（book_grade → recommend_flag 映射的展示来源）。
   await exec("INSERT OR IGNORE INTO sel_e SELECT id FROM seed.book_entries WHERE book_grade='#FF0000' ORDER BY date DESC LIMIT 120");
   await exec("INSERT OR IGNORE INTO sel_e SELECT id FROM seed.book_entries WHERE book_grade='#11850A' ORDER BY date DESC LIMIT 120");
@@ -111,7 +128,8 @@ Future<void> main(List<String> args) async {
   await exec('CREATE TEMP TABLE sel_dp (id INTEGER PRIMARY KEY)');
   await exec('''
     INSERT OR IGNORE INTO sel_dp
-    SELECT p.id FROM seed.posts p JOIN sel_p ON sel_p.id = p.id WHERE $_avoidTitleSql LIMIT 20''');
+    SELECT p.id FROM seed.posts p JOIN sel_p ON sel_p.id = p.id
+    WHERE p.post_kind = '排雷' LIMIT 20''');
   await exec('''
     INSERT OR IGNORE INTO sel_dp
     SELECT p.id FROM seed.posts p JOIN sel_p ON sel_p.id = p.id
@@ -172,19 +190,16 @@ Future<void> main(List<String> args) async {
            g.distinct_comment, g.channels, g.date_min, g.date_max, g.word_count_max
     FROM seed.book_groups g JOIN sel_g ON sel_g.id = g.id''');
 
-  final String kindSql = '''
-    CASE
-      WHEN $_avoidTitleSql THEN '排雷'
-      WHEN p.post_type IN ('求书','日常') THEN p.post_type
-      ELSE '扫书' END''';
+  // post_kind / recommend_flag 直迁源库的 v3 分类结果（口径与 seed_import.dart
+  // `_copyInTransaction` 检测到分类列时的直迁分支一致）。
   await exec('''
     INSERT INTO main.posts
       (id, tid, title, author, author_name, user_id, portrait, date, date_raw, channel, sub_channel,
        post_type, post_kind, recommend_flag, floor_count, image_count, origin, collected_at)
     SELECT p.id, p.tid, p.title, p.author, NULL, p.user_id, '', p.date, p.date_raw, p.channel, p.sub_channel,
       p.post_type,
-      $kindSql,
-      CASE $kindSql WHEN '扫书' THEN 1 WHEN '排雷' THEN -1 ELSE 0 END,
+      p.post_kind,
+      p.recommend_flag,
       (SELECT COUNT(*) FROM seed.floors sf WHERE sf.post_id = p.id AND sf.id IN (SELECT id FROM sel_f)),
       (SELECT COUNT(*) FROM seed.images si JOIN seed.floors sf2 ON sf2.id = si.floor_id
         WHERE sf2.post_id = p.id AND si.id IN (SELECT id FROM sel_i)),
@@ -214,7 +229,7 @@ Future<void> main(List<String> args) async {
       CASE WHEN length(be.comment) > 220 AND (be.id % 5) != 0
         THEN substr(be.comment, 1, 200) || '…' ELSE be.comment END,
       be.comment_src, be.comment_norm_hash, be.date, be.date_raw, be.channel, be.sub_channel,
-      CASE WHEN p.id IS NOT NULL AND ($_avoidTitleSql) THEN '排雷' ELSE be.category END,
+      be.category,
       be.post_ref,
       CASE WHEN be.floor_ref IN (SELECT id FROM sel_f) THEN be.floor_ref ELSE NULL END,
       be.src_tid, be.src_url, be.word_count, be.book_grade, be.quality, be.content_hash, be.book_group_id,
@@ -224,23 +239,20 @@ Future<void> main(List<String> args) async {
         ELSE 'builtin' END,
       CASE WHEN be.post_ref IN (SELECT id FROM synth_c) THEN strftime('%s', '2026-10-01') ELSE NULL END
     FROM seed.book_entries be
-    JOIN sel_e ON sel_e.id = be.id
-    LEFT JOIN seed.posts p ON p.id = be.post_ref''');
+    JOIN sel_e ON sel_e.id = be.id''');
 
-  // 查询索引（种子 ETL 预建同款，§7.4/§5.13）。
-  await exec('CREATE INDEX IF NOT EXISTS idx_book_entries_date ON book_entries(date)');
-  await exec('CREATE INDEX IF NOT EXISTS idx_book_entries_name_norm ON book_entries(name_norm)');
-  await exec('CREATE INDEX IF NOT EXISTS idx_book_entries_category ON book_entries(category)');
-  await exec('CREATE INDEX IF NOT EXISTS idx_book_entries_channel ON book_entries(channel)');
-  await exec('CREATE INDEX IF NOT EXISTS idx_book_entries_postref ON book_entries(post_ref)');
-  await exec('CREATE INDEX IF NOT EXISTS idx_book_entries_group ON book_entries(book_group_id)');
-  await exec('CREATE INDEX IF NOT EXISTS idx_posts_date ON posts(date)');
-  await exec('CREATE INDEX IF NOT EXISTS idx_posts_kind ON posts(post_kind)');
+  // 索引不再手建：drift schema v4 起由 app_database.dart `_createQueryIndexes` 在 onCreate 建齐
+  // （此前这里手建 8 个，其中 5 个与 schema 内的同列异名 → fixture 会并存两套重叠索引）。
 
   await exec('DETACH DATABASE seed');
   await exec('VACUUM');
 
   final int userVersion = await scalar('PRAGMA user_version');
+  // fixture 的 user_version 必须等于当期 drift schemaVersion，否则测试跑在过期 schema 上。
+  // 从 AppDatabase 实例读而不是写死数字：本文件曾写死「须为 2」，schema 升到 3 后就静默失效。
+  final AppDatabase probe = AppDatabase(NativeDatabase.memory());
+  final int expectedVersion = probe.schemaVersion;
+  await probe.close();
   final Map<String, int> counts = <String, int>{
     'book_entries': await scalar('SELECT COUNT(*) FROM book_entries'),
     'posts': await scalar('SELECT COUNT(*) FROM posts'),
@@ -261,10 +273,10 @@ Future<void> main(List<String> args) async {
   };
   await db.close();
 
-  stdout.writeln('dev_seed.db 生成完毕: $out.path (${(out.lengthSync() / 1048576).toStringAsFixed(2)} MB)');
-  stdout.writeln('user_version=$userVersion (须为 2) selected=$selected');
+  stdout.writeln('dev_seed.db 生成完毕: ${out.path} (${(out.lengthSync() / 1048576).toStringAsFixed(2)} MB)');
+  stdout.writeln('user_version=$userVersion (须为 $expectedVersion) selected=$selected');
   counts.forEach((String k, int v) => stdout.writeln('  $k = $v'));
-  if (userVersion != 2 || counts['book_entries'] != _entryTarget) {
+  if (userVersion != expectedVersion || counts['book_entries'] != _entryTarget) {
     exitCode = 1;
   }
 }

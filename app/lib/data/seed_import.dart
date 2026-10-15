@@ -14,12 +14,13 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/constants.dart';
 import 'db/app_database.dart';
+import 'maintenance.dart' show dedupDoneValue;
 
 // M1-③ 种子数据包导入。流程对标 原型 §7.5 / 种子包说明.md §6.2–§6.3：
 //   版本闸门(settings.seed_version vs manifest.pack_version)
 //   → asset/文件 流式解压(cacheDir) → SHA256 校验(zip + seed.db)
 //   → ATTACH seed.db → 单事务清理重写(INSERT OR IGNORE, origin='seed')
-//   → 闸门落账 → DETACH → (lite) 后台 isolate 批式重建 FTS。
+//   → 闸门落账(版本 + 随包维护闸门) → DETACH → (lite) 后台 isolate 批式重建 FTS。
 // 压缩格式注记：Dart archive 4.x 的 ZIP 解码不支持 method-14 (Zip-LZMA)
 // （CompressionType 仅 none/deflate/bzip2/zstd），故内置 lite 档由
 // work/seed_pack/repack_deflate.py 重打为 deflate（comment 截断 500→300 达标 ≤55MiB）。
@@ -37,6 +38,8 @@ class SeedManifest {
     this.dbSha256,
     this.zipSha256,
     this.ftsPrebuilt = false,
+    this.preDeduped = false,
+    this.preClassifiedVersion,
     this.rows = const <String, int>{},
   });
 
@@ -57,6 +60,8 @@ class SeedManifest {
       dbSha256: json['db_sha256'] as String?,
       zipSha256: compression?['zip_sha256'] as String?,
       ftsPrebuilt: features?['fts_prebuilt'] as bool? ?? false,
+      preDeduped: features?['pre_deduped'] as bool? ?? false,
+      preClassifiedVersion: (features?['pre_classified_v3'] as num?)?.toInt(),
       rows: rows == null
           ? const <String, int>{}
           : rows.map((String k, Object? v) => MapEntry<String, int>(k, (v as num?)?.toInt() ?? 0)),
@@ -90,6 +95,18 @@ class SeedManifest {
 
   /// full 档预建 FTS → 导入走影子表复制，跳过后台重建（§6.3 T9）。
   final bool ftsPrebuilt;
+
+  /// 包内 book_entries **已去重**（`features.pre_deduped`；打包侧 `tool/bake_clean_seed.dart`
+  /// 跑完 maintenance.dart 的 `dedupBookEntries` 后置真）→ 导入事务内直接落
+  /// `settings.dedup_version` 闸门（完成值 `dedupDoneValue`），首启后台维护据此跳过全量扫描。
+  /// 缺省 false（老包 / 未清洗档）= 一个闸门都不写，维护照跑，与本字段引入前行为一致。
+  final bool preDeduped;
+
+  /// 包内 posts 已回填到的 **v3 分类器版本**（`features.pre_classified_v3`；null = 未回填）
+  /// → 导入事务内原样写进 `settings.classifier_version`，由 maintenance.dart 的
+  /// `needsReclassify` 与 App 侧 `classifierVersion` 比对决定是否重跑（版本语义见
+  /// `_copyInTransaction` 第 5 步注释）。
+  final int? preClassifiedVersion;
 
   /// 各表行数统计（导入后对账提示用）。
   final Map<String, int> rows;
@@ -151,6 +168,13 @@ abstract interface class SeedImporter {
 
   /// 完整包导入（用户下载的 zipPath；sha256 校验与 Range 断点续传在下载侧，§7.5）。
   Stream<SeedImportState> importFull(String zipPath);
+
+  /// FTS 后台重建完成标记（settings `fts_rebuild_done`='1'；缺失/中断为 false）。
+  Future<bool> ftsRebuildDone();
+
+  /// FTS 后台重建/续跑（幂等、批式 yield 进度，§6.3 T8）：lite 档导入完成后
+  /// （ftsPrebuilt=false）或重建中断后续跑时调用；full 档预建索引无需调用。
+  Stream<SeedImportState> rebuildFts();
 }
 
 /// [SeedImporter] 默认实现（M1-③）。
@@ -233,6 +257,13 @@ class DefaultSeedImporter implements SeedImporter {
   Future<int?> _readVersion(String key) async {
     final row = await (_db.select(_db.settings)..where((tbl) => tbl.key.equals(key))).getSingleOrNull();
     return row == null ? null : int.tryParse(row.value);
+  }
+
+  @override
+  Future<bool> ftsRebuildDone() async {
+    final row =
+        await (_db.select(_db.settings)..where((tbl) => tbl.key.equals(ftsRebuildDoneKey))).getSingleOrNull();
+    return row?.value == '1';
   }
 
   @override
@@ -357,6 +388,7 @@ class DefaultSeedImporter implements SeedImporter {
   /// delete-all 后按 [ftsRebuildBatch] 行分批填充 book_fts/floor_fts，每批 yield 进度；
   /// [cancelFtsRebuild]（或取消订阅）可中断，重跑本方法即幂等续全量。
   /// full 档 ftsPrebuilt 导入已复制影子表，无需调用。
+  @override
   Stream<SeedImportState> rebuildFts() async* {
     if (_ftsRunning) {
       yield const SeedImportState(phase: SeedImportPhase.error, message: 'FTS 重建已在进行中');
@@ -545,6 +577,23 @@ class DefaultSeedImporter implements SeedImporter {
     await _upsertSetting(SettingsKeys.seedVersion, manifest.version);
     if (full) {
       await _upsertSetting(SettingsKeys.seedFullVersion, manifest.version);
+    }
+    // 5b) 维护闸门随包走：包若声明「已去重 / 已按 vN 回填分类」，就地落 maintenance.dart 的
+    //     两个 settings 闸门，让首启后台维护（seed_import_providers.dart
+    //     `_runMaintenanceInBackground`）直接跳过——包内已是收敛态，全量扫一遍（桌面实测
+    //     18.7s）结果必然是 0 删 0 改的白扫。同样与内容拷贝同事务：中断则整体回滚，
+    //     不会出现「内容半态 + 闸门已落」的假收敛。
+    //     版本语义（**不是 bug，勿改成写 App 侧常量**）：落的是**包声明的版本**，
+    //     `needsReclassify` 用 `!=` 与 App 的 `classifierVersion`（lib/classify/classifier.dart）比：
+    //       包 3 / App 3 → 匹配 → 跳过（当前发行包这一档）；
+    //       包 3 / App 4 → 不匹配 → 首启自动重跑 v4 回填并落 4（App 升级后自愈）；
+    //       包无标记（老包 / 未清洗档）→ 一个闸门都不写 → 维护照跑（向后兼容）。
+    if (manifest.preDeduped) {
+      await _upsertSettingRaw(SettingsKeys.dedupVersion, dedupDoneValue);
+    }
+    final int? preClassified = manifest.preClassifiedVersion;
+    if (preClassified != null) {
+      await _upsertSettingRaw(SettingsKeys.classifierVersion, '$preClassified');
     }
     // FTS 重建完成标记随内容重写失效（lite 需重建；full 影子表复制成功后另行落账）。
     await _db.customStatement("DELETE FROM settings WHERE key = '$ftsRebuildDoneKey'");

@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:saoshuhui/core/fonts/font_tokens.dart';
-import 'package:saoshuhui/theme/app_typography.dart';
-import 'package:saoshuhui/theme/book_theme.dart';
+import 'package:booksift/core/fonts/font_tokens.dart';
+import 'package:booksift/theme/app_typography.dart';
+import 'package:booksift/theme/book_theme.dart';
 
 void main() {
   group('FontSlot 编解码', () {

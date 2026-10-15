@@ -137,7 +137,7 @@ function Stop-Orphans {
   try {
     $cands = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
       Where-Object {
-        $_.Name -match '^(dart|flutter|saoshuhui)' -and
+        $_.Name -match '^(dart|flutter|booksift)' -and
         $null -ne $_.CreationDate -and $_.CreationDate -ge $Since -and
         ($_.CommandLine -like "*$WorkDir*")
       })

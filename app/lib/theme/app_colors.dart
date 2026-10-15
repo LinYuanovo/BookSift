@@ -163,6 +163,16 @@ class AppColors extends ThemeExtension<AppColors> {
 
   static AppColors of(BuildContext context) => Theme.of(context).extension<AppColors>()!;
 
+  /// 按主题色档（M3 P2-3 · AppAccentTheme）替换 accent 四槽，其余 20 字段原样保留。
+  /// 直传四色而非 AccentPalette：本文件保持零依赖（app_accent.dart 含 riverpod/drift）。
+  AppColors withAccentColors({
+    required Color accent,
+    required Color accentStrong,
+    required Color accentSoft,
+    required Color onAccent,
+  }) =>
+      copyWith(accent: accent, accentStrong: accentStrong, accentSoft: accentSoft, onAccent: onAccent);
+
   @override
   AppColors copyWith({
     Color? canvas,

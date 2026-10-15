@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/fonts/font_registry.dart';
 import '../../core/fonts/font_service.dart';
 import '../../core/fonts/font_tokens.dart';
+import '../../core/icons.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
@@ -155,7 +156,8 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
           SizedBox(height: space.space6),
           FilledButton.icon(
             onPressed: _busy ? null : () => _import(service),
-            icon: const Icon(Icons.add),
+            // 设计稿 i-plus（index.html:1047）；color 缺省 → 继承按钮前景（含 _busy 禁用态）。
+            icon: const AppIcon('plus', size: 20),
             label: Text(_busy ? '导入中…' : '导入字体'),
             style: FilledButton.styleFrom(
               minimumSize: Size.fromHeight(AppMetrics.buttonHeight),
@@ -247,7 +249,8 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
             ),
           ),
           IconButton(
-            icon: Icon(Icons.delete_outline, color: colors.danger),
+            // 无 trash 资产；破坏性动作 = close 染 danger（与左滑删除同款约定）。
+            icon: AppIcon('close', size: 24, color: colors.danger),
             tooltip: '删除',
             onPressed: _busy ? null : () => _confirmDelete(service, font),
           ),

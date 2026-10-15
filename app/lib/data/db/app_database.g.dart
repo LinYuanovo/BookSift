@@ -4714,6 +4714,17 @@ class $BookmarksTable extends Bookmarks
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _floorSeqMeta = const VerificationMeta(
+    'floorSeq',
+  );
+  @override
+  late final GeneratedColumn<int> floorSeq = GeneratedColumn<int>(
+    'floor_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _snapQueryMeta = const VerificationMeta(
     'snapQuery',
   );
@@ -4820,6 +4831,7 @@ class $BookmarksTable extends Bookmarks
     author,
     channel,
     position,
+    floorSeq,
     snapQuery,
     snapYear,
     snapMonth,
@@ -4881,6 +4893,12 @@ class $BookmarksTable extends Bookmarks
       context.handle(
         _positionMeta,
         position.isAcceptableOrUnknown(data['position']!, _positionMeta),
+      );
+    }
+    if (data.containsKey('floor_seq')) {
+      context.handle(
+        _floorSeqMeta,
+        floorSeq.isAcceptableOrUnknown(data['floor_seq']!, _floorSeqMeta),
       );
     }
     if (data.containsKey('snap_query')) {
@@ -4985,6 +5003,10 @@ class $BookmarksTable extends Bookmarks
         DriftSqlType.int,
         data['${effectivePrefix}position'],
       )!,
+      floorSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}floor_seq'],
+      ),
       snapQuery: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}snap_query'],
@@ -5044,6 +5066,9 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
 
   /// 结果列表位置。
   final int position;
+
+  /// 帖子内阅读楼层号（书签恢复时定位；v3 新增，旧书签为 NULL = 无楼层记忆）。
+  final int? floorSeq;
   final String? snapQuery;
   final String? snapYear;
   final String? snapMonth;
@@ -5061,6 +5086,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
     this.author,
     this.channel,
     required this.position,
+    this.floorSeq,
     this.snapQuery,
     this.snapYear,
     this.snapMonth,
@@ -5089,6 +5115,9 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
       map['channel'] = Variable<String>(channel);
     }
     map['position'] = Variable<int>(position);
+    if (!nullToAbsent || floorSeq != null) {
+      map['floor_seq'] = Variable<int>(floorSeq);
+    }
     if (!nullToAbsent || snapQuery != null) {
       map['snap_query'] = Variable<String>(snapQuery);
     }
@@ -5134,6 +5163,9 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
           ? const Value.absent()
           : Value(channel),
       position: Value(position),
+      floorSeq: floorSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(floorSeq),
       snapQuery: snapQuery == null && nullToAbsent
           ? const Value.absent()
           : Value(snapQuery),
@@ -5173,6 +5205,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
       author: serializer.fromJson<String?>(json['author']),
       channel: serializer.fromJson<String?>(json['channel']),
       position: serializer.fromJson<int>(json['position']),
+      floorSeq: serializer.fromJson<int?>(json['floorSeq']),
       snapQuery: serializer.fromJson<String?>(json['snapQuery']),
       snapYear: serializer.fromJson<String?>(json['snapYear']),
       snapMonth: serializer.fromJson<String?>(json['snapMonth']),
@@ -5195,6 +5228,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
       'author': serializer.toJson<String?>(author),
       'channel': serializer.toJson<String?>(channel),
       'position': serializer.toJson<int>(position),
+      'floorSeq': serializer.toJson<int?>(floorSeq),
       'snapQuery': serializer.toJson<String?>(snapQuery),
       'snapYear': serializer.toJson<String?>(snapYear),
       'snapMonth': serializer.toJson<String?>(snapMonth),
@@ -5215,6 +5249,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
     Value<String?> author = const Value.absent(),
     Value<String?> channel = const Value.absent(),
     int? position,
+    Value<int?> floorSeq = const Value.absent(),
     Value<String?> snapQuery = const Value.absent(),
     Value<String?> snapYear = const Value.absent(),
     Value<String?> snapMonth = const Value.absent(),
@@ -5232,6 +5267,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
     author: author.present ? author.value : this.author,
     channel: channel.present ? channel.value : this.channel,
     position: position ?? this.position,
+    floorSeq: floorSeq.present ? floorSeq.value : this.floorSeq,
     snapQuery: snapQuery.present ? snapQuery.value : this.snapQuery,
     snapYear: snapYear.present ? snapYear.value : this.snapYear,
     snapMonth: snapMonth.present ? snapMonth.value : this.snapMonth,
@@ -5251,6 +5287,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
       author: data.author.present ? data.author.value : this.author,
       channel: data.channel.present ? data.channel.value : this.channel,
       position: data.position.present ? data.position.value : this.position,
+      floorSeq: data.floorSeq.present ? data.floorSeq.value : this.floorSeq,
       snapQuery: data.snapQuery.present ? data.snapQuery.value : this.snapQuery,
       snapYear: data.snapYear.present ? data.snapYear.value : this.snapYear,
       snapMonth: data.snapMonth.present ? data.snapMonth.value : this.snapMonth,
@@ -5279,6 +5316,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
           ..write('author: $author, ')
           ..write('channel: $channel, ')
           ..write('position: $position, ')
+          ..write('floorSeq: $floorSeq, ')
           ..write('snapQuery: $snapQuery, ')
           ..write('snapYear: $snapYear, ')
           ..write('snapMonth: $snapMonth, ')
@@ -5301,6 +5339,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
     author,
     channel,
     position,
+    floorSeq,
     snapQuery,
     snapYear,
     snapMonth,
@@ -5322,6 +5361,7 @@ class Bookmark extends DataClass implements Insertable<Bookmark> {
           other.author == this.author &&
           other.channel == this.channel &&
           other.position == this.position &&
+          other.floorSeq == this.floorSeq &&
           other.snapQuery == this.snapQuery &&
           other.snapYear == this.snapYear &&
           other.snapMonth == this.snapMonth &&
@@ -5341,6 +5381,7 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
   final Value<String?> author;
   final Value<String?> channel;
   final Value<int> position;
+  final Value<int?> floorSeq;
   final Value<String?> snapQuery;
   final Value<String?> snapYear;
   final Value<String?> snapMonth;
@@ -5358,6 +5399,7 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
     this.author = const Value.absent(),
     this.channel = const Value.absent(),
     this.position = const Value.absent(),
+    this.floorSeq = const Value.absent(),
     this.snapQuery = const Value.absent(),
     this.snapYear = const Value.absent(),
     this.snapMonth = const Value.absent(),
@@ -5376,6 +5418,7 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
     this.author = const Value.absent(),
     this.channel = const Value.absent(),
     this.position = const Value.absent(),
+    this.floorSeq = const Value.absent(),
     this.snapQuery = const Value.absent(),
     this.snapYear = const Value.absent(),
     this.snapMonth = const Value.absent(),
@@ -5395,6 +5438,7 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
     Expression<String>? author,
     Expression<String>? channel,
     Expression<int>? position,
+    Expression<int>? floorSeq,
     Expression<String>? snapQuery,
     Expression<String>? snapYear,
     Expression<String>? snapMonth,
@@ -5413,6 +5457,7 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
       if (author != null) 'author': author,
       if (channel != null) 'channel': channel,
       if (position != null) 'position': position,
+      if (floorSeq != null) 'floor_seq': floorSeq,
       if (snapQuery != null) 'snap_query': snapQuery,
       if (snapYear != null) 'snap_year': snapYear,
       if (snapMonth != null) 'snap_month': snapMonth,
@@ -5433,6 +5478,7 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
     Value<String?>? author,
     Value<String?>? channel,
     Value<int>? position,
+    Value<int?>? floorSeq,
     Value<String?>? snapQuery,
     Value<String?>? snapYear,
     Value<String?>? snapMonth,
@@ -5451,6 +5497,7 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
       author: author ?? this.author,
       channel: channel ?? this.channel,
       position: position ?? this.position,
+      floorSeq: floorSeq ?? this.floorSeq,
       snapQuery: snapQuery ?? this.snapQuery,
       snapYear: snapYear ?? this.snapYear,
       snapMonth: snapMonth ?? this.snapMonth,
@@ -5486,6 +5533,9 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
     }
     if (position.present) {
       map['position'] = Variable<int>(position.value);
+    }
+    if (floorSeq.present) {
+      map['floor_seq'] = Variable<int>(floorSeq.value);
     }
     if (snapQuery.present) {
       map['snap_query'] = Variable<String>(snapQuery.value);
@@ -5527,6 +5577,7 @@ class BookmarksCompanion extends UpdateCompanion<Bookmark> {
           ..write('author: $author, ')
           ..write('channel: $channel, ')
           ..write('position: $position, ')
+          ..write('floorSeq: $floorSeq, ')
           ..write('snapQuery: $snapQuery, ')
           ..write('snapYear: $snapYear, ')
           ..write('snapMonth: $snapMonth, ')
@@ -10515,6 +10566,7 @@ typedef $$BookmarksTableCreateCompanionBuilder =
       Value<String?> author,
       Value<String?> channel,
       Value<int> position,
+      Value<int?> floorSeq,
       Value<String?> snapQuery,
       Value<String?> snapYear,
       Value<String?> snapMonth,
@@ -10534,6 +10586,7 @@ typedef $$BookmarksTableUpdateCompanionBuilder =
       Value<String?> author,
       Value<String?> channel,
       Value<int> position,
+      Value<int?> floorSeq,
       Value<String?> snapQuery,
       Value<String?> snapYear,
       Value<String?> snapMonth,
@@ -10586,6 +10639,11 @@ class $$BookmarksTableFilterComposer
 
   ColumnFilters<int> get position => $composableBuilder(
     column: $table.position,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get floorSeq => $composableBuilder(
+    column: $table.floorSeq,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -10679,6 +10737,11 @@ class $$BookmarksTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get floorSeq => $composableBuilder(
+    column: $table.floorSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get snapQuery => $composableBuilder(
     column: $table.snapQuery,
     builder: (column) => ColumnOrderings(column),
@@ -10755,6 +10818,9 @@ class $$BookmarksTableAnnotationComposer
   GeneratedColumn<int> get position =>
       $composableBuilder(column: $table.position, builder: (column) => column);
 
+  GeneratedColumn<int> get floorSeq =>
+      $composableBuilder(column: $table.floorSeq, builder: (column) => column);
+
   GeneratedColumn<String> get snapQuery =>
       $composableBuilder(column: $table.snapQuery, builder: (column) => column);
 
@@ -10824,6 +10890,7 @@ class $$BookmarksTableTableManager
                 Value<String?> author = const Value.absent(),
                 Value<String?> channel = const Value.absent(),
                 Value<int> position = const Value.absent(),
+                Value<int?> floorSeq = const Value.absent(),
                 Value<String?> snapQuery = const Value.absent(),
                 Value<String?> snapYear = const Value.absent(),
                 Value<String?> snapMonth = const Value.absent(),
@@ -10841,6 +10908,7 @@ class $$BookmarksTableTableManager
                 author: author,
                 channel: channel,
                 position: position,
+                floorSeq: floorSeq,
                 snapQuery: snapQuery,
                 snapYear: snapYear,
                 snapMonth: snapMonth,
@@ -10860,6 +10928,7 @@ class $$BookmarksTableTableManager
                 Value<String?> author = const Value.absent(),
                 Value<String?> channel = const Value.absent(),
                 Value<int> position = const Value.absent(),
+                Value<int?> floorSeq = const Value.absent(),
                 Value<String?> snapQuery = const Value.absent(),
                 Value<String?> snapYear = const Value.absent(),
                 Value<String?> snapMonth = const Value.absent(),
@@ -10877,6 +10946,7 @@ class $$BookmarksTableTableManager
                 author: author,
                 channel: channel,
                 position: position,
+                floorSeq: floorSeq,
                 snapQuery: snapQuery,
                 snapYear: snapYear,
                 snapMonth: snapMonth,

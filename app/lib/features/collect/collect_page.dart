@@ -1,179 +1,155 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
-import '../../core/constants.dart';
-import '../../data/repo/queries.dart';
+import '../../collector/collect_controller.dart';
+import '../../collector/collect_state.dart';
+import '../../core/icons.dart';
+import '../../core/window_size.dart';
 import '../../theme/app_colors.dart';
-import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
-import '../../theme/app_typography.dart';
-import '../category/category_page.dart' show dimensionCountsProvider;
-import '../home/cards.dart';
+import 'badges.dart';
+import 'buttons.dart';
+import 'collect_settings.dart';
+import 'debug_demo.dart';
+import 'idle_view.dart';
+import 'running_view.dart';
+import 'wide_dashboard.dart';
 
-// 采集 Tab（原型 §5.9）。
+// 采集中心（M2-①）。
 //
-// 当前实装的是**本地库概览**半边：库容量、数据截至、类别构成、origin 三档溯源语义 ——
-// 全部来自已就绪的 BookRepository，不新增查询面。
-// §5.9 的另一半（关注吧水位 / 立即采集 / 分步进度页 / 采集日志）依赖 App 内增量采集模块，
-// 属路线图 M2-①（lib/ 下尚无 collector 实现），此处**不做假 UI**，只以说明卡显式标注。
+// 三形态（设计稿 06 采集进度页 index.html:1584–1660 / W5t 2806–2905 / W5d 3400–3495，
+// 空闲态线框 = 原型 §5.9 行 479–512）：
+// - idle：账号卡 / 关注吧列表 / 添加吧 / 立即采集 / 最近日志（medium+ 双栏）；
+// - running/stopping compact：06 屏逐块复刻（ring / stat-grid / watermark / steps / logbox / 取消）；
+// - running/stopping 宽屏：仪表盘 grid（medium 2 列 / expanded 3 列 + dtable 日志表）。
+//
+// 运行态数据源 = 契约 collectRunStateProvider（只读消费，禁止改契约文件）；
+// 空闲态数据源 = collectForumsProvider / recentCollectLogsProvider（真 DB）。
 
-/// 数据截至日（§5.13 榜单页脚同源）。
-final FutureProvider<String?> collectCutoffProvider =
-    FutureProvider<String?>((Ref ref) => ref.watch(queriesProvider).dataCutoff());
-
-class CollectPage extends ConsumerWidget {
+class CollectPage extends ConsumerStatefulWidget {
   const CollectPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final AppColors c = AppColors.of(context);
-    final AppTypography t = AppTypography.of(context);
-    final AppSpacing s = AppSpacing.of(context);
-    final AsyncValue<CategoryCounts> counts = ref.watch(dimensionCountsProvider);
-    final String? cutoff = ref.watch(collectCutoffProvider).value;
-    final CategoryCounts? data = counts.value;
+  ConsumerState<CollectPage> createState() => _CollectPageState();
+}
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('采集')),
-      body: ListView(
-        padding: EdgeInsets.fromLTRB(s.pagePadding, s.space4, s.pagePadding, s.space8),
-        children: <Widget>[
-          SectionTitle(label: '本地库概览'),
-          _StatCard(
-            rows: <(String, String)>[
-              ('库容量', data == null ? '—' : '${data.total} 条'),
-              ('数据截至', cutoff ?? '—'),
-              ('年份跨度', data == null || data.years.isEmpty
-                  ? '—'
-                  : '${data.years.last.label} – ${data.years.first.label}'),
-            ],
-          ),
-          SizedBox(height: s.space6),
-          SectionTitle(label: '类别构成'),
-          if (data == null)
-            const SkeletonBlock(height: 96)
-          else
-            _StatCard(
-              rows: <(String, String)>[
-                for (final DimCount d in data.categories) (d.label, '${d.count} 条'),
-              ],
-            ),
-          SizedBox(height: s.space6),
-          SectionTitle(label: '溯源徽标'),
-          _LegendCard(
-            items: <(String, String)>[
-              (Origin.builtin, '种子数据包导入的行（origin=builtin / seed），随包发行'),
-              (Origin.collected, 'App 内增量采集入库的行（origin=collected），升级不覆盖'),
-              (Origin.imported, '外部数据包手动导入的行（origin=imported）'),
-            ],
-          ),
-          SizedBox(height: s.space6),
-          SectionTitle(label: '增量采集'),
-          Container(
-            padding: EdgeInsets.all(s.cardPadding),
-            decoration: BoxDecoration(
-              color: c.surfaceRaised,
-              borderRadius: AppRadius.lgBorder,
-              border: Border.all(color: c.border, width: AppMetrics.hairline),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+class _CollectPageState extends ConsumerState<CollectPage> {
+  /// 调试演示态（kDebugMode 限定，release 树摇掉）：长按 AppBar「匿名模式」徽标
+  /// 注入设计稿 06 屏演示快照（debug_demo.dart），用于无网络视觉验收与测试夹具复用。
+  CollectRunState? _demo;
+
+  void _toggleDemo() {
+    setState(() {
+      _demo = _demo != null ? null : debugDemoRunState();
+    });
+  }
+
+  Future<void> _startAll() async {
+    try {
+      await ref.read(collectControllerProvider).startAll();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('启动失败')));
+      }
+    }
+  }
+
+  Future<void> _cancel() async {
+    if (_demo != null) {
+      // 演示态：取消 = 退出演示（不触真实控制器）。
+      setState(() => _demo = null);
+      return;
+    }
+    try {
+      await ref.read(collectControllerProvider).cancel();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('取消失败')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppColors c = AppColors.of(context);
+    final AppSpacing s = AppSpacing.of(context);
+    final CollectRunState real = ref.watch(collectRunStateProvider);
+    final CollectRunState state = _demo ?? real;
+    final bool running = state.isRunning;
+    // 并发/仅WiFi 只在运行态展示（caption '并发 N' 与 W5d appbar badge），空闲态不触 DB。
+    final CollectSettings settings = running
+        ? ref.watch(collectSettingsProvider).value ?? const CollectSettings()
+        : const CollectSettings();
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final WindowSizeClass size = WindowSize.fromWidth(constraints.maxWidth);
+        return Scaffold(
+          appBar: AppBar(
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Icon(Icons.cloud_download_outlined, size: 20, color: c.textMuted),
-                    SizedBox(width: s.space2),
-                    Text('尚未实装（M2-①）', style: t.bodyStrong.copyWith(color: c.textSecondary)),
-                  ],
-                ),
-                SizedBox(height: s.space2),
-                Text(
-                  '关注吧水位续采、立即采集、分步进度与采集日志属 App 内增量采集模块，'
-                  '按路线图排在 M2-①。当前版本只读内置/已导入的本地库，不发起任何网络请求。',
-                  style: t.secondary.copyWith(color: c.textMuted),
+                // Tab 页无返回键；标题口径：运行态 = 采集中心（index.html:1597），空闲 = 采集。
+                Text(running ? '采集中心' : '采集'),
+                SizedBox(width: s.space2),
+                GestureDetector(
+                  key: const ValueKey<String>('collect-anon-badge'),
+                  onLongPress: kDebugMode ? _toggleDemo : null,
+                  child: const CollectBadge(label: '匿名模式', variant: CollectBadgeVariant.originSelf),
                 ),
               ],
             ),
+            actions: <Widget>[
+              // W5d appbar：'并发 2 · 仅 WiFi' badge kind + gear + 立即采集 btn-accent btn-sm
+              //（index.html:3420–3422；medium W5t 仅 gear，index.html:2831）。
+              if (running && size == WindowSizeClass.expanded) ...<Widget>[
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: s.space2),
+                  child: Center(
+                    child: CollectBadge(
+                      label: '并发 ${settings.concurrentForums}'
+                          '${settings.wifiOnly ? ' · 仅 WiFi' : ''}',
+                      variant: CollectBadgeVariant.kind,
+                    ),
+                  ),
+                ),
+              ],
+              IconButton(
+                tooltip: '采集设置',
+                icon: AppIcon('gear', size: 20, color: c.textSecondary),
+                onPressed: () => context.push('/settings'),
+              ),
+              if (running && size == WindowSizeClass.expanded)
+                Padding(
+                  padding: EdgeInsets.only(right: s.space3),
+                  child: Center(
+                    child: CollectButton(
+                      label: '立即采集',
+                      small: true,
+                      onPressed: _startAll,
+                    ),
+                  ),
+                ),
+            ],
           ),
-        ],
-      ),
-    );
-  }
-}
-
-/// 键值统计卡（dtable 语汇的轻量版：左标签右 tabular 数值）。
-class _StatCard extends StatelessWidget {
-  const _StatCard({required this.rows});
-
-  final List<(String, String)> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    final AppColors c = AppColors.of(context);
-    final AppTypography t = AppTypography.of(context);
-    final AppSpacing s = AppSpacing.of(context);
-    return Container(
-      padding: EdgeInsets.symmetric(horizontal: s.cardPadding, vertical: s.space2),
-      decoration: BoxDecoration(
-        color: c.surfaceRaised,
-        borderRadius: AppRadius.lgBorder,
-        border: Border.all(color: c.border, width: AppMetrics.hairline),
-      ),
-      child: Column(
-        children: <Widget>[
-          for (int i = 0; i < rows.length; i++) ...<Widget>[
-            if (i > 0) Divider(height: AppMetrics.hairline, thickness: AppMetrics.hairline, color: c.border),
-            SizedBox(
-              height: AppMetrics.listRowHeight,
-              child: Row(
-                children: <Widget>[
-                  Expanded(child: Text(rows[i].$1, style: t.secondary.copyWith(color: c.textSecondary))),
-                  Text(rows[i].$2, style: AppTypography.tabular(t.bodyStrong.copyWith(color: c.text))),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-/// 图例卡（徽标 + 说明）。
-class _LegendCard extends StatelessWidget {
-  const _LegendCard({required this.items});
-
-  final List<(String, String)> items;
-
-  @override
-  Widget build(BuildContext context) {
-    final AppTypography t = AppTypography.of(context);
-    final AppColors c = AppColors.of(context);
-    final AppSpacing s = AppSpacing.of(context);
-    return Container(
-      padding: EdgeInsets.all(s.cardPadding),
-      decoration: BoxDecoration(
-        color: c.surfaceRaised,
-        borderRadius: AppRadius.lgBorder,
-        border: Border.all(color: c.border, width: AppMetrics.hairline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          for (final (String origin, String desc) in items)
-            Padding(
-              padding: EdgeInsets.only(bottom: s.space2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  OriginBadge(origin: origin),
-                  SizedBox(width: s.space3),
-                  Expanded(child: Text(desc, style: t.caption.copyWith(color: c.textMuted))),
-                ],
-              ),
-            ),
-        ],
-      ),
+          body: running
+              ? (size == WindowSizeClass.compact
+                    ? CollectRunningView(
+                        state: state,
+                        concurrency: settings.concurrentForums,
+                        onCancel: _cancel,
+                      )
+                    : CollectWideDashboard(
+                        state: state,
+                        expanded: size == WindowSizeClass.expanded,
+                        concurrency: settings.concurrentForums,
+                        onCancel: _cancel,
+                      ))
+              : CollectIdleView(wide: size != WindowSizeClass.compact),
+        );
+      },
     );
   }
 }

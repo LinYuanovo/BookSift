@@ -158,6 +158,10 @@ abstract final class AppMetrics {
   static const double rankRowMinHeight = 64; // §4 榜单行
   static const double emptyStateIconSize = 64; // §4 空态线稿插画 64px
 
+  /// 目录类底部弹层的高度上限系数（× 屏幕可用高度）：isScrollControlled 的弹层默认
+  /// 可铺满全屏，长目录会顶到状态栏、丢掉「这是一层浮层」的视觉线索；短目录仍按内容收缩。
+  static const double tocSheetHeightFactor = 0.7;
+
   /// `--shadow-overlay` 几何：0 12px 32px（§2.1，仅浮层 Toast/Snackbar/弹层使用）。
   static const double shadowOverlayOffsetY = 12;
   static const double shadowOverlayBlur = 32;

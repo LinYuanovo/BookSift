@@ -11,7 +11,9 @@ import '../../theme/app_typography.dart';
 // 1) 《书名》→ 红色加粗可点（点击=以书名发起全库搜索，长按=复制书名，MI-3）；
 // 2) URL → info 色下划线可点（点击=复制 + Toast「链接已复制到剪贴板」，§5.6 渲染管线 2）；
 // 3) 搜索词 → 琥珀高亮逐词 IGNORE_CASE 着色（§5.6 渲染管线 4）；
-// 4) 楼层前缀 ● N楼 与内联图片由 content_detail_page 组装。
+// 4) 楼层前缀 ● N楼 与内联图片由 content_detail_page 组装；
+// 5) 页内搜索（任务 4）→ searchWord 字面量级 IGNORE_CASE 命中全部琥珀，第
+//    searchFocusIndex 个命中换 accent 当前色；计数函数 countSearchHits 与着色同口径。
 
 /// 书名 span（WidgetSpan 承载 → 独立命中区可测试；1–40 字防误吞整段）。
 final RegExp _bookPattern = RegExp(r'《([^《》\n]{1,40})》');
@@ -83,6 +85,24 @@ List<FloorSegment> parseFloorSegments(String text) {
   return out;
 }
 
+/// 页内搜索命中计数（任务 4）：与 [FloorRichText] 的着色**同一口径** —— 只数
+/// [parseFloorSegments] 纯文本段内的 IGNORE_CASE 字面量命中（书名/URL span 不参与
+/// 着色也就不计数），保证搜索条「当前/总数」与可见高亮一一对应、第 k 个命中的
+/// 索引两端一致（content_detail_page 的命中定位与 FloorRichText 的当前色共用）。
+int countSearchHits(String text, String searchWord) {
+  if (searchWord.isEmpty) {
+    return 0;
+  }
+  final RegExp re = RegExp(RegExp.escape(searchWord), caseSensitive: false);
+  int n = 0;
+  for (final FloorSegment seg in parseFloorSegments(text)) {
+    if (seg is PlainSegment) {
+      n += re.allMatches(seg.text).length;
+    }
+  }
+  return n;
+}
+
 /// 楼层正文（Text.rich + WidgetSpan；书名/链接可点，搜索词琥珀高亮）。
 class FloorRichText extends StatefulWidget {
   const FloorRichText({
@@ -90,6 +110,9 @@ class FloorRichText extends StatefulWidget {
     required this.text,
     required this.onBookTap,
     this.highlightWords = const <String>[],
+    this.searchWord = '',
+    this.searchFocusIndex = -1,
+    this.selectable = false,
   });
 
   final String text;
@@ -98,12 +121,29 @@ class FloorRichText extends StatefulWidget {
   final ValueChanged<String> onBookTap;
   final List<String> highlightWords;
 
+  /// 任务 4 页内搜索词：字面量级 IGNORE_CASE 命中全部琥珀（c.highlight），第
+  /// [searchFocusIndex] 个命中（按本楼内出现顺序 0 起）换当前色（c.accent 底 +
+  /// onAccent 字色）。空串 = 未激活。口径见 [countSearchHits]（只数纯文本段）。
+  final String searchWord;
+
+  /// 当前命中在本楼层内的序号；-1 = 本楼不含当前命中（全部普通琥珀）。
+  final int searchFocusIndex;
+
+  /// P1-6 自由复制选择模式：书名/URL 一律降级为**纯文本 span**（无 recognizer、
+  /// 无 InkWell WidgetSpan），点击手势暂停，选择与复制交由外层 SelectionArea；
+  /// 复制得到纯文本（书名《》原样、搜索高亮 background 不影响选区字节）。
+  final bool selectable;
+
   @override
   State<FloorRichText> createState() => _FloorRichTextState();
 }
 
 class _FloorRichTextState extends State<FloorRichText> {
   final List<TapGestureRecognizer> _recognizers = <TapGestureRecognizer>[];
+
+  /// 页内搜索命中游标（任务 4）：一次 build 内跨 PlainSegment 连续计数，
+  /// build 入口归零；与 searchFocusIndex / 搜索条计数（countSearchHits）同口径。
+  int _searchCursor = 0;
 
   void _disposeRecognizers() {
     for (final TapGestureRecognizer r in _recognizers) {
@@ -124,8 +164,40 @@ class _FloorRichTextState extends State<FloorRichText> {
     return r;
   }
 
-  /// 纯文本段内按搜索词逐词 IGNORE_CASE 高亮。
+  /// 纯文本段内两层高亮（任务 4）：页内搜索词优先 —— 命中子串走「当前色/琥珀」，
+  /// 命中间隙子串再走外部搜索词逐词琥珀高亮（§5.6 渲染管线 4）。
   List<TextSpan> _highlighted(String text, TextStyle base) {
+    if (widget.searchWord.isEmpty) {
+      return _wordHighlighted(text, base);
+    }
+    final AppColors c = AppColors.of(context);
+    final RegExp re = RegExp(RegExp.escape(widget.searchWord), caseSensitive: false);
+    final List<TextSpan> spans = <TextSpan>[];
+    int cursor = 0;
+    for (final RegExpMatch m in re.allMatches(text)) {
+      if (m.start > cursor) {
+        spans.addAll(_wordHighlighted(text.substring(cursor, m.start), base));
+      }
+      final int k = _searchCursor++;
+      final bool focused = k == widget.searchFocusIndex;
+      spans.add(TextSpan(
+        text: m.group(0),
+        // 当前命中：accent 底 + onAccent 字色（对比度由 token 保证）；普通命中琥珀底不改字色。
+        style: base.copyWith(
+          background: Paint()..color = focused ? c.accent : c.highlight,
+          color: focused ? c.onAccent : null,
+        ),
+      ));
+      cursor = m.end;
+    }
+    if (cursor < text.length) {
+      spans.addAll(_wordHighlighted(text.substring(cursor), base));
+    }
+    return spans;
+  }
+
+  /// 外部搜索词逐词 IGNORE_CASE 琥珀高亮（§5.6 渲染管线 4；页内搜索命中间隙也用）。
+  List<TextSpan> _wordHighlighted(String text, TextStyle base) {
     final List<String> words = widget.highlightWords.where((String w) => w.trim().isNotEmpty).toList();
     if (words.isEmpty) {
       return <TextSpan>[TextSpan(text: text)];
@@ -153,6 +225,8 @@ class _FloorRichTextState extends State<FloorRichText> {
   Widget build(BuildContext context) {
     // 旧一代 span 随重建丢弃，recognizer 同步回收（dispose 幂等由 clear 保证）。
     _disposeRecognizers();
+    // 任务 4：命中序号每次 build 从头数（出现顺序与 countSearchHits 分母一致）。
+    _searchCursor = 0;
 
     final AppColors c = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
@@ -163,18 +237,26 @@ class _FloorRichTextState extends State<FloorRichText> {
         case PlainSegment(:final String text):
           spans.addAll(_highlighted(text, base));
         case BookSegment(:final String name):
-          spans.add(WidgetSpan(
-            alignment: PlaceholderAlignment.middle,
-            child: _BookSpan(
-              name: name,
-              style: t.bodyRich.copyWith(color: c.bookname, fontWeight: FontWeight.w600),
-              onTap: () => widget.onBookTap(name),
-              onLongPress: () {
-                Clipboard.setData(ClipboardData(text: name));
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('书名已复制到剪贴板')));
-              },
-            ),
-          ));
+          if (widget.selectable) {
+            // P1-6 选择模式：书名并入连续文本流（《》原样可复制），InkWell 点击/长按手势暂停。
+            spans.add(TextSpan(
+              text: '《$name》',
+              style: base.copyWith(color: c.bookname, fontWeight: FontWeight.w600),
+            ));
+          } else {
+            spans.add(WidgetSpan(
+              alignment: PlaceholderAlignment.middle,
+              child: _BookSpan(
+                name: name,
+                style: t.bodyRich.copyWith(color: c.bookname, fontWeight: FontWeight.w600),
+                onTap: () => widget.onBookTap(name),
+                onLongPress: () {
+                  Clipboard.setData(ClipboardData(text: name));
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('书名已复制到剪贴板')));
+                },
+              ),
+            ));
+          }
         case UrlSegment(:final String url):
           spans.add(TextSpan(
             text: url,
@@ -183,10 +265,13 @@ class _FloorRichTextState extends State<FloorRichText> {
               decoration: TextDecoration.underline,
               decorationColor: c.info,
             ),
-            recognizer: _tap(() {
-              Clipboard.setData(ClipboardData(text: url));
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('链接已复制到剪贴板')));
-            }),
+            // P1-6 选择模式：链接点击复制暂停（recognizer 不挂载），样式保持视觉连续。
+            recognizer: widget.selectable
+                ? null
+                : _tap(() {
+                    Clipboard.setData(ClipboardData(text: url));
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('链接已复制到剪贴板')));
+                  }),
           ));
       }
     }
@@ -238,7 +323,8 @@ class FloorHeader extends StatelessWidget {
       padding: EdgeInsets.only(top: s.space4, bottom: s.space2),
       child: Row(
         children: <Widget>[
-          Icon(Icons.circle, size: 7, color: c.accent),
+          // 楼层头圆点 = 装饰色块（设计 dot-sep 语汇 index.html:669），非结构图标，不用 Material Icon。
+          Container(width: 7, height: 7, decoration: BoxDecoration(color: c.accent, shape: BoxShape.circle)),
           SizedBox(width: s.space2),
           Text('$seq楼', style: t.label.copyWith(color: c.textMuted, letterSpacing: 0)),
         ],

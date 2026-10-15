@@ -7,19 +7,31 @@
 //
 // 覆盖：闸门 / 首启导入 / 重复导入幂等 / 升级重写保用户行(组重挂+分类列直迁) /
 // SHA256 失败拒绝(zip+db 两级) / FTS 后台重建(进度流+MATCH+触发器恢复) / 取消+重跑 /
-// importFull 预建 FTS 影子表复制跳过重建 / 真实 lite asset 包完整性。
+// importFull 预建 FTS 影子表复制跳过重建 / 维护闸门随包走(pre_deduped+pre_classified_v3
+// → 落账跳过首启白扫；老包无标记不退化；包版本过期仍重跑) / 真实 lite asset 包完整性。
 //
 // ── 真实 lite 包桌面实测（BENCH 测试，pwsh：`$env:BENCH='true'; flutter test
-//    test/seed_import_test.dart --plain-name BENCH`；2026-10-13，Windows 桌面 flutter-test JIT，
-//    NVMe，包体 = repack_deflate.py 产物：deflate zip 54.3MiB / seed.db 157.2MiB / comment≤300）：
-//    ┌ 导入全程（asset 读取→sha256 校验 zip+db→解压 157MB→ATTACH 单事务拷贝 178k 行→闸门落账→清理）
-//    │   = 3.3s（其中解压+校验段 2.4s，拷贝事务段 ~0.9s）
-//    ├ FTS 后台重建（book_fts 74,498 + floor_fts 46,765 行，62 批×2000）= 21.5s
-//    └ 导入+重建后 app.db = 392MiB
+//    test/seed_import_test.dart --plain-name BENCH`；2026-10-14，Windows 桌面 flutter-test JIT，
+//    NVMe，包体 = `repack_deflate.py --target-mb 70` 产物（源 = 就地清洗后的
+//    `_build/seed_lite.db`）：deflate zip 60.5MiB / seed.db 165.0MiB / comment≤300 /
+//    schema v4（17 索引）/ 已去重 + v3 分类已回填 + category 已镜像同步）：
+//    ┌ 导入全程（asset 读取→sha256 校验 zip+db→解压 165MB→ATTACH 单事务拷贝 305k 行→闸门落账→清理）
+//    │   = 3.46s（其中解压+校验段 2.34s，拷贝事务段 ~1.1s）
+//    ├ FTS 后台重建（book_fts 53,441 + floor_fts 165,399 行，110 批×2000）= 18.4s
+//    ├ 首启维护 no-op 验证（dedup 0 删 / reclassify 0 改 0 同步，含词典构建）= 9.8s ← 见下注
+//    └ 导入+重建后 app.db = 400MiB
+//    注：维护那 9.8s 是「白扫」——包内已是收敛态，扫完 0 删 0 改。**生产路径不付这笔钱**：
+//    闸门随包走（manifest.features.pre_deduped / pre_classified_v3 → _copyInTransaction 第 5b 步
+//    落 settings.dedup_version / classifier_version），首启 needsDedup/needsReclassify 均为 false
+//    直接跳过；本 BENCH 仍**强制直调** dedupBookEntries/reclassifyPostsV3 以保留 no-op 验收。
+//    对比清洗固化前同段 18.7s：降幅来自 schema v4 的 12 个查询索引（drift `_createQueryIndexes`），
+//    代价是导入拷贝段 0.7s→1.1s（带索引批量插入）与 app.db 388→400MiB。实测过「拷贝期临时
+//    DROP 索引」，不划算（省下的与事后对满表 CREATE INDEX 的全表扫+排序相抵，还开出
+//    「有数据无索引」的崩溃窗口），故不采用。
 //    对照：种子包说明.md §8 的 35.0s 首启导入口径含触发器逐行同步 FTS；本实现拷贝期摘除触发器、
 //    FTS 改后台批式重建，故导入事务远快于该口径。中端手机按文档 §6.3 的 ×2–3 系数估算：
 //    导入 ≈ 10–25s（一次性、有进度页），FTS 重建 ≈ 45–90s（后台 isolate，不阻塞 UI，可取消续跑）；
-//    Release AOT 下纯 Dart 段（sha256/inflate）还会更快。
+//    Release AOT 下纯 Dart 段（sha256/inflate）还会更快。清洗固化的完整口径见 种子包说明.md §12。
 @Timeout(Duration(minutes: 10))
 library;
 
@@ -34,8 +46,10 @@ import 'package:flutter/foundation.dart' show FlutterError;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:saoshuhui/data/db/app_database.dart';
-import 'package:saoshuhui/data/seed_import.dart';
+import 'package:booksift/classify/classifier.dart';
+import 'package:booksift/data/db/app_database.dart';
+import 'package:booksift/data/maintenance.dart';
+import 'package:booksift/data/seed_import.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 
 // ─────────────────────────── fixture 常量与构建 ───────────────────────────
@@ -53,12 +67,18 @@ const String _commentPad = '长剑如歌行板测试文本段落甲乙丙丁戊�
     '长剑如歌行板测试文本段落甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥';
 const int _groupCountV1 = 5;
 
+/// 闸门类用例的小包行数（只验 settings 落账，不需要 FTS 重建那种规模）。
+const int _entryCountSmall = 100;
+
 late Directory _root; // 全部 fixture 的临时根
 late Directory _bundleV1; // lite v1 asset 目录（zip + manifest，含 full_pack 块）
 late Directory _bundleV2; // lite v2 asset 目录（升级用：改标题/删组换 id/加行/带分类列）
 late Directory _bundleBadZip; // v1 manifest + 中段字节损坏的 zip
 late Directory _bundleBadDbSha; // 内嵌 manifest db_sha256 全零
+late Directory _bundleGated; // 清洗固化 lite 包：features 带 pre_deduped + pre_classified_v3
+late Directory _bundleStale; // 同上但分类器版本过期（pre_classified_v3 = classifierVersion - 1）
 late String _fullZipPath; // full 档（预建 FTS）zip 磁盘路径（模拟用户下载件）
+late String _fullGatedZipPath; // full 档清洗固化包（预建 FTS + 同两个标记）zip 路径
 
 /// 直建迷你 seed.db（镜像 make_seed_pack.py 的 DDL；含 seed-only 溯源列以验证导入按列名取用）。
 void _writeSeedDb(
@@ -246,6 +266,7 @@ void _writeSeedDb(
 }
 
 /// 打 deflate zip + 写随包 manifest.json（生产同款结构）。返回 zip sha256。
+/// features 块同时进 zip 内嵌 manifest 与随包 sidecar（sidecar 由 `...embedded` 展开）。
 String _writeSeedPack(
   Directory dir, {
   required String zipName,
@@ -254,6 +275,8 @@ String _writeSeedPack(
   required int groupCount,
   bool ftsPrebuilt = false,
   bool kindColumns = false,
+  bool preDeduped = false,
+  int? preClassifiedV3,
   String? dbSha256Override,
   Map<String, Object?>? fullPack,
   void Function(String dbPath)? seedDbCustomizer,
@@ -282,7 +305,14 @@ String _writeSeedPack(
     'db_file': 'seed.db',
     'db_size_bytes': dbFile.lengthSync(),
     'db_sha256': dbSha,
-    'features': <String, Object?>{'fts_prebuilt': ftsPrebuilt, 'comment_max_chars': ftsPrebuilt ? null : 300},
+    'features': <String, Object?>{
+      'fts_prebuilt': ftsPrebuilt,
+      'comment_max_chars': ftsPrebuilt ? null : 300,
+      // 清洗固化标记（发行包 app/assets/seed/manifest.json 同款口径）：
+      // 有则导入侧按包落维护闸门；无则一个闸门都不写（老包 / 未清洗档行为）。
+      if (preDeduped) 'pre_deduped': true,
+      'pre_classified_v3': ?preClassifiedV3,
+    },
     'rows': <String, int>{
       'posts': _postCount, 'floors': _floorCount, 'images': _imageCount,
       'book_entries': entryCount, 'book_groups': groupCount,
@@ -441,6 +471,30 @@ void main() {
     _writeSeedPack(_bundleBadDbSha,
         zipName: 'seed_pack_lite_v1.zip', packVersion: 1,
         entryCount: 100, groupCount: 2, dbSha256Override: '0' * 64);
+    // ⑥ 清洗固化档（对标 bake_clean_seed.dart 产物）：full 先建（其 sha 进 lite 的 full_pack 块），
+    //    features 带 pre_deduped + pre_classified_v3 = App 当前 classifierVersion。
+    final Directory fullGatedDir = Directory(p.join(_root.path, 'full_pack_gated'))..createSync(recursive: true);
+    _writeSeedPack(fullGatedDir,
+        zipName: 'seed_pack_v1.zip', packVersion: 1,
+        entryCount: _entryCountSmall, groupCount: 2, ftsPrebuilt: true,
+        preDeduped: true, preClassifiedV3: classifierVersion);
+    _fullGatedZipPath = p.join(fullGatedDir.path, 'seed_pack_v1.zip');
+    final String fullGatedSha = sha256.convert(File(_fullGatedZipPath).readAsBytesSync()).toString();
+    _bundleGated = Directory(p.join(_root.path, 'bundle_gated'));
+    _writeSeedPack(_bundleGated,
+        zipName: 'seed_pack_lite_v1.zip', packVersion: 1,
+        entryCount: _entryCountSmall, groupCount: 2,
+        preDeduped: true, preClassifiedV3: classifierVersion,
+        fullPack: <String, Object?>{
+          'pack_version': 1, 'zip_file': 'seed_pack_v1.zip',
+          'zip_size_bytes': File(_fullGatedZipPath).lengthSync(), 'zip_sha256': fullGatedSha,
+        });
+    // ⑦ 分类器版本过期的清洗包（包 2 / App 3）→ 闸门不匹配，首启仍须重跑回填
+    _bundleStale = Directory(p.join(_root.path, 'bundle_stale_classifier'));
+    _writeSeedPack(_bundleStale,
+        zipName: 'seed_pack_lite_v1.zip', packVersion: 1,
+        entryCount: _entryCountSmall, groupCount: 2,
+        preDeduped: true, preClassifiedV3: classifierVersion - 1);
   });
 
   tearDownAll(() async {
@@ -701,6 +755,75 @@ void main() {
     expect(miss.single.phase, SeedImportPhase.error);
   });
 
+  // ── 维护闸门随包走（manifest.features.pre_deduped / pre_classified_v3）──
+  // 未覆盖「闸门与内容拷贝同事务」的原子性：闸门写入是 _copyInTransaction 第 5 步，其后只剩
+  // DELETE settings / DROP TEMP TABLE / COUNT 对账三类不可能失败的语句，而拷贝段（第 3 步）
+  // 能造的失败都发生在闸门之前 —— fixture 层任何可造的中断点都只能证明「内容回滚」，
+  // 证明不了「闸门与内容同生共死」。要造得在 drift 之外包一层「第 N 条语句抛错」的
+  // QueryExecutor，超出本次范围；原子性由代码结构保证（同一个 `_db.transaction`）。
+
+  test('闸门随包走：清洗包导入即落维护闸门，首启维护跳过', () async {
+    final Directory env = Directory(p.join(_root.path, 't10'))..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter importer) = _newEnv(_bundleGated, env);
+    final SeedManifest m = (await importer.readManifest())!;
+    expect(m.preDeduped, isTrue);
+    expect(m.preClassifiedVersion, classifierVersion);
+
+    expect((await importer.importBasic().toList()).last.phase, SeedImportPhase.done);
+
+    // 闸门值取自包声明（非 App 常量写死）→ needsXxx 双双 false，首启维护整段跳过
+    expect(await _setting(db, 'dedup_version'), dedupDoneValue);
+    expect(await _setting(db, 'classifier_version'), '$classifierVersion');
+    expect(await needsDedup(db), isFalse);
+    expect(await needsReclassify(db), isFalse);
+    // 闸门只影响维护，不影响导入本体
+    expect(await _count(db, 'SELECT COUNT(*) AS n FROM book_entries'), _entryCountSmall);
+    expect(await _setting(db, 'seed_version'), '1');
+  });
+
+  test('老包不退化：manifest 无清洗标记 → 两个维护闸门都不写，维护照跑', () async {
+    final Directory env = Directory(p.join(_root.path, 't11'))..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter importer) = _newEnv(_bundleV1, env);
+    final SeedManifest m = (await importer.readManifest())!;
+    expect(m.preDeduped, isFalse);
+    expect(m.preClassifiedVersion, isNull);
+
+    expect((await importer.importBasic().toList()).last.phase, SeedImportPhase.done);
+
+    expect(await _setting(db, 'dedup_version'), isNull);
+    expect(await _setting(db, 'classifier_version'), isNull);
+    expect(await needsDedup(db), isTrue);
+    expect(await needsReclassify(db), isTrue);
+    expect(await _setting(db, 'seed_version'), '1'); // 版本闸门不受影响
+  });
+
+  test('包声明过期分类器版本：闸门不匹配 → 仍会重跑回填（dedup 闸门照落）', () async {
+    final Directory env = Directory(p.join(_root.path, 't12'))..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter importer) = _newEnv(_bundleStale, env);
+    expect((await importer.importBasic().toList()).last.phase, SeedImportPhase.done);
+
+    expect(await _setting(db, 'classifier_version'), '${classifierVersion - 1}');
+    expect(await needsReclassify(db), isTrue, reason: '包版本落后 App classifierVersion → 首启自动重跑并落新版本');
+    expect(await _setting(db, 'dedup_version'), dedupDoneValue);
+    expect(await needsDedup(db), isFalse);
+  });
+
+  test('importFull 同走 _copyInTransaction：full 档清洗包也落维护闸门', () async {
+    final Directory env = Directory(p.join(_root.path, 't13'))..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter importer) = _newEnv(_bundleGated, env);
+    final List<SeedImportState> states = await importer.importFull(_fullGatedZipPath).toList();
+    expect(states.last.phase, SeedImportPhase.done, reason: states.last.message);
+
+    // full 档以 zip 内嵌 manifest 为权威 → 同一份 features 标记同样落闸门
+    expect(await _setting(db, 'dedup_version'), dedupDoneValue);
+    expect(await _setting(db, 'classifier_version'), '$classifierVersion');
+    expect(await needsDedup(db), isFalse);
+    expect(await needsReclassify(db), isFalse);
+    expect(await _setting(db, 'seed_version'), '1');
+    expect(await _setting(db, 'seed_full_version'), '1');
+    expect(await _setting(db, DefaultSeedImporter.ftsRebuildDoneKey), '1'); // 预建影子表复制成功
+  });
+
   test('真实 lite asset 包：manifest 解析 + zip SHA256 流式校验', () async {
     final AppDatabase db = AppDatabase(NativeDatabase.memory());
     _openDbs.add(db);
@@ -710,9 +833,15 @@ void main() {
     expect(m!.version, 1);
     expect(m.tier, 'lite');
     expect(m.ftsPrebuilt, isFalse);
-    expect(m.schemaVersion, 1);
-    expect(m.rows['posts'], 29686);
-    expect(m.rows['book_entries'], 74498);
+    // 2026-10-14 清洗固化（app/tool/bake_clean_seed.dart）：包内库经 drift 迁移到当期
+    // schemaVersion（v4 = 补齐查询索引），posts 带 post_kind/recommend_flag
+    // → 导入侧 `_seedPostsHasKindColumns()` 走直迁分支。
+    expect(m.schemaVersion, 4);
+    // 种子重打后随 app/assets/seed/manifest.json 的 rows 同步更新（repack_deflate.py 产物；
+    // 2026-10-13 合并 collected_full 后：posts 29686→38905、book_entries 74498→79355；
+    // 2026-10-14 去重固化后：book_entries 79355→53441（-25914），posts 不受去重影响）。
+    expect(m.rows['posts'], 38905);
+    expect(m.rows['book_entries'], 53441);
     expect(m.dbSha256, isNotNull);
     expect(m.zipSha256, isNotNull);
     expect(m.fullVersion, 1); // full_pack 下载清单块
@@ -734,7 +863,7 @@ void main() {
     'BENCH：真实 lite 包桌面实测（导入 + FTS 重建）',
     skip: Platform.environment['BENCH'] == 'true'
         ? false
-        : r'需 $env:BENCH=true（真实 54MB asset 包，分钟级）',
+        : r'需 $env:BENCH=true（真实 60MB asset 包，分钟级）',
     () async {
       final Directory env = Directory.systemTemp.createTempSync('seed_bench');
       try {
@@ -766,6 +895,15 @@ void main() {
         expect(await _count(db, 'SELECT COUNT(*) AS n FROM posts'), m.rows['posts']);
         expect(await _count(db, 'SELECT COUNT(*) AS n FROM book_entries'), m.rows['book_entries']);
 
+        // 闸门随包走：清洗标记在导入事务内落账 → 生产路径首启维护直接跳过（下面那段「白扫」
+        // 是本 BENCH 特意强制直调的 no-op 验收，不是生产行为）。
+        expect(m.preDeduped, isTrue);
+        expect(m.preClassifiedVersion, classifierVersion);
+        expect(await _setting(db, 'dedup_version'), dedupDoneValue);
+        expect(await _setting(db, 'classifier_version'), '$classifierVersion');
+        expect(await needsDedup(db), isFalse);
+        expect(await needsReclassify(db), isFalse);
+
         sw.reset();
         var rebuildSeconds = -1.0;
         var progressEvents = 0;
@@ -784,6 +922,27 @@ void main() {
             .customSelect("SELECT COUNT(*) AS n FROM book_fts WHERE book_fts MATCH '世子很凶'")
             .getSingle();
         expect(hit.read<int>('n'), greaterThan(0));
+
+        // ── 清洗固化验收（2026-10-14）──
+        // 发行包内已是收敛态（bake_clean_seed.dart：先裁 comment≤300 → dedup → v3 回填），
+        // 故真机首启的后台维护必须是 no-op。只能在**实际发行包**上验：dedup 判据是
+        // normText(comment) 前缀链（maintenance.dart `_judgeDupGroup`），与 comment 截断阈值
+        // 耦合；工具内的二刷只覆盖中间库，覆盖不到「导入直迁 post_kind」这一段。
+        final Stopwatch maint = Stopwatch()..start();
+        final DedupStats dedup = await dedupBookEntries(db);
+        final BookDict dict =
+            BookDict.fromLines(await File('assets/dict/book_dict.txt').readAsLines());
+        final ReclassifyStats reclass = await reclassifyPostsV3(db, dict: dict);
+        expect(dedup.rowsDeleted, 0, reason: '发行包已去重，首启维护不应再删行');
+        expect(reclass.postsUpdated, 0, reason: '发行包已按 v3 回填，首启维护不应再改分类');
+        expect(await _setting(db, 'dedup_version'), dedupDoneValue);
+        expect(await _setting(db, 'classifier_version'), '$classifierVersion');
+        // 分类分布随包直迁（口径 = manifest.clean；排雷帖占比 40.8% 是 v3 回填的主要成果）
+        expect(await _count(db, "SELECT COUNT(*) AS n FROM posts WHERE post_kind = '排雷'"), 15856);
+        // ignore: avoid_print
+        print('[BENCH] 首启维护 no-op（dedup ${dedup.rowsDeleted} 删 / reclassify '
+            '${reclass.postsUpdated} 改）: ${(maint.elapsedMilliseconds / 1000).toStringAsFixed(1)}s');
+
         final int dbSizeKb = (File(dbPath).lengthSync() / 1024).round();
         // ignore: avoid_print
         print('[BENCH] ────────── 桌面实测汇总（Windows, flutter-test JIT）──────────');

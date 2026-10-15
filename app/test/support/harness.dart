@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:saoshuhui/app_router.dart';
-import 'package:saoshuhui/core/fonts/font_service.dart';
-import 'package:saoshuhui/data/repo/database_provider.dart';
-import 'package:saoshuhui/data/repo/queries.dart';
-import 'package:saoshuhui/features/home/home_page.dart';
-import 'package:saoshuhui/theme/book_theme.dart';
+import 'package:booksift/app_router.dart';
+import 'package:booksift/core/fonts/font_service.dart';
+import 'package:booksift/data/repo/database_provider.dart';
+import 'package:booksift/data/repo/queries_providers.dart';
+import 'package:booksift/data/seed_import.dart';
+import 'package:booksift/data/seed_import_providers.dart';
+import 'package:booksift/features/home/home_page.dart';
+import 'package:booksift/theme/book_theme.dart';
 
 import '../font_service_test.dart' as fontfakes;
 import 'fake_book_repository.dart';
@@ -30,11 +32,43 @@ FontService fakeFontService() {
   );
 }
 
+/// 零 IO 种子导入 fake（闸门恒关、FTS 恒就绪）：BookSiftApp initState 的
+/// ensureStarted 在其下完全惰性——不触 rootBundle / drift / isolate（TESTING.md §1）。
+class NoopSeedImporter implements SeedImporter {
+  @override
+  Future<int?> readSeedVersion() async => 999;
+
+  @override
+  Future<int?> readSeedFullVersion() async => 999;
+
+  @override
+  Future<SeedManifest?> readManifest() async => null;
+
+  @override
+  Future<bool> needsBasicImport() async => false;
+
+  @override
+  Future<bool> needsFullImport() async => false;
+
+  @override
+  Stream<SeedImportState> importBasic() => const Stream<SeedImportState>.empty();
+
+  @override
+  Stream<SeedImportState> importFull(String zipPath) => const Stream<SeedImportState>.empty();
+
+  @override
+  Future<bool> ftsRebuildDone() async => true;
+
+  @override
+  Stream<SeedImportState> rebuildFts() => const Stream<SeedImportState>.empty();
+}
+
 /// widget 测试的 Provider 覆盖集。
 List<Override> testOverrides(FakeBookRepository repo) {
   return <Override>[
     queriesProvider.overrideWithValue(repo),
     fontServiceProvider.overrideWith((Ref ref) => fakeFontService()),
+    seedImporterProvider.overrideWithValue(NoopSeedImporter()),
     appDatabaseProvider.overrideWith(
       (Ref ref) => throw StateError(
         'widget 测试禁止触碰真实数据库（drift / path_provider / isolate 都是真实异步，'

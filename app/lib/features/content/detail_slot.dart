@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/window_size.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/queries.dart';
+import '../../data/repo/queries_providers.dart';
 
 // 详情页接线（M1-④）：compact/medium 走 push 路由；expanded 在 AppShell 双栏右槽
 // （app_shell.dart _DetailSlot）原位切换（设计系统 §9.7 list-detail 语义）。
@@ -17,6 +18,8 @@ class PostSelection {
     this.position = 0,
     this.snapshot,
     this.highlight,
+    this.initialFloorSeq,
+    this.initialFloorId,
   });
 
   final int postId;
@@ -29,6 +32,14 @@ class PostSelection {
 
   /// 六维搜索条件快照（书签用；无搜索上下文时 null）。
   final SearchFilter? snapshot;
+
+  /// 书签恢复的楼层定位（任务 1：进入详情后跳到该楼；null = 从头阅读）。
+  final int? initialFloorSeq;
+
+  /// 楼层精确定位锚点（floors.id，库内唯一）：多书帖（「大佬贴吧扫书」每卡片一记）
+  /// 里同一帖的不同书目所在楼层 seq 全为 1，只靠 [initialFloorSeq] 会跳到首个同 seq 楼层
+  /// —— 点某本书进帖却停在别的书那一楼。书聚合评价卡携带自身 floor_ref 走本字段。
+  final int? initialFloorId;
 
   /// 搜索词高亮（结果页/书签进入时携带，§5.6 渲染管线 4）。
   final String? highlight;
@@ -44,7 +55,11 @@ class PostSelection {
 
 /// 书聚合页打开参数。
 class BookNavArgs {
-  const BookNavArgs({this.snapshot, this.highlight, this.initialFilter = SemanticFilter.all});
+  const BookNavArgs({
+    this.snapshot,
+    this.highlight,
+    this.initialFilter = SemanticFilter.all,
+  });
 
   final SearchFilter? snapshot;
   final String? highlight;
@@ -52,10 +67,15 @@ class BookNavArgs {
 }
 
 /// expanded 右槽当前选中（null = 空态，app_shell.dart _DetailSlot 消费）。
-final StateProvider<PostSelection?> detailSelectionProvider = StateProvider<PostSelection?>((Ref ref) => null);
+final StateProvider<PostSelection?> detailSelectionProvider =
+    StateProvider<PostSelection?>((Ref ref) => null);
 
 /// 打开帖子详情：expanded 且在 shell 根部 → 右槽原位切换；否则 push（§9.7）。
-void openPostDetail(BuildContext context, WidgetRef ref, PostSelection selection) {
+void openPostDetail(
+  BuildContext context,
+  WidgetRef ref,
+  PostSelection selection,
+) {
   if (WindowSize.of(context) == WindowSizeClass.expanded && !context.canPop()) {
     ref.read(detailSelectionProvider.notifier).state = selection;
     return;
@@ -71,14 +91,24 @@ void openBookDetail(
   String? highlight,
   SemanticFilter initialFilter = SemanticFilter.all,
 }) {
-  context.push('/book/$bookGroupId',
-      extra: BookNavArgs(snapshot: snapshot, highlight: highlight, initialFilter: initialFilter));
+  context.push(
+    '/book/$bookGroupId',
+    extra: BookNavArgs(
+      snapshot: snapshot,
+      highlight: highlight,
+      initialFilter: initialFilter,
+    ),
+  );
 }
 
 /// 书签流（详情页操作条状态 + 我的页共用，§9.2 bookmarksProvider）。
 final StreamProvider<List<Bookmark>> bookmarksProvider =
-    StreamProvider<List<Bookmark>>((Ref ref) => ref.watch(queriesProvider).watchBookmarks());
+    StreamProvider<List<Bookmark>>(
+      (Ref ref) => ref.watch(queriesProvider).watchBookmarks(),
+    );
 
 /// 收藏流（书/帖双粒度，§9.2 favoritesProvider）。
 final StreamProvider<List<Favorite>> favoritesProvider =
-    StreamProvider<List<Favorite>>((Ref ref) => ref.watch(queriesProvider).watchFavorites());
+    StreamProvider<List<Favorite>>(
+      (Ref ref) => ref.watch(queriesProvider).watchFavorites(),
+    );

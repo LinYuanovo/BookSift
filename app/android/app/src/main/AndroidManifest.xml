@@ -1,6 +1,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- ⚠ 必须声明在 main/ 而非仅 debug/ + profile/：Flutter 模板默认只给 debug/profile
+         清单加 INTERNET，release 产物会静默失去全部网络能力（App 内采集、贴吧在线搜索、
+         §10.1 更新检查、cached_network_image 图片加载全部失效）。
+         实测：修复前 app-release.apk 的 aapt2 dump permissions 只有
+         DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION，无 INTERNET。
+         未声明 ACCESS_NETWORK_STATE：connectivity_plus 未接入，NetworkGate 恒 true（见 worker.dart）。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
-        android:label="saoshuhui"
+        android:label="扫书汇"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

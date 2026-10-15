@@ -1,4 +1,4 @@
-# saoshuhui
+# BookSift（扫书汇）
 
 A new Flutter project.
 

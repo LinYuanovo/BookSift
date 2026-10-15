@@ -3,13 +3,13 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:saoshuhui/core/fonts/font_tokens.dart';
-import 'package:saoshuhui/theme/app_colors.dart';
-import 'package:saoshuhui/theme/app_motion.dart';
-import 'package:saoshuhui/theme/app_radius.dart';
-import 'package:saoshuhui/theme/app_spacing.dart';
-import 'package:saoshuhui/theme/app_typography.dart';
-import 'package:saoshuhui/theme/book_theme.dart';
+import 'package:booksift/core/fonts/font_tokens.dart';
+import 'package:booksift/theme/app_colors.dart';
+import 'package:booksift/theme/app_motion.dart';
+import 'package:booksift/theme/app_radius.dart';
+import 'package:booksift/theme/app_spacing.dart';
+import 'package:booksift/theme/app_typography.dart';
+import 'package:booksift/theme/book_theme.dart';
 
 /// WCAG 2.1 相对亮度（sRGB 通道线性化）。
 double relativeLuminance(Color color) {

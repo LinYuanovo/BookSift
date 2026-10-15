@@ -1,6 +1,6 @@
-import 'package:saoshuhui/core/constants.dart';
-import 'package:saoshuhui/data/db/app_database.dart';
-import 'package:saoshuhui/data/repo/queries.dart';
+import 'package:booksift/core/constants.dart';
+import 'package:booksift/data/db/app_database.dart';
+import 'package:booksift/data/repo/queries.dart';
 
 import 'fake_book_repository.dart';
 
@@ -62,6 +62,9 @@ EntryRow _entry({
   required String channel,
   required String category,
   int? postRef,
+  int? floorSeq,
+  int? floorRef,
+  String? floorText,
   String? author,
   String? comment,
   String? bookGrade,
@@ -84,6 +87,9 @@ EntryRow _entry({
     quality: quality,
     wordCount: wordCount,
     postRef: postRef,
+    floorSeq: floorSeq,
+    floorRef: floorRef,
+    floorText: floorText,
     bookGroupId: groupId,
   );
 }
@@ -157,26 +163,32 @@ FakeLibrary demoLibrary() {
 
   const String scan = CategoryKind.scan;
   const String avoid = CategoryKind.avoid;
+  // 条目级推荐语义只认原帖颜色标记（queries.entryFlagOf）：绿 '#11850A'=推荐 / 红 '#FF0000'=排雷 /
+  // 无标记的扫书条目 = **中性**（渲染成灰「扫书」徽标，不计入推荐数）。语料刻意两档都留：
+  // 世子很凶/篡水浒/逍遥小书生(2013) 带绿标 → 推荐；我不想和你一起重生/十日终焉 无标 → 中性扫书。
+  const String gradeRec = '#11850A';
   final List<EntryRow> entries = <EntryRow>[
     // 世子很凶：5 条跨 2023–2025.02 → 全时段榜首；2025-04 无条目 → 本月榜缺席。
     _entry(id: 2001, nameNorm: '世子很凶', groupId: 842, date: '2023-05-01', channel: 'yy小说吧',
-        category: scan, quality: 3, author: '饺子', comment: '老练的权谋文，节奏稳，人物立得住，越写越好。'),
+        category: scan, quality: 3, author: '饺子', bookGrade: gradeRec,
+        comment: '老练的权谋文，节奏稳，人物立得住，越写越好。'),
     _entry(id: 2002, nameNorm: '世子很凶', groupId: 842, date: '2023-11-02', channel: '雪群推书',
-        category: scan, postRef: 18293, origin: Origin.collected, author: '饺子'),
+        category: scan, postRef: 18293, origin: Origin.collected, author: '饺子', bookGrade: gradeRec),
     _entry(id: 2003, nameNorm: '世子很凶', groupId: 842, date: '2024-03-03', channel: 'yy小说吧',
-        category: scan, author: '饺子'),
+        category: scan, author: '饺子', bookGrade: gradeRec),
     _entry(id: 2004, nameNorm: '世子很凶', groupId: 842, date: '2024-09-04', channel: '哀伤雪刃',
-        category: scan, quality: 3, author: '饺子'),
+        category: scan, quality: 3, author: '饺子', bookGrade: gradeRec),
     _entry(id: 2005, nameNorm: '世子很凶', groupId: 842, date: '2025-02-05', channel: 'yy小说吧',
-        category: scan, author: '饺子'),
-    // 我不想和你一起重生：3 条全在 2025-04 → 本月榜首。
+        category: scan, author: '饺子', bookGrade: gradeRec),
+    // 我不想和你一起重生：3 条全在 2025-04 → 本月榜首（无颜色标记 → 中性扫书档）。
     _entry(id: 2006, nameNorm: '我不想和你一起重生', groupId: 900, date: '2025-04-02', channel: 'yy小说吧',
         category: scan, postRef: 20001, quality: 3, author: '咸鱼军师',
         comment: '重生加恋爱游戏设定，前期笑点密集，节奏轻快不拖沓。'),
     _entry(id: 2007, nameNorm: '我不想和你一起重生', groupId: 900, date: '2025-04-10',
         channel: '雪群推书', category: scan, postRef: 18293, author: '咸鱼军师'),
+    // 2008 带楼层号：书聚合页点卡进帖须直达该楼（PostSelection.initialFloorSeq）。
     _entry(id: 2008, nameNorm: '我不想和你一起重生', groupId: 900, date: '2025-04-22', channel: 'yy小说吧',
-        category: scan, postRef: 7, author: '咸鱼军师'),
+        category: scan, postRef: 7, floorSeq: 2, author: '咸鱼军师'),
     // 十日终焉：搜索台 FTS（≥3 字）主用例。
     _entry(id: 2009, nameNorm: '十日终焉', groupId: 901, date: '2025-04-28', channel: 'yy小说吧',
         category: scan, postRef: 7, quality: 3, author: '杀虫队队员',
@@ -185,13 +197,13 @@ FakeLibrary demoLibrary() {
         category: scan, postRef: 20002, origin: Origin.imported, author: '杀虫队队员'),
     // 篡水浒：书名点击 → 搜索预填用例。
     _entry(id: 2011, nameNorm: '篡水浒', groupId: 902, date: '2025-04-28', channel: 'yy小说吧',
-        category: scan, postRef: 7, author: '庚新'),
+        category: scan, postRef: 7, author: '庚新', bookGrade: gradeRec),
     // 毒书一号：排雷帖内条目（book_grade 红 → flag -1）。
     _entry(id: 2012, nameNorm: '毒书一号', groupId: 903, date: '2025-04-20', channel: '哀伤雪刃',
         category: avoid, postRef: 14403, quality: 1, bookGrade: '#FF0000'),
-    // 逍遥小书生：1 推荐 + 1 排雷 → 书聚合页计数对比与语义筛选。
+    // 逍遥小书生：1 推荐（绿标）+ 1 排雷（红标）→ 书聚合页计数对比与语义筛选。
     _entry(id: 2013, nameNorm: '逍遥小书生', groupId: 904, date: '2025-03-30', channel: 'yy小说吧',
-        category: scan, quality: 3, author: '荣荣',
+        category: scan, quality: 3, author: '荣荣', bookGrade: gradeRec,
         comment: '轻松日常向，主角讨喜，适合下饭，更新也稳定。'),
     _entry(id: 2014, nameNorm: '逍遥小书生', groupId: 904, date: '2024-06-11', channel: '哀伤雪刃',
         category: avoid, postRef: 20003, bookGrade: '#FF0000', author: '荣荣'),

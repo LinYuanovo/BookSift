@@ -1,4 +1,4 @@
-name: saoshuhui
+name: booksift
 description: "扫书汇 —— 贴吧扫书帖离线书单浏览器（Flutter）。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -51,6 +51,31 @@ dependencies:
   crypto: ^3.0.7
   path: ^1.9.0
   path_provider: ^2.1.6
+  # headless CLI（bin/booksift.dart）子命令与参数解析；此前已是传递依赖，
+  # 显式声明以满足 depend_on_referenced_packages（版本与 pubspec.lock 的 2.7.0 对齐）。
+  args: ^2.7.0
+  # M2-① 采集：app-proto 通道 protobuf 运行时（与 protoc_plugin 25.1.0 生成代码对齐，
+  # 移植自 work/collector_dart_poc，见其 README §1）。
+  protobuf: ^6.1.0
+  fixnum: ^1.1.0
+  # M2-① UI：设计稿结构图标一律内联 SVG（设计规范 §可访问性：stroke 1.7 线性），
+  # 资产提取自 work/ui_design/claude/index.html 的 <symbol> sprite。
+  flutter_svg: ^2.2.0
+  # M3 P1-4 文字转图分享：系统分享面板（原型 §5.11「PNG 字节 → 保存/share_plus」）。
+  # 必须 13.x：file_picker 13.1.0 → windows_file_picker 2.x 要 win32 ^6.3.0，
+  # 而 share_plus <13 锁 win32 ^5.5.3（pub 求解直接失败，实测）。13.x 要求
+  # Flutter ≥3.41.6 / Dart ≥3.11（本工程 3.41.9 / 3.11.5 ✓），API 为
+  # SharePlus.instance.share(ShareParams(files: [XFile...]))（Share.shareXFiles 已废弃）。
+  # ⚠ Android 侧 12.0.0 起要求 AGP ≥8.12.1，而 android/settings.gradle.kts 仍是 8.11.1
+  #   （Gradle 8.14 / Kotlin 2.2.20 已达标）：打 apk 前需把 AGP 升到 ≥8.12.1。
+  share_plus: ^13.3.1
+  # M3 §10.1 App 更新检查：读本地版本号/buildNumber 与远端 tag_name/version_code 比对
+  # （PackageInfo.fromPlatform()；测试环境回落 LocalVersion.unknown，检查静默）。
+  package_info_plus: ^10.2.2
+  # 「原帖 ↗」外部跳转（core/external_launch.dart）：Android 先按包名 com.baidu.tieba
+  # 定向 VIEW（MainActivity MethodChannel 实现，未安装抛 ActivityNotFoundException），
+  # 其余平台/兜底走系统浏览器 externalApplication。
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:
@@ -83,6 +108,11 @@ flutter:
   # 构建/裁剪见 work/seed_pack/种子包说明.md 与 repack_deflate.py）。
   assets:
     - assets/seed/
+    # M2-① 设计稿 SVG 图标（stroke 1.7 线性，24 viewBox；-s 后缀 = xs 档 stroke 2）。
+    - assets/icons/
+    # v3 书名实体词典（22,001 归一化书名，work/collector_poc/book_dict.txt 同源），
+    # 分类器词典锚点随包分发（路线图 v3 移植项）。
+    - assets/dict/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

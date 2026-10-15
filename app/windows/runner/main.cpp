@@ -27,7 +27,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"saoshuhui", origin, size)) {
+  // 窗口标题 = 应用中文名「扫书汇」。用 \u 转义而非直接写汉字：本文件是无 BOM 的 UTF-8，
+  // 且 windows/CMakeLists.txt 未给 MSVC 加 /utf-8 → 源字符集按系统 ANSI（中文机为 GBK）解释，
+  // 直写汉字会 mojibake；通用字符名与源编码无关，稳。
+  if (!window.Create(L"\u626B\u4E66\u6C47", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/fonts/font_tokens.dart';
+import 'app_accent.dart';
 import 'app_colors.dart';
 import 'app_motion.dart';
 import 'app_radius.dart';
@@ -9,24 +10,36 @@ import 'app_typography.dart';
 
 /// ThemeData 组装（设计系统 §5.1 ColorScheme 语义槽映射 + §5.2 extensions 注入）。
 abstract final class BookTheme {
-  /// M3 seed（§5.1：浅色 = 陶土珊瑚；深色 = 其浅阶，semantic 槽随后逐项覆盖）。
-  static const Color _seedLight = Color(0xFFD97757);
-  static const Color _seedDark = Color(0xFFE59A76);
-
   static final ThemeData light = of(Brightness.light);
   static final ThemeData dark = of(Brightness.dark);
 
-  /// 按字体槽解析结果构建主题（v1.4 §5.2：families 变化 → 新 ThemeData；默认全 system）。
-  static ThemeData of(Brightness brightness, [FontFamilySet families = FontFamilySet.standard]) =>
-      _build(brightness, families);
+  /// 按字体槽解析结果 + 主题色档构建主题（v1.4 §5.2：families 变化 → 新 ThemeData；
+  /// M3 P2-3：accent 变化 → accent 四槽与 ColorScheme seed/primary/secondary 系随之变化，
+  /// 其余 20 语义槽不变；accent 缺省 = 陶土珊瑚，与原 _seedLight #D97757 / _seedDark #E59A76 等价）。
+  /// [reduceMotion]（M2 设置项）：true → extensions 注入 AppMotionTheme.reducedTokens
+  /// （全部时长 ≤100ms、stagger 归零），false/缺省 = standardTokens。
+  static ThemeData of(
+    Brightness brightness, [
+    FontFamilySet families = FontFamilySet.standard,
+    AppAccentTheme? accent,
+    bool reduceMotion = false,
+  ]) =>
+      _build(brightness, families, accent ?? AppAccentTheme.defaults, reduceMotion);
 
-  static ThemeData _build(Brightness brightness, FontFamilySet families) {
+  static ThemeData _build(Brightness brightness, FontFamilySet families, AppAccentTheme accent, bool reduceMotion) {
     final bool isLight = brightness == Brightness.light;
-    final AppColors colors = isLight ? AppColors.light : AppColors.dark;
+    final AccentPalette palette = isLight ? accent.light : accent.dark;
+    final AppColors colors = (isLight ? AppColors.light : AppColors.dark).withAccentColors(
+      accent: palette.accent,
+      accentStrong: palette.accentStrong,
+      accentSoft: palette.accentSoft,
+      onAccent: palette.onAccent,
+    );
     final AppTypography typography = AppTypography.resolve(families);
 
     final ColorScheme scheme = ColorScheme.fromSeed(
-      seedColor: isLight ? _seedLight : _seedDark,
+      // M3 seed = 当前主题色档的本模式 accent（默认档即原 _seedLight/_seedDark）。
+      seedColor: palette.accent,
       brightness: brightness,
     ).copyWith(
       // §5.1 语义槽覆盖（M3 自动色不满足纸感要求）
@@ -77,7 +90,12 @@ abstract final class BookTheme {
       canvasColor: colors.canvas,
       // 不设全局 fontFamily：字阶 token 已逐 style 携带 family（null = 平台系统默认，v1.4 §2.2）。
       textTheme: textTheme,
-      extensions: <ThemeExtension<dynamic>>[colors, typography, AppSpacing.standard, AppMotionTheme.standardTokens],
+      extensions: <ThemeExtension<dynamic>>[
+        colors,
+        typography,
+        AppSpacing.standard,
+        reduceMotion ? AppMotionTheme.reducedTokens : AppMotionTheme.standardTokens,
+      ],
       dividerColor: colors.border,
       dividerTheme: DividerThemeData(
         color: colors.border,
@@ -152,6 +170,27 @@ abstract final class BookTheme {
         shape: RoundedRectangleBorder(
           borderRadius: AppRadius.lgBorder,
           side: BorderSide(color: colors.border, width: AppMetrics.hairline),
+        ),
+      ),
+      // 弹出菜单（书聚合排序 / ⋮更多 等）：浮层唯一阴影场景（§2.1 --shadow-overlay）；
+      // raised 底 + 1px 发丝描边 + r14，去掉 M3 默认 surfaceTint 粉染。
+      popupMenuTheme: PopupMenuThemeData(
+        color: colors.surfaceRaised,
+        surfaceTintColor: Colors.transparent,
+        elevation: 8,
+        shape: RoundedRectangleBorder(
+          borderRadius: AppRadius.mdBorder,
+          side: BorderSide(color: colors.border, width: AppMetrics.hairline),
+        ),
+        textStyle: typography.body.copyWith(color: colors.text),
+      ),
+      // 底部弹层（维度值域 / 随机书荒 / 分享导出）：raised 底 + 去 surfaceTint 粉染 + 顶部 r24。
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: colors.surfaceRaised,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.xl)),
         ),
       ),
     );

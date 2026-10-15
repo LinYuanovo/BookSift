@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:saoshuhui/core/fonts/font_ports.dart';
-import 'package:saoshuhui/core/fonts/font_registry.dart';
-import 'package:saoshuhui/core/fonts/font_service.dart';
-import 'package:saoshuhui/core/fonts/font_tokens.dart';
+import 'package:booksift/core/fonts/font_ports.dart';
+import 'package:booksift/core/fonts/font_registry.dart';
+import 'package:booksift/core/fonts/font_service.dart';
+import 'package:booksift/core/fonts/font_tokens.dart';
 
 // ── 手写 fake（端口依赖倒置：不触 drift / file_picker / dart:ui / 文件系统）──
 

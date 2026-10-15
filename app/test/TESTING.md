@@ -112,7 +112,9 @@ plain `test()` 跑在**真实事件循环**（不套 FakeAsync），IO 正常。
   `test/theme_tokens_test.dart`。同步 IO 在假时钟区里也是安全的，但仍归 plain test。
 
 fixture 由 `dart run tool/make_dev_seed.dart` 生成（从 `work/seed_pack/_build/seed_lite.db`
-分层抽样 2000 条），**不进发行包**。
+——发行包同源的**已就地清洗**库——分层抽样 2000 条），**不进发行包**。
+`post_kind` / `recommend_flag` / `category` 一律直迁源库值；源库缺 `posts.post_kind`
+（即传了未清洗的库）时工具直接失败，不退回粗分类兜底。
 
 ### 3.3 `setUpAll` / `setUp` / `tearDown`
 
@@ -187,7 +189,7 @@ pwsh tools/run_tests_safe.ps1 -FlutterArgs '--name','手风琴' -TimeoutSec 120
 | 文件 | 形态 | 是否碰真实 IO | 说明 |
 |---|---|---|---|
 | `features_test.dart` · `queries 数据层` | plain `test()` | ✅ drift on `fixtures/dev_seed.db` 副本 | SQL 正确性（FTS/LIKE、五维、榜单、聚合、CRUD） |
-| `features_test.dart` · `页面交互` | `testWidgets` | ❌ 全内存 fake | 书名点击预填、URL span、排雷徽标语义色、手风琴独占、榜单时段重排、日期分组流、书签快照、书聚合筛选、历史复现、LIKE 分支、expanded 详情槽 |
+| `features_test.dart` · `页面交互` | `testWidgets` | ❌ 全内存 fake | 书名点击预填、URL span、排雷徽标语义色、手风琴独占、榜单时段重排、日期分组流、日期目录两段式跳转、ScrollChrome 接入（首页/分类）、书签快照、书聚合筛选、历史复现、LIKE 分支、expanded 详情槽 |
 | `app_shell_test.dart` | `testWidgets` | ❌ 全内存 fake | 三档断点 + 1024 边界（ISSUE-1）+ 品牌头（ISSUE-3）+ Tab 切换 |
 | `font_service_test.dart` | plain `test()` | ❌ 四端口 fake | bootstrap / 导入 / 角色槽 / 删除 / 降级 |
 | `font_ui_test.dart` | `testWidgets` | ❌ 四端口 fake | 设置页入口、十角色行、样张换家族、下拉、恢复默认、导入、删除 |
@@ -224,7 +226,7 @@ Remove-Item app\build\native_assets -Recurse -Force
 ```
 
 **症状：会话/CI 被取消后，后续命令莫名变慢或文件删不掉。**
-→ 查孤儿：`Get-CimInstance Win32_Process | ? { $_.Name -match '^(dart|flutter_tester|saoshuhui)' }`。
+→ 查孤儿：`Get-CimInstance Win32_Process | ? { $_.Name -match '^(dart|flutter_tester|booksift)' }`。
 按 `CreationDate` 找长命进程，`taskkill /T /F` 收掉。
 
 ---

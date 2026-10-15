@@ -3,14 +3,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:saoshuhui/core/fonts/font_ports.dart' show PickedFontFile;
-import 'package:saoshuhui/core/fonts/font_registry.dart';
-import 'package:saoshuhui/core/fonts/font_service.dart';
-import 'package:saoshuhui/core/fonts/font_tokens.dart';
-import 'package:saoshuhui/features/profile/font_manage_page.dart';
-import 'package:saoshuhui/features/profile/settings_page.dart';
-import 'package:saoshuhui/theme/app_typography.dart';
-import 'package:saoshuhui/theme/book_theme.dart';
+import 'package:booksift/core/fonts/font_ports.dart' show PickedFontFile;
+import 'package:booksift/core/fonts/font_registry.dart';
+import 'package:booksift/core/fonts/font_service.dart';
+import 'package:booksift/core/fonts/font_tokens.dart';
+import 'package:booksift/features/profile/font_manage_page.dart';
+import 'package:booksift/features/profile/settings_page.dart';
+import 'package:booksift/theme/app_typography.dart';
+import 'package:booksift/theme/book_theme.dart';
 
 import 'font_service_test.dart' show FakeFileStore, FakePicker, FakeRegistrar, FakeSettingsStore, fakeBytes, sampleFont;
 

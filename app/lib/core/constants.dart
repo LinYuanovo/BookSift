@@ -16,6 +16,23 @@ abstract final class SettingsKeys {
   static const String wifiOnly = 'wifi_only';
   static const String concurrentForums = 'concurrent_forums';
   static const String classifierVersion = 'classifier_version';
+
+  /// book_entries 去重维护完成标记（lib/data/maintenance.dart；'1' = 已完成，
+  /// 中断/失败不写，下次启动重跑——重跑幂等应 0 删除）。
+  static const String dedupVersion = 'dedup_version';
+
+  /// 搜索结果浏览位置（features/search/search_state.dart 的 SearchPositionStore）。
+  /// 值 = JSON map「条件签名 → 结果列表滚动偏移 px」，LRU 上限 32 条（关 App 重开仍在）。
+  static const String searchPositions = 'search_positions';
+
+  /// 搜索结果**目录弹层**自身的浏览位置（同上存储，键 = 条件签名，值 = 目录列表偏移 px）。
+  /// 用户口径：不变更搜索词时，关掉目录/关 App 再打开都要回到上次目录位置。
+  static const String searchTocPositions = 'search_toc_positions';
+
+  /// 搜索台草稿（features/search/search_state.dart 的 SearchDraftStore）：关 App 重开后
+  /// 恢复上次搜索词 + 六维筛选 + 排序 + 是否已提交（可见结果区），浏览位置记忆据此恢复。
+  /// 值 = JSON map（SearchFilter.toUriParams 的内容 + submitted）。
+  static const String searchDraft = 'search_draft';
 }
 
 /// origin 徽标取值（§7.2 origin 字段 / 设计系统 §4：内置灰 / 自采绿 / 导入蓝）。

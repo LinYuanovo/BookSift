@@ -5,14 +5,20 @@ resource/
 aiotieba/
 tieba-api-catalog/
 
-# ---- 本机工具（仅测试看门狗入库）----
+# ---- 本机工具（仅测试看门狗与发布脚本入库）----
 tools/*
 !tools/run_tests_safe.ps1
+!tools/make_release.ps1
 
 # ---- 构建产物与缓存 ----
 app/build/
 app/.dart_tool/
 app/flutter_*.log
+# headless CLI 的 JSONL 运行日志（bin/booksift.dart --log-dir，默认 app/logs/）
+app/logs/
+# 根目录产物：模拟器截图（build/emushots|shots）与运行日志
+/build/
+/logs/
 __pycache__/
 *.pyc
 .codegraph/
@@ -21,4 +27,12 @@ __pycache__/
 # ---- 本地工作上下文（不入库）----
 /AGENTS.md
 /逆向分析报告.md
+
+# ---- 发布签名与分发产物（绝不入库）----
+# keystore 口令（app/android/.gitignore 已忽略，此处再兜一层）
+app/android/key.properties
+# release 签名 keystore
+app/android/app/*.jks
+# make_release.ps1 组装的发布目录
+dist_release/
 

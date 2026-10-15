@@ -51,16 +51,19 @@ class Posts extends Table {
 /// 楼层（一楼一行）。
 class Floors extends Table {
   IntColumn get id => integer().autoIncrement()();
-  IntColumn get postId => integer().references(Posts, #id, onDelete: KeyAction.cascade)();
+  IntColumn get postId =>
+      integer().references(Posts, #id, onDelete: KeyAction.cascade)();
 
   /// 楼层号（1=楼主）。
   IntColumn get seq => integer()();
 
   /// 贴吧楼层 pid。
   IntColumn get pid => integer().nullable()();
+
   /// 楼层正文。SQL 列名保持 text（§7.2/§7.3 FTS 触发器约定）；
   /// Dart 名用 content 以避开 drift Table.text() 构建器的同名冲突。
-  TextColumn get content => text().named('text').withDefault(const Constant(''))();
+  TextColumn get content =>
+      text().named('text').withDefault(const Constant(''))();
 
   /// sha1(norm_text)[:16]，去重用。
   TextColumn get textNormHash => text().nullable()();
@@ -73,7 +76,8 @@ class Floors extends Table {
 @DataClassName('FloorImage')
 class Images extends Table {
   IntColumn get id => integer().autoIncrement()();
-  IntColumn get floorId => integer().references(Floors, #id, onDelete: KeyAction.cascade)();
+  IntColumn get floorId =>
+      integer().references(Floors, #id, onDelete: KeyAction.cascade)();
 
   /// 接口原始链（cdn_src/origin_src）。
   TextColumn get urlOriginal => text().nullable()();
@@ -119,8 +123,16 @@ class BookEntries extends Table {
 
   /// 冗余自 posts.post_kind（扫书/排雷/求书/日常），避免搜索 join；排雷筛选维度走此列。
   TextColumn get category => text().withDefault(const Constant('扫书'))();
-  IntColumn get postRef => integer().nullable().references(Posts, #id, onDelete: KeyAction.setNull)();
-  IntColumn get floorRef => integer().nullable().references(Floors, #id, onDelete: KeyAction.setNull)();
+  IntColumn get postRef => integer().nullable().references(
+    Posts,
+    #id,
+    onDelete: KeyAction.setNull,
+  )();
+  IntColumn get floorRef => integer().nullable().references(
+    Floors,
+    #id,
+    onDelete: KeyAction.setNull,
+  )();
   IntColumn get srcTid => integer().nullable()();
   TextColumn get srcUrl => text().nullable()();
   IntColumn get wordCount => integer().nullable()();
@@ -198,6 +210,9 @@ class Bookmarks extends Table {
   /// 结果列表位置。
   IntColumn get position => integer().withDefault(const Constant(0))();
 
+  /// 帖子内阅读楼层号（书签恢复时定位；v3 新增，旧书签为 NULL = 无楼层记忆）。
+  IntColumn get floorSeq => integer().nullable()();
+
   // ── 六维搜索条件快照 ──
   TextColumn get snapQuery => text().nullable()();
   TextColumn get snapYear => text().nullable()();
@@ -240,7 +255,8 @@ class CollectionState extends Table {
   /// never/ok/partial/api_error/rate_limited/canceled。
   TextColumn get lastStatus => text().withDefault(const Constant('never'))();
   TextColumn get lastError => text().nullable()();
-  IntColumn get consecutiveFailures => integer().withDefault(const Constant(0))();
+  IntColumn get consecutiveFailures =>
+      integer().withDefault(const Constant(0))();
   DateTimeColumn get cooldownUntil => dateTime().nullable()();
 
   /// 首页红点。
@@ -293,11 +309,13 @@ class Settings extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
-  /// v2 = 含分类字段（post_kind/recommend_flag）的现行 schema。
-  /// 新装用户由 onCreate 直接落 v2（种子 ETL 已产出带分类字段的数据，§7.6）；
-  /// v1→v2 迁移路径仅为文档契约保留（本项目尚无 v1 存量安装）。
+  /// v4 = 现行 schema：在 v3（书签楼层位置 bookmarks.floor_seq）之上补齐查询索引
+  /// （[_createQueryIndexes]）。此前真机 app.sqlite 全程无索引，检索/榜单/时间线/去重
+  /// 均在全表扫（book_entries 5.3 万、floors 16.5 万行）。
+  /// 新装用户由 onCreate 直接落 v4；v1→v2→v3→v4 迁移链：v2/v3 逐级加列（带 DEFAULT/
+  /// 可空列的 O(1) 元数据操作），v4 仅 CREATE INDEX IF NOT EXISTS，均无存量回填负担。
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -308,6 +326,7 @@ class AppDatabase extends _$AppDatabase {
     onCreate: (m) async {
       await m.createAll();
       await _createFts(customStatement);
+      await _createQueryIndexes(customStatement);
     },
     onUpgrade: (m, from, to) async {
       if (from < 2) {
@@ -316,6 +335,15 @@ class AppDatabase extends _$AppDatabase {
         // 由后台 isolate 按 §8.9 规则分批重算（每 2000 行 yield，可中断续跑）。
         await m.addColumn(posts, posts.postKind);
         await m.addColumn(posts, posts.recommendFlag);
+      }
+      if (from < 3) {
+        // v2→v3：书签楼层位置（bookmarks.floor_seq，可空 → 旧书签自然为 NULL）。
+        await m.addColumn(bookmarks, bookmarks.floorSeq);
+      }
+      if (from < 4) {
+        // v3→v4：补齐查询索引（真机 app.sqlite 此前全程无索引 → 检索/榜单/去重全表扫）。
+        // 纯 CREATE INDEX IF NOT EXISTS，幂等；不改列，无存量回填。
+        await _createQueryIndexes(customStatement);
       }
     },
   );
@@ -339,22 +367,96 @@ Future<void> _createFts(Future<void> Function(String) exec) async {
       text, content='floors', content_rowid='id', tokenize='trigram'
     )''');
   // external-content 同步触发器（采集/导入增量自动维护）
-  await exec('''CREATE TRIGGER IF NOT EXISTS book_entries_ai AFTER INSERT ON book_entries BEGIN
+  await exec(
+    '''CREATE TRIGGER IF NOT EXISTS book_entries_ai AFTER INSERT ON book_entries BEGIN
     INSERT INTO book_fts(rowid,name,author,recommender,comment)
-    VALUES (new.id,new.name,new.author,new.recommender,new.comment); END''');
-  await exec('''CREATE TRIGGER IF NOT EXISTS book_entries_ad AFTER DELETE ON book_entries BEGIN
+    VALUES (new.id,new.name,new.author,new.recommender,new.comment); END''',
+  );
+  await exec(
+    '''CREATE TRIGGER IF NOT EXISTS book_entries_ad AFTER DELETE ON book_entries BEGIN
     INSERT INTO book_fts(book_fts,rowid,name,author,recommender,comment)
-    VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment); END''');
-  await exec('''CREATE TRIGGER IF NOT EXISTS book_entries_au AFTER UPDATE ON book_entries BEGIN
+    VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment); END''',
+  );
+  await exec(
+    '''CREATE TRIGGER IF NOT EXISTS book_entries_au AFTER UPDATE ON book_entries BEGIN
     INSERT INTO book_fts(book_fts,rowid,name,author,recommender,comment)
     VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment);
     INSERT INTO book_fts(rowid,name,author,recommender,comment)
-    VALUES (new.id,new.name,new.author,new.recommender,new.comment); END''');
-  await exec('''CREATE TRIGGER IF NOT EXISTS floors_ai AFTER INSERT ON floors BEGIN
-    INSERT INTO floor_fts(rowid,text) VALUES (new.id,new.text); END''');
-  await exec('''CREATE TRIGGER IF NOT EXISTS floors_ad AFTER DELETE ON floors BEGIN
-    INSERT INTO floor_fts(floor_fts,rowid,text) VALUES ('delete',old.id,old.text); END''');
-  await exec('''CREATE TRIGGER IF NOT EXISTS floors_au AFTER UPDATE ON floors BEGIN
+    VALUES (new.id,new.name,new.author,new.recommender,new.comment); END''',
+  );
+  await exec(
+    '''CREATE TRIGGER IF NOT EXISTS floors_ai AFTER INSERT ON floors BEGIN
+    INSERT INTO floor_fts(rowid,text) VALUES (new.id,new.text); END''',
+  );
+  await exec(
+    '''CREATE TRIGGER IF NOT EXISTS floors_ad AFTER DELETE ON floors BEGIN
+    INSERT INTO floor_fts(floor_fts,rowid,text) VALUES ('delete',old.id,old.text); END''',
+  );
+  await exec(
+    '''CREATE TRIGGER IF NOT EXISTS floors_au AFTER UPDATE ON floors BEGIN
     INSERT INTO floor_fts(floor_fts,rowid,text) VALUES ('delete',old.id,old.text);
-    INSERT INTO floor_fts(rowid,text) VALUES (new.id,new.text); END''');
+    INSERT INTO floor_fts(rowid,text) VALUES (new.id,new.text); END''',
+  );
+}
+
+/// 查询索引（schema v4）：服务 queries.dart 检索/榜单/时间线/五维计数、maintenance.dart
+/// 去重、ingest.dart 聚合重算的实际 WHERE/ORDER BY/GROUP BY 列。真机 app.sqlite 此前
+/// 全程无索引（onCreate 只建表 + FTS，seed_import 的 INSERT…SELECT 又不迁移索引对象），
+/// book_entries 5.3 万 / floors 16.5 万行全在全表扫。
+///
+/// 全部 `CREATE INDEX IF NOT EXISTS`，命名与种子 ETL（work/seed_pack/make_seed_pack.py
+/// `INDEX_DDL` 的 15 个 `idx_*`）及 app/tool/make_dev_seed.dart 手建索引**逐字对齐**——
+/// 种子包库里已有同名 ETL 索引，打包工具用 drift 打开做迁移时 `IF NOT EXISTS` 直接 no-op，
+/// 不会堆出两套重叠索引白白撑大发行包。
+///
+/// 取舍（数量克制，只建**有查询依据**的列）：
+/// - 收录 ETL 15 个中确有运行时命中的 10 个（列序与 ETL 一致，含 idx_be_channel 的
+///   `(channel, sub_channel)` 复合）；
+/// - ETL 未覆盖、但确有查询依据的 2 列用 dev_seed 既有名（idx_book_entries_category /
+///   idx_posts_kind）；
+/// - ETL 的 idx_posts_channel / idx_posts_type / idx_floors_hash / idx_be_author /
+///   idx_be_srctid **不建**：运行时无 WHERE/ORDER/GROUP 命中（post_type「不参与产品逻辑」、
+///   text_norm_hash/src_tid 只写不查、author_norm 仅 `LIKE '%…%'` 前缀通配用不上 B-tree、
+///   posts.channel 无过滤查询）。
+Future<void> _createQueryIndexes(Future<void> Function(String) exec) async {
+  // ── book_entries（检索/榜单/分类/去重主战场）──
+  // 热门榜/字数榜 GROUP BY name_norm + LEFT JOIN book_groups ON name_norm
+  // （queries.dart rankRows / wordRankRows）；去重按名取组成员
+  // （maintenance.dart _fetchDupMembers WHERE name_norm=?，此前每组一次全表扫）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_be_name ON book_entries(name_norm)');
+  // 书聚合详情/评价列表 WHERE book_group_id=?（queries.dart bookDetail / bookEntries）；
+  // 组聚合重算子查询 WHERE book_group_id=?1（ingest.dart / maintenance.dart _refreshGroupAggregates）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_be_group ON book_entries(book_group_id)');
+  // 首页时间线关联书名 WHERE post_ref IN(…)（queries.dart timelinePosts）；
+  // 帖内推荐/排雷计数 WHERE post_ref=?（queries.dart postDetail）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_be_postref ON book_entries(post_ref)');
+  // 榜单时段过滤 WHERE date>=?（rankRows/wordRankRows）、数据截至 MAX(date)（dataCutoff）、
+  // 五维计数 WHERE date IS NOT NULL GROUP BY substr(date,…)（dimensionCounts）、
+  // 分类预览 ORDER BY date DESC（categoryPreview）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_be_date ON book_entries(date)');
+  // 来源维计数 GROUP BY channel（dimensionCounts）、六维搜索来源筛选 WHERE channel IN/= ?
+  // （queries.dart _dimClauses）；含 sub_channel，列序与 ETL idx_be_channel 一致。
+  await exec('CREATE INDEX IF NOT EXISTS idx_be_channel ON book_entries(channel, sub_channel)');
+  // 来源维「自采」WHERE origin='collected'（queries.dart _dimClauses）；
+  // 种子导入清理/对账 DELETE|COUNT WHERE origin（seed_import.dart）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_be_origin ON book_entries(origin)');
+  // 类别维计数 GROUP BY category（dimensionCounts）、随机书荒 WHERE category=?（randomBooks）、
+  // 六维搜索类别筛选 WHERE category=?（_dimClauses）。ETL 无此索引，用 dev_seed 既有名。
+  await exec('CREATE INDEX IF NOT EXISTS idx_book_entries_category ON book_entries(category)');
+
+  // ── posts（首页时间线）──
+  // 时间线 WHERE date IS NOT NULL ORDER BY date DESC, id DESC（queries.dart timelinePosts）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_posts_date ON posts(date)');
+  // 时间线 WHERE post_kind IN(扫书,排雷)（queries.dart timelinePosts）。ETL 无此索引，用 dev_seed 既有名。
+  await exec('CREATE INDEX IF NOT EXISTS idx_posts_kind ON posts(post_kind)');
+  // 种子导入清理/对账 DELETE|COUNT WHERE origin（seed_import.dart）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_posts_origin ON posts(origin)');
+
+  // ── floors / images（帖详情楼层流）──
+  // 帖详情 WHERE post_id=? ORDER BY seq（queries.dart postDetail）；入库/刷新/回填取楼层
+  // WHERE post_id（ingest.dart ingestThread、post_refresh.dart、maintenance.dart _fetchBatchFloors）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_floors_post ON floors(post_id)');
+  // 帖详情取图 WHERE floor_id IN(…)（queries.dart postDetail）；楼层改图先删 / 图链回写
+  // WHERE floor_id=?（ingest.dart、post_refresh.dart）。
+  await exec('CREATE INDEX IF NOT EXISTS idx_images_floor ON images(floor_id)');
 }

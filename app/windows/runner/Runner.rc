@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.saoshuhui" "\0"
-            VALUE "FileDescription", "saoshuhui" "\0"
+            VALUE "CompanyName", "扫书汇" "\0"
+            VALUE "FileDescription", "扫书汇 —— 贴吧扫书帖离线书单浏览器" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "saoshuhui" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.saoshuhui. All rights reserved." "\0"
-            VALUE "OriginalFilename", "saoshuhui.exe" "\0"
-            VALUE "ProductName", "saoshuhui" "\0"
+            VALUE "InternalName", "booksift" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 扫书汇 BookSift. All rights reserved." "\0"
+            VALUE "OriginalFilename", "booksift.exe" "\0"
+            VALUE "ProductName", "扫书汇" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
