@@ -13,6 +13,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:booksift/collector/collect_settings_keys.dart';
 import 'package:booksift/collector/collect_state.dart';
 import 'package:booksift/collector/scheduler.dart';
+import 'package:booksift/collector/tieba/src/models.dart';
+import 'package:booksift/collector/tieba_api.dart';
 import 'package:booksift/core/constants.dart';
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/data/repo/collect_repository.dart';
@@ -211,6 +213,62 @@ void main() {
         sleeper: fakeSleeper(clock),
       );
       expect(api.closed, isFalse, reason: '只有 run() 自己 new 的 ProtoTiebaApi 才由它关');
+    });
+  });
+
+  group('bduss 档（需求 5：间隔 1.0–2.0s / 并发上限 4 / 预算 600）', () {
+    test('plan：间隔与并发按账号档取，toJson 带 accountTier', () async {
+      await repo.setSetting(SettingsKeys.concurrentForums, '4');
+
+      final CollectPlan anon = await HeadlessCollect.plan(db: db, budgetLimit: 300);
+      expect(anon.concurrentForums, 3, reason: '匿名档上限 3（同一存储值 4）');
+      expect(anon.minIntervalMs, kMinIntervalMs);
+      expect(anon.maxIntervalMs, kMaxIntervalMs);
+      expect(anon.toJson()['accountTier'], 'anonymous');
+      expect(anon.toJson()['minIntervalMs'], kMinIntervalMs);
+
+      final CollectPlan bd = await HeadlessCollect.plan(
+          db: db, budgetLimit: kDailyBudgetBduss, bduss: 'FAKE_Bduss_not_null');
+      expect(bd.concurrentForums, 4, reason: 'BDUSS 档上限 4');
+      expect(bd.minIntervalMs, kMinIntervalBdussMs);
+      expect(bd.maxIntervalMs, kMaxIntervalBdussMs);
+      expect(bd.toJson()['accountTier'], 'bduss');
+      expect(bd.toJson()['maxIntervalMs'], kMaxIntervalBdussMs);
+    });
+
+    test('run：注入 api 时 bduss 只改档位（不建真客户端）；实际间隔落在 1.0–2.0s', () async {
+      await repo.addForum('yy小说吧');
+      final FakeClock clock = FakeClock();
+      final FakeTiebaApi api = FakeTiebaApi(clock, holdTicks: 0);
+      // 1 帖 → 2 个请求（列表 + 楼层），间隔可观测。
+      api.scriptThreads(
+          'yy小说吧',
+          1,
+          ThreadsPage(
+            fid: 42,
+            threads: <ThreadSummary>[mkThread(tid: 999, createTime: 300)],
+            hasMore: false,
+          ));
+      api.scriptPosts(999, 1, mkPostsPage(999), forum: 'yy小说吧');
+
+      final CollectRunResult result = await HeadlessCollect.run(
+        db: db,
+        log: log,
+        dictLines: const <String>[],
+        api: api,
+        budgetLimit: kDailyBudgetBduss,
+        bduss: 'FAKE_Bduss_not_null',
+        useIsolateWorker: false,
+        clock: clock,
+        sleeper: fakeSleeper(clock),
+      );
+
+      expect(api.closed, isFalse, reason: '注入的 api 仍归调用方所有');
+      expect(api.calls, hasLength(2));
+      final int gap = api.calls[1].startedAt.difference(api.calls[0].startedAt).inMilliseconds;
+      expect(gap, greaterThanOrEqualTo(kMinIntervalBdussMs));
+      expect(gap, lessThanOrEqualTo(kMaxIntervalBdussMs));
+      expect(result.summary.phase, 'idle');
     });
   });
 

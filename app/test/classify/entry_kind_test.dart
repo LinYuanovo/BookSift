@@ -33,6 +33,27 @@ void main() {
       );
     });
 
+    test('存量真实样本：帖标题明确写推荐/推书 → 无标条目算推书档', () {
+      // 2026-10-16 用户反馈的两个真实书名，帖标题在 work/seed_pack/_build/seed_lite.db
+      // 与用户库 Documents/app.sqlite 实查如下（后者为回归基准，书卡/书聚合页 rec=1）。
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '推荐一本宝藏书'),
+        kRecommendKind,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '推书:我的尸傀和仙子通感了'),
+        kRecommendKind,
+      );
+      expect(
+        entryKindLabel(
+          category: '扫书',
+          flag: 0,
+          title: '个人向连载多女主文书单推荐，外加简扫',
+        ),
+        kRecommendKind,
+      );
+    });
+
     test('无标记按标题：排雷词 → 排雷档', () {
       expect(
         entryKindLabel(category: '扫书', flag: 0, title: '排雷：这几本千万别踩'),

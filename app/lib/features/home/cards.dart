@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../../classify/src/engine.dart' show kRecommendKind;
+import '../../classify/src/engine.dart' show entryKindLabel, kRecommendKind;
 import '../../core/constants.dart';
 import '../../core/icons.dart';
 import '../../data/repo/queries.dart';
@@ -53,13 +53,30 @@ SemanticTone toneOfEntry(EntryRow e) => switch (e.kindLabel) {
   _ => SemanticTone.scan,
 };
 
-/// 帖子级语义色调（post_kind 单判，不看 posts.recommend_flag）。
+/// 帖子级语义色调：以 post_kind 打底，再用**标题**校正一次。
 ///
 /// 帖子没有条目那样的「原帖背书颜色」——recommend_flag 只是 post_kind 的派生存列
 /// （classifier.dart：扫书+1 / 排雷−1 / 求书 0），拿它判推荐会让全部扫书帖挂绿标，
-/// 与条目级新口径（只认颜色标记）自相矛盾。故帖子级一律按类别定档：扫书灰「扫书」、
-/// 排雷红、求书灰「求书」、其余不标。
-SemanticTone postToneOf({required String? postKind}) {
+/// 与条目级口径（只认颜色标记 / 标题推书词）自相矛盾，故不参与判定。
+///
+/// 为什么还要看标题：分类链把「推书」并入扫书（Python parity 冻结口径），于是
+/// 「推书:我的尸傀和仙子通感了」这类帖子挂着灰「扫书」徽标，而它的书目卡片却按
+/// [entryKindLabel] 计到「1 推荐」——同一帖两处说法打架（用户反馈）。这里就地把
+/// 标题喂给同一个展示层判定函数，帖级徽标与条目计数同源。
+///
+/// [title] 为空时退化为纯 post_kind 判档（无标题的老数据行为不变）。
+SemanticTone postToneOf({required String? postKind, String? title}) {
+  if ((title ?? '').trim().isNotEmpty) {
+    switch (entryKindLabel(category: postKind ?? CategoryKind.scan, flag: 0, title: title)) {
+      case kRecommendKind:
+        return SemanticTone.recommend;
+      case CategoryKind.avoid:
+        return SemanticTone.avoid;
+      case CategoryKind.ask:
+        return SemanticTone.ask;
+    }
+    // 标题无推书/排雷/求书信号 → 落回 post_kind 档（扫书灰）。
+  }
   switch (postKind) {
     case CategoryKind.avoid:
       return SemanticTone.avoid;
@@ -329,7 +346,7 @@ class PostCard extends StatelessWidget {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
     final post = data.post;
-    final SemanticTone tone = postToneOf(postKind: post.postKind);
+    final SemanticTone tone = postToneOf(postKind: post.postKind, title: post.title);
     final String title = (post.title?.isNotEmpty ?? false)
         ? post.title!
         : (data.books.isNotEmpty ? '《${BookNameChip.stripBrackets(data.books.first.name)}》' : '无题');

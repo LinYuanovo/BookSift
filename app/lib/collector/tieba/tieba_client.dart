@@ -1,4 +1,4 @@
-/// 匿名贴吧客户端（app-proto 通道）。
+/// 贴吧客户端（app-proto 通道；默认匿名，可传 [TiebaClient.bduss] 切账号档）。
 /// 请求形态对齐 aiotieba core/http.py pack_proto_request + get_threads/get_posts _api.py：
 ///   POST multipart/form-data; boundary=-*_r1999，单 part name="data"; filename="file"
 ///   （part 无 Content-Type），头 x_bd_data_type: protobuf；protobuf 通道免 APP_SALT 签名。
@@ -102,6 +102,7 @@ class TiebaClient {
     Random? random,
     this.minIntervalMs = 1500,
     this.maxIntervalMs = 3000,
+    this.bduss,
     Dio? dio,
   })  : _rng = random ?? Random(),
         _dio = dio ??
@@ -118,6 +119,10 @@ class TiebaClient {
   final int minIntervalMs;
   final int maxIntervalMs;
 
+  /// 贴吧登录凭证（null = 匿名档）。非空时写入每个请求 `common.BDUSS`
+  /// （账号维度配额 300→600，原型 §8.11）；值只在内存中传递，不落盘、不写日志。
+  final String? bduss;
+
   /// 1.5~3.0s 均匀随机抖动（原型文档 §8.11 匿名档）
   Future<void> _throttle() async {
     final span = maxIntervalMs - minIntervalMs;
@@ -125,9 +130,19 @@ class TiebaClient {
     await Future<void>.delayed(Duration(milliseconds: ms));
   }
 
-  CommonReq _common() => CommonReq()
-    ..clientType = 2
-    ..clientVersion = kLegacyVersion;
+  /// common 请求体。proto 通道免 APP_SALT 签名（aiotieba core/http.py:122-154
+  /// pack_proto_request）；BDUSS 非空时写 `common.BDUSS`（aiotieba
+  /// api/get_posts/_api.py:38 同口径）；匿名档不触碰该字段 —— 请求体字节与历史一致。
+  CommonReq _common() {
+    final CommonReq req = CommonReq()
+      ..clientType = 2
+      ..clientVersion = kLegacyVersion;
+    final String? bduss = this.bduss;
+    if (bduss != null && bduss.isNotEmpty) {
+      req.bDUSS = bduss;
+    }
+    return req;
+  }
 
   Future<Uint8List> _postProto(String url, Uint8List protoBytes) async {
     if (risk.tripped) {
@@ -238,7 +253,8 @@ class TiebaClient {
   }
 
   /// get_posts：主题帖楼层。pn 从 1 开始；rn ∈ [2,30]（get_posts/_api.py:34）；
-  /// 匿名不传 with_floor/BDUSS（不抓楼中楼）。
+  /// 本版不抓楼中楼（with_floor 未开；日后要抓需 with_floor=1 且 common.BDUSS 非空，
+  /// 原型 §8.7 行 1309）。
   Future<PbPageResIdl> getPosts(
     int tid, {
     int pn = 1,

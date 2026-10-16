@@ -1,11 +1,13 @@
+import 'package:animations/animations.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/window_size.dart';
+import '../../core/nav/center_slot.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/queries.dart';
 import '../../data/repo/queries_providers.dart';
+import 'book_detail_page.dart';
 
 // 详情页接线（M1-④）：compact/medium 走 push 路由；expanded 在 AppShell 双栏右槽
 // （app_shell.dart _DetailSlot）原位切换（设计系统 §9.7 list-detail 语义）。
@@ -70,20 +72,26 @@ class BookNavArgs {
 final StateProvider<PostSelection?> detailSelectionProvider =
     StateProvider<PostSelection?>((Ref ref) => null);
 
-/// 打开帖子详情：expanded 且在 shell 根部 → 右槽原位切换；否则 push（§9.7）。
+/// 打开帖子详情：expanded（三栏）→ 右槽原位切换；否则 push（§9.7）。
+///
+/// 判据用「中间功能区在场」而不是老的 `!context.canPop()`：中间栈压着页面（如在线帖）
+/// 时 canPop 也为真，老判据会把详情盖成整窗页、把中间功能区挤掉。
 void openPostDetail(
   BuildContext context,
   WidgetRef ref,
   PostSelection selection,
 ) {
-  if (WindowSize.of(context) == WindowSizeClass.expanded && !context.canPop()) {
+  if (centerSlotMounted()) {
     ref.read(detailSelectionProvider.notifier).state = selection;
     return;
   }
   context.push('/post/${selection.postId}', extra: selection);
 }
 
-/// 打开书聚合页（§5.5：书卡进入走 horizontal 共享轴，push 语义三档一致）。
+/// 打开书聚合页（§5.5：书卡进入走 horizontal 共享轴）。
+///
+/// 用户口径：expanded 三栏下书聚合页不盖住整窗，直接显示在**中间功能区**
+/// （core/nav/center_slot.dart）；compact/medium 无中间栏，等价于原全窗 push。
 void openBookDetail(
   BuildContext context,
   int bookGroupId, {
@@ -91,13 +99,17 @@ void openBookDetail(
   String? highlight,
   SemanticFilter initialFilter = SemanticFilter.all,
 }) {
-  context.push(
-    '/book/$bookGroupId',
-    extra: BookNavArgs(
-      snapshot: snapshot,
-      highlight: highlight,
-      initialFilter: initialFilter,
-    ),
+  final BookNavArgs args = BookNavArgs(
+    snapshot: snapshot,
+    highlight: highlight,
+    initialFilter: initialFilter,
+  );
+  openCenterPage(
+    context,
+    BookDetailPage(bookGroupId: bookGroupId, args: args),
+    type: SharedAxisTransitionType.horizontal,
+    // 窄屏保持原路由（/book/:id + extra）语义。
+    fullScreen: () => context.push('/book/$bookGroupId', extra: args),
   );
 }
 

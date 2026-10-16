@@ -5,6 +5,7 @@ import '../../core/fonts/font_registry.dart';
 import '../../core/fonts/font_service.dart';
 import '../../core/fonts/font_tokens.dart';
 import '../../core/icons.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
@@ -92,7 +93,7 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
   }
 
   void _snack(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    showAppToast(context, message);
   }
 
   @override
@@ -297,7 +298,7 @@ class _SlotDropdown extends StatelessWidget {
           if (next == null || next == value) return;
           final String? error = await service.setRoleSlot(role, next);
           if (error != null && context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+            showAppToast(context, error);
           }
         },
       ),

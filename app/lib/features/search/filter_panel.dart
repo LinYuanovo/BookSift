@@ -9,11 +9,11 @@ import '../home/cards.dart';
 import 'dimension_chips.dart';
 import 'search_state.dart';
 
-// 搜索页六维筛选 chips（§5.3）：**多行换行**排布（年 月 旬 / 来源 类别 …），
+// 搜索页六维筛选 chips（§5.3）：**单一 Wrap 按容器宽度自适应**——放得下单行、放不下
+// 按容器宽度换行（行数不固定），顺序恒为 年 月 旬 来源 类别 时间↓；
 // 点某维 chip → 值域浮层选值（带联动命中计数）。
 // 「清除 / 确认」在 Tab 行（与目录同排，见搜索页 _SearchTabs），本面板只管维度。
 //
-// 与旧形态的唯一差异是布局：由「单行横向滚动」改为 Wrap 多行（窄屏不再需要左右滑）；
 // 值仍在浮层里选（不是把候选值内联铺开）。
 //
 // 联动计数：浮层内候选计数取自 searchFilterCountsProvider(filter) —— 选 2026 年后
@@ -49,57 +49,26 @@ class SearchFilterPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppSpacing s = AppSpacing.of(context);
     final SearchDraftNotifier notifier = ref.read(searchDraftProvider.notifier);
-    // 两行只放维度 chips；清除 / 确认在 Tab 行（与目录同排），见 SearchPage。
+    // 单一 Wrap：chips 取固有宽、不拉伸；宽度够 → 单行，不够 → 按容器宽度换行。
+    // 清除 / 确认在 Tab 行（与目录同排），见 SearchPage。
     return Padding(
       padding: EdgeInsets.fromLTRB(s.pagePadding, s.space3, s.pagePadding, s.space2),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Wrap(
+        spacing: s.chipGap,
+        runSpacing: s.space2,
         children: <Widget>[
-          _panelRow(
-            context,
-            ref,
-            notifier,
-            dims: const <CategoryDim>[CategoryDim.year, CategoryDim.month, CategoryDim.tenDay],
-          ),
-          SizedBox(height: s.space2),
-          _panelRow(
-            context,
-            ref,
-            notifier,
-            dims: const <CategoryDim>[CategoryDim.channel, CategoryDim.category],
-          ),
+          for (final CategoryDim dim in const <CategoryDim>[
+            CategoryDim.year,
+            CategoryDim.month,
+            CategoryDim.tenDay,
+            CategoryDim.channel,
+            CategoryDim.category,
+          ])
+            _dimChip(context, ref, dim, notifier),
+          // 排序 chip（「时间↓/↑」）恒在末尾，随 Wrap 一起换行。
+          _sortChip(context, notifier),
         ],
       ),
-    );
-  }
-
-  /// 一行：维度 chips（取固有宽、可收缩省略）+ 行尾图标动作钮（贴右）。
-  Widget _panelRow(
-    BuildContext context,
-    WidgetRef ref,
-    SearchDraftNotifier notifier, {
-    required List<CategoryDim> dims,
-  }) {
-    final AppSpacing s = AppSpacing.of(context);
-    final List<Widget> chips = <Widget>[
-      for (final CategoryDim dim in dims) _dimChip(context, ref, dim, notifier),
-    ];
-    // 第二行：类别之后接排序 chip（「时间↓/↑」）。
-    if (dims.contains(CategoryDim.category)) {
-      chips.add(_sortChip(context, notifier));
-    }
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: <Widget>[
-        // chips 取固有宽（Wrap 不拉伸）；极窄屏/宽字阶下换行（不溢出，行高自增）。
-        Expanded(
-          child: Wrap(
-            spacing: s.chipGap,
-            runSpacing: s.space1,
-            children: chips,
-          ),
-        ),
-      ],
     );
   }
 

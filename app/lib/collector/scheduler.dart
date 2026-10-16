@@ -8,7 +8,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:math';
 
-// ── §8.11 频控参数（匿名档；BDUSS 档未接入，见报告） ─────────────────────
+// ── §8.11 频控参数（间隔：匿名 1.5–3.0s / BDUSS 档 1.0–2.0s；预算：匿名 ≤300 / BDUSS 档 ≤600） ──
 
 /// 单请求间隔下限（匿名 1.5s）。
 const int kMinIntervalMs = 1500;
@@ -16,12 +16,43 @@ const int kMinIntervalMs = 1500;
 /// 单请求间隔上限（匿名 3.0s）。
 const int kMaxIntervalMs = 3000;
 
+/// 单请求间隔下限（BDUSS 档 1.0s；原型 §8.11 行 1633「间隔 1.0–2.0s」）。
+const int kMinIntervalBdussMs = 1000;
+
+/// 单请求间隔上限（BDUSS 档 2.0s）。
+const int kMaxIntervalBdussMs = 2000;
+
+/// 按账号档位取全局间隔区间（单点映射；装配点 = collect_service.dart 建
+/// [GlobalRateLimiter] 时）。匿名档原样返回历史值（1.5–3.0s），请求节奏一字不变。
+({int minMs, int maxMs}) intervalMsFor({required bool bdussImported}) =>
+    bdussImported
+        ? (minMs: kMinIntervalBdussMs, maxMs: kMaxIntervalBdussMs)
+        : (minMs: kMinIntervalMs, maxMs: kMaxIntervalMs);
+
 /// 每日请求总预算（匿名 ≤300；§8.11）。
 const int kDailyBudgetAnonymous = 300;
 
-/// 跨吧并发默认值/上限（§8.8）。
+/// 每日请求总预算（BDUSS 档 ≤600；原型 §8.11「每日请求总预算 ≤300 | ≤600」行 1633）。
+const int kDailyBudgetBduss = 600;
+
+/// 按账号档位取每日预算上限（null/空 = 匿名档，§8.11）。装配点：
+/// collect_controller.dart（tiebaApiProvider 同源读 bdussProvider）。
+int dailyBudgetFor(String? bduss) => (bduss == null || bduss.isEmpty)
+    ? kDailyBudgetAnonymous
+    : kDailyBudgetBduss;
+
+/// 跨吧并发默认值（§8.8；两档相同）。
 const int kDefaultConcurrency = 2;
-const int kMaxConcurrency = 3;
+
+/// 跨吧并发上限（匿名档 3；§8.8）。
+const int kMaxConcurrencyAnonymous = 3;
+
+/// 跨吧并发上限（BDUSS 档 4；需求 5「并发数也适当提高」——账号身份下适度放宽）。
+const int kMaxConcurrencyBduss = 4;
+
+/// 按账号档位取并发上限（单点映射：设置页 / 调度器 / CLI 三处共用）。
+int maxConcurrencyFor({required bool bdussImported}) =>
+    bdussImported ? kMaxConcurrencyBduss : kMaxConcurrencyAnonymous;
 
 /// 单帖失败退避基数 30s×2ⁿ，重试 ≤3 次（§8.11）。
 const int kMaxThreadRetries = 3;
@@ -261,8 +292,32 @@ class GlobalRateLimiter {
 Duration retryBackoff(int attempt) =>
     Duration(seconds: 30 * (1 << attempt.clamp(0, 10)));
 
-/// settings.concurrent_forums 解析：默认 2、钳制 [1, 3]（§8.8）。
-int effectiveConcurrency(String? settingValue) {
+/// settings.concurrent_forums 解析：默认 2、钳制 [1, 档位上限]（§8.8；匿名上限 3 / BDUSS 档 4）。
+int effectiveConcurrency(String? settingValue, {bool bdussImported = false}) {
   final int v = int.tryParse(settingValue ?? '') ?? kDefaultConcurrency;
-  return v.clamp(1, kMaxConcurrency);
+  return v.clamp(1, maxConcurrencyFor(bdussImported: bdussImported));
+}
+
+/// 「登录态失效」文案特征（§8.10 失效检测；errorno ∈ [110000,111000) 的情况由 [isLoginInvalidError] 覆盖）。
+const List<String> kLoginInvalidHints = <String>[
+  '未登录',
+  '请先登录',
+  '登录失效',
+  '登录已过期',
+  'nologin',
+  'not logged in',
+];
+
+/// 判定「账号登录态失效」（§8.10 自动降级口径）：[CollectFailureKind.rateLimited] 且
+/// errorno ∈ [110000,111000)，或失败文案命中 [kLoginInvalidHints]。用法见
+/// collect_service.dart `_downgradeToAnonymous`；匿名档的 429/验证码不会命中。
+bool isLoginInvalidError(CollectRequestException e) {
+  if (e.kind != CollectFailureKind.rateLimited) {
+    return false;
+  }
+  if (e.code >= 110000 && e.code < 111000) {
+    return true;
+  }
+  final String m = e.message.toLowerCase();
+  return kLoginInvalidHints.any((String h) => m.contains(h.toLowerCase()));
 }

@@ -715,7 +715,13 @@ class CollectCommand extends BookSiftCommand {
       ..addOption(
         'budget',
         defaultsTo: '8',
-        help: '本次请求预算上限（硬上限 $kDailyBudgetAnonymous = 匿名档日预算）。',
+        help: '本次请求预算上限（硬上限：匿名档 $kDailyBudgetAnonymous / 带 --bduss 时 $kDailyBudgetBduss）。',
+      )
+      ..addOption(
+        'bduss',
+        help: '贴吧登录凭证（裸值或 `BDUSS=…` 片段；也可用环境变量 BOOKSIFT_BDUSS，参数优先）。'
+            '提供后按账号档运行：请求间隔 1.0–2.0s、并发上限 4、预算上限 $kDailyBudgetBduss。'
+            '凭证不进日志（最多打掩码）。',
       )
       ..addFlag(
         'isolate',
@@ -740,11 +746,32 @@ class CollectCommand extends BookSiftCommand {
     final RunLog log = await this.log;
     final bool net = argResults!['net'] as bool;
     final int budget = int.parse(argResults!['budget'] as String);
-    if (budget <= 0 || budget > kDailyBudgetAnonymous) {
-      throw CliError(
-        '--budget 超出范围（1..$kDailyBudgetAnonymous）：$budget',
+
+    // 凭证：--bduss 参数优先，回落环境变量 BOOKSIFT_BDUSS（纯 Dart 读不到
+    // 系统加密存储，headless 走参数/环境变量；解析/掩码与 App 同源 bduss_format.dart）。
+    final String? rawArg = argResults!['bduss'] as String?;
+    final String? rawEnv = Platform.environment['BOOKSIFT_BDUSS'];
+    final String? rawBduss =
+        (rawArg != null && rawArg.trim().isNotEmpty) ? rawArg : rawEnv;
+    final String? bduss = (rawBduss == null || rawBduss.trim().isEmpty)
+        ? null
+        : parseBdussInput(rawBduss);
+    if (rawBduss != null && rawBduss.trim().isNotEmpty && bduss == null) {
+      throw const CliError(
+        '--bduss / BOOKSIFT_BDUSS 看起来不是 BDUSS（应为 40 位以上字母数字串）',
         code: ExitCode.usage,
-        hint: 'AGENTS.md §6：禁止对贴吧高频压测；匿名档日预算上限 $kDailyBudgetAnonymous。',
+        hint: '只填 BDUSS 裸值或 `BDUSS=…` Cookie 片段，不要填账号密码。',
+      );
+    }
+    final bool bdussImported = bduss != null;
+    final int budgetCap =
+        bdussImported ? kDailyBudgetBduss : kDailyBudgetAnonymous;
+    if (budget <= 0 || budget > budgetCap) {
+      throw CliError(
+        '--budget 超出范围（1..$budgetCap）：$budget',
+        code: ExitCode.usage,
+        hint: 'AGENTS.md §6：禁止对贴吧高频压测；'
+            '${bdussImported ? 'BDUSS 档' : '匿名档'}日预算上限 $budgetCap。',
       );
     }
 
@@ -755,13 +782,15 @@ class CollectCommand extends BookSiftCommand {
         log.emit('collect', '播种', detail: '关注吧为空时写入默认两吧');
       }
 
-      final CollectPlan plan = await HeadlessCollect.plan(db: db, budgetLimit: budget);
+      final CollectPlan plan =
+          await HeadlessCollect.plan(db: db, budgetLimit: budget, bduss: bduss);
       log.emit(
         'collect',
         '计划',
         detail: '可跑 ${plan.enabledForums.length} 吧'
             '${plan.coolingForums.isEmpty ? '' : '，冷却跳过 ${plan.coolingForums.length}'}'
-            '，预算 ${plan.budgetUsed}/${plan.budgetLimit}',
+            '，预算 ${plan.budgetUsed}/${plan.budgetLimit}'
+            '，账号档 ${bdussImported ? 'BDUSS（${maskBduss(bduss)}）' : '匿名'}',
         data: plan.toJson(),
       );
 
@@ -773,7 +802,9 @@ class CollectCommand extends BookSiftCommand {
           ..writeln('  冷却跳过     : ${plan.coolingForums.isEmpty ? '（无）' : plan.coolingForums.join('、')}')
           ..writeln('  预算         : 已用 ${plan.budgetUsed} / 上限 ${plan.budgetLimit}（${plan.budgetDate ?? '今日未计数'}），余 ${plan.budgetRemaining}')
           ..writeln('  并发吧数     : ${plan.concurrentForums}   仅WiFi=${plan.wifiOnly}')
-          ..writeln('  请求间隔     : $kMinIntervalMs~${kMaxIntervalMs}ms（全局限速器抖动）')
+          ..writeln('  请求间隔     : ${plan.minIntervalMs}~${plan.maxIntervalMs}ms'
+              '（全局限速器抖动；${bdussImported ? 'BDUSS 档' : '匿名档'}）')
+          ..writeln('  账号档       : ${bdussImported ? 'BDUSS（${maskBduss(bduss)}）' : '匿名（--bduss 或 BOOKSIFT_BDUSS 可切账号档）'}')
           ..writeln('')
           ..writeln('  水位：');
         for (final ForumWatermark f in plan.forums) {
@@ -809,11 +840,16 @@ class CollectCommand extends BookSiftCommand {
       log.emit(
         'collect',
         '开始',
-        detail: '真网络：${plan.enabledForums.join('、')}，预算 $budget，词典 ${dictLines.length} 行',
+        detail: '真网络：${plan.enabledForums.join('、')}，预算 $budget，'
+            '账号档 ${bdussImported ? 'BDUSS（${maskBduss(bduss)}）' : '匿名'}，'
+            '词典 ${dictLines.length} 行',
         level: RunLevel.warn,
         data: <String, Object?>{
           'net': true,
           'budget': budget,
+          'accountTier': bdussImported ? 'bduss' : 'anonymous',
+          // 凭证本体绝不进日志 / --json（最多掩码）。
+          if (bdussImported) 'bdussMasked': maskBduss(bduss),
           'forums': plan.enabledForums,
           'dictLines': dictLines.length,
         },
@@ -824,6 +860,7 @@ class CollectCommand extends BookSiftCommand {
         log: log,
         dictLines: dictLines,
         budgetLimit: budget,
+        bduss: bduss,
         useIsolateWorker: argResults!['isolate'] as bool,
       );
       final CollectRunSummary summary = result.summary;

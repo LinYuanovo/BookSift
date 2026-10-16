@@ -33,7 +33,11 @@ GoRouter createAppRouter({String initialLocation = '/home'}) {
     routes: <RouteBase>[
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) =>
-            AppShell(navigationShell: navigationShell),
+            AppShell(
+          navigationShell: navigationShell,
+          // 中间功能区页面栈的「换页即回根」依据（见 AppShell.didUpdateWidget）。
+          location: state.uri.toString(),
+        ),
         branches: <StatefulShellBranch>[
           StatefulShellBranch(
             routes: <RouteBase>[

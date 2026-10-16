@@ -137,8 +137,9 @@ await tester.pumpWidget(…);                                        // 回到�
 
 ### 3.5 收尾纪律
 
-- SnackBar 的 4s 自动消失是**假时钟 Timer**：用例结束前必须
-  `await dismissSnackBars(tester)`（= `pump(5s)` + `pumpAndSettle`），否则残留 pending timer 判失败。
+- 轻提示（`showAppToast`，core/widgets/app_toast.dart）的 2.2s 停留是**假时钟 Timer**
+  （等价旧 SnackBar 的 4s 档）：用例结束前必须 `await dismissSnackBars(tester)`
+  （= `pump(5s)` + `pumpAndSettle`），否则残留 pending timer 判失败。
 - 输入联想的 200ms debounce 同理：`enterText` 后 `await tester.pump(const Duration(milliseconds: 250))`。
 - `tester.view.physicalSize` 改动由 `useSurface` 内部 `addTearDown(tester.view.reset)` 兜住。
 
@@ -238,7 +239,7 @@ Remove-Item app\build\native_assets -Recurse -Force
 2. 需要新数据？→ 加到 `support/demo_data.dart` 的 `demoLibrary()`，**不要**在 widget 测试里开库。
 3. 需要新的数据访问方法？→ `BookRepository` + `Queries` + `FakeBookRepository` 三处同步补。
 4. 要断言 SQL 正确性？→ 写 plain `test()`，对 `fixtures/dev_seed.db` 副本断言。
-5. 有 SnackBar / debounce / 动画？→ 显式 `pump(duration)` 推进假时钟，收尾 `dismissSnackBars`。
+5. 有 toast / debounce / 动画？→ 显式 `pump(duration)` 推进假时钟，收尾 `dismissSnackBars`。
 6. 屏外元素找不到？→ `ListView`/`Sliver` 懒构建，用 `useSurface(tester, height: …)` 加高视口
    或先 `scrollUntilVisible`，别断言不存在。
 7. 同文案多处命中？→ 用 `find.descendant(of:…)` / `find.byKey` / `byWidgetPredicate` 收窄，

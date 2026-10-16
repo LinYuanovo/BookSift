@@ -123,7 +123,8 @@ class _RankPageState extends ConsumerState<RankPage> {
         leading: IconButton(
           tooltip: '返回',
           icon: AppIcon('back', size: 24, color: c.textSecondary),
-          onPressed: () => context.pop(),
+          // expanded 下本页被压进中间功能区（嵌套 Navigator），故返回走 Navigator 而非 go_router.pop。
+          onPressed: () => Navigator.of(context).maybePop(),
         ),
         title: const Text('热门榜'),
         actions: <Widget>[
@@ -333,7 +334,8 @@ class _RankListRow extends StatelessWidget {
         if (groupId != null) {
           openBookDetail(context, groupId); // → push /book/{groupId}（书聚合页，§5.5）
         } else {
-          context.push('/search?q=${Uri.encodeComponent(row.nameNorm)}');
+          // go（换分支）而非 push：expanded 下由 AppShell 把中间栈回根后显示搜索结果。
+          context.go('/search?q=${Uri.encodeComponent(row.nameNorm)}');
         }
       },
       borderRadius: AppRadius.lgBorder,

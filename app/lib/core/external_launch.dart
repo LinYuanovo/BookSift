@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import 'widgets/app_toast.dart';
 
 /// 「原帖 ↗」外部跳转单一出口：Android 依次定向贴吧 App（官方 com.baidu.tieba →
 /// 贴吧 Lite com.huanchengfly.tieba.post 的 http(s) intent-filter，MainActivity
@@ -43,7 +45,5 @@ Future<void> openThreadExternallyWithFeedback(BuildContext context, String url) 
   if (ok || !context.mounted) {
     return;
   }
-  ScaffoldMessenger.of(
-    context,
-  ).showSnackBar(const SnackBar(content: Text('没有可打开原帖的应用')));
+  showAppToast(context, '没有可打开原帖的应用');
 }

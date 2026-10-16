@@ -127,9 +127,12 @@ class CollectService {
     Random? rng,
     NetworkGate networkGate = const AlwaysAllowNetworkGate(),
     this.budgetLimit = kDailyBudgetAnonymous,
+    this.bdussImported = false,
+    this.anonymousApiFactory,
+    this.onAccountInvalid,
     this.onLog,
   })  : _repo = repo,
-        _api = api,
+        _primaryApi = api,
         _workerFactory = workerFactory,
         _onState = onState,
         _clock = clock,
@@ -139,7 +142,21 @@ class CollectService {
         _ingest = IngestPipeline(db);
 
   final CollectRepository _repo;
-  final TiebaApi _api;
+  final TiebaApi _primaryApi;
+
+  /// 账号档「登录态失效」自动降级（需求 5 / §8.10）：
+  /// - [anonymousApiFactory] 非空时，命中失效特征后**换用**它现造的匿名客户端
+  ///   （当次请求的重试即不再带 BDUSS）；该客户端由本服务在轮末 close；
+  /// - [onAccountInvalid] 每轮至多回调一次（幂等口径），装配侧据此标记凭证失效。
+  final TiebaApi Function()? anonymousApiFactory;
+  final void Function()? onAccountInvalid;
+
+  /// 降级后的匿名客户端（非空 = 本轮已降级；本服务拥有并负责 close）。
+  TiebaApi? _anonymousApi;
+  bool _accountDowngraded = false;
+
+  /// 本请求实际走的通道：降级后为匿名客户端，否则为注入的主客户端。
+  TiebaApi get _api => _anonymousApi ?? _primaryApi;
   final PostWorkerFactory _workerFactory;
   final CollectStateSink _onState;
   final CollectClock _clock;
@@ -148,8 +165,12 @@ class CollectService {
   final NetworkGate _gate;
   final IngestPipeline _ingest;
 
-  /// 每日请求预算上限（匿名 ≤300，§8.11；BDUSS 档 600 未接入）。
+  /// 每日请求预算上限（匿名 ≤300 / BDUSS 档 600，§8.11；装配侧用
+  /// [dailyBudgetFor] 选档，见 collect_controller.dart）。
   final int budgetLimit;
+
+  /// 本轮是否携带 BDUSS（仅用于日志的账号口径描述；请求身份由 [TiebaApi] 装配决定）。
+  final bool bdussImported;
 
   /// 逐条日志回调（可选；headless/CLI 结构化日志落盘用，见 lib/headless/logs.dart）。
   ///
@@ -205,6 +226,8 @@ class CollectService {
         _log('全局', '失败', '采集异常终止：$e', level: CollectLogLevel.warn);
         debugPrintCollect('$e\n$st');
       } finally {
+        _anonymousApi?.close();
+        _anonymousApi = null;
         _phase = CollectPhase.idle;
         _finishedAt = _clock.now();
         _runFuture = null;
@@ -220,6 +243,7 @@ class CollectService {
     _globalPaused = false;
     _budgetExhausted = false;
     _globalFailures = 0;
+    _accountDowngraded = false;
     _banner = null;
     _logs.clear();
     _forumStates.clear();
@@ -247,8 +271,11 @@ class CollectService {
       return;
     }
 
-    final int concurrency =
-        effectiveConcurrency(await _repo.getSetting(SettingsKeys.concurrentForums));
+    // 并发/间隔按账号档位取上限（§8.8 匿名 ≤3 / BDUSS 档 ≤4；间隔 1.5–3.0s / 1.0–2.0s）。
+    final int concurrency = effectiveConcurrency(
+      await _repo.getSetting(SettingsKeys.concurrentForums),
+      bdussImported: bdussImported,
+    );
     _sem = Semaphore(concurrency);
     final DailyBudget budget = DailyBudget(
       store: _RepoBudgetStore(_repo),
@@ -257,11 +284,15 @@ class CollectService {
       dateKey: CollectSettingsKeys.budgetDate,
       countKey: CollectSettingsKeys.budgetCount,
     );
+    final ({int minMs, int maxMs}) interval =
+        intervalMsFor(bdussImported: bdussImported);
     _limiter = GlobalRateLimiter(
       clock: _clock,
       sleeper: _sleeper,
       rng: _rng,
       budget: budget,
+      minMs: interval.minMs,
+      maxMs: interval.maxMs,
     );
 
     PostWorker? worker;
@@ -283,7 +314,7 @@ class CollectService {
       );
     }
     _log('全局', '开始',
-        '开始采集 · 并发=$concurrency · 匿名 · ${wifiOnly ? '仅WiFi' : '任意网络'} · ${forums.length} 吧');
+        '开始采集 · 并发=$concurrency · ${bdussImported ? 'BDUSS 档' : '匿名'} · ${wifiOnly ? '仅WiFi' : '任意网络'} · ${forums.length} 吧');
     _publish();
 
     try {
@@ -770,7 +801,10 @@ class CollectService {
       final T r = await call();
       _globalFailures = 0;
       return r;
-    } on CollectRequestException {
+    } on CollectRequestException catch (e) {
+      if (isLoginInvalidError(e)) {
+        _downgradeToAnonymous(e);
+      }
       _globalFailures++;
       if (_globalFailures >= kGlobalFailurePause && !_globalPaused) {
         _globalPaused = true;
@@ -783,6 +817,21 @@ class CollectService {
     } finally {
       _sem.release();
     }
+  }
+
+  /// 账号档命中「登录态失效」→ 换匿名客户端（当次请求的重试不再带 BDUSS）+ 通知一次。
+  ///
+  /// 幂等与边界：同一轮连续失效只降级/回调一次；匿名档（未导入凭证）不触发；
+  /// 不删用户凭证（标记由 onAccountInvalid 侧写，重新导入即清除）。
+  /// 降级换客户端 = 「不再带 BDUSS 重试当次请求」的实际语义（重试调用走 [_api] getter）。
+  void _downgradeToAnonymous(CollectRequestException e) {
+    if (!bdussImported || _accountDowngraded) return;
+    _accountDowngraded = true;
+    _anonymousApi = anonymousApiFactory?.call();
+    _log('全局', '降级',
+        '登录态失效（${e.message}）→ 本轮起回退匿名档；请到设置页「BDUSS 导入」行重新导入',
+        level: CollectLogLevel.warn);
+    onAccountInvalid?.call();
   }
 
   /// 原地退避重试（仅列表阶段用；线程任务的重试走「延迟重入队尾」）。

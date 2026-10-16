@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../theme/app_colors.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
@@ -113,6 +114,7 @@ class FloorRichText extends StatefulWidget {
     this.searchWord = '',
     this.searchFocusIndex = -1,
     this.selectable = false,
+    this.keepTapWhileSelectable = false,
   });
 
   final String text;
@@ -129,10 +131,17 @@ class FloorRichText extends StatefulWidget {
   /// 当前命中在本楼层内的序号；-1 = 本楼不含当前命中（全部普通琥珀）。
   final int searchFocusIndex;
 
-  /// P1-6 自由复制选择模式：书名/URL 一律降级为**纯文本 span**（无 recognizer、
-  /// 无 InkWell WidgetSpan），点击手势暂停，选择与复制交由外层 SelectionArea；
-  /// 复制得到纯文本（书名《》原样、搜索高亮 background 不影响选区字节）。
+  /// P1-6 自由复制选择模式：书名/URL 一律降级为**纯文本 span**（无 InkWell
+  /// WidgetSpan），选择与复制交由外层 SelectionArea；复制得到纯文本（书名《》原样、
+  /// 搜索高亮 background 不影响选区字节）。
   final bool selectable;
+
+  /// 可选中时是否**保留单击手势**（桌面「随时可自由复制」档，用户口径）：
+  /// 书名单击仍跳搜索、URL 单击仍复制链接 —— 但用 [TextSpan.recognizer] 而非
+  /// InkWell WidgetSpan，文字因此并回文本流，可以像普通段落一样拖选复制；
+  /// 拖拽选词由外层 SelectionArea 接管，单击才走 recognizer，两者不冲突。
+  /// 为 false（触屏长按进模式）时沿用「手势全停」，避免抢走横滑翻页。
+  final bool keepTapWhileSelectable;
 
   @override
   State<FloorRichText> createState() => _FloorRichTextState();
@@ -238,10 +247,14 @@ class _FloorRichTextState extends State<FloorRichText> {
           spans.addAll(_highlighted(text, base));
         case BookSegment(:final String name):
           if (widget.selectable) {
-            // P1-6 选择模式：书名并入连续文本流（《》原样可复制），InkWell 点击/长按手势暂停。
+            // P1-6 选择模式：书名并入连续文本流（《》原样可复制）。
+            // 桌面档额外挂 recognizer：单击跳书名搜索（长按让位给选词）。
             spans.add(TextSpan(
               text: '《$name》',
               style: base.copyWith(color: c.bookname, fontWeight: FontWeight.w600),
+              recognizer: widget.keepTapWhileSelectable
+                  ? _tap(() => widget.onBookTap(name))
+                  : null,
             ));
           } else {
             spans.add(WidgetSpan(
@@ -252,7 +265,7 @@ class _FloorRichTextState extends State<FloorRichText> {
                 onTap: () => widget.onBookTap(name),
                 onLongPress: () {
                   Clipboard.setData(ClipboardData(text: name));
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('书名已复制到剪贴板')));
+                  showAppToast(context, '书名已复制到剪贴板');
                 },
               ),
             ));
@@ -265,12 +278,13 @@ class _FloorRichTextState extends State<FloorRichText> {
               decoration: TextDecoration.underline,
               decorationColor: c.info,
             ),
-            // P1-6 选择模式：链接点击复制暂停（recognizer 不挂载），样式保持视觉连续。
-            recognizer: widget.selectable
+            // P1-6 选择模式：链接点击复制暂停（recognizer 不挂载），样式保持视觉连续；
+            // 桌面档保留单击复制（拖选仍可用）。
+            recognizer: widget.selectable && !widget.keepTapWhileSelectable
                 ? null
                 : _tap(() {
                     Clipboard.setData(ClipboardData(text: url));
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('链接已复制到剪贴板')));
+                    showAppToast(context, '链接已复制到剪贴板');
                   }),
           ));
       }

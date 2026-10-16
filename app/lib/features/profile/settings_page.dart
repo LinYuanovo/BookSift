@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../core/fonts/font_service.dart';
 import '../../core/icons.dart';
+import '../../core/nav/center_slot.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../core/update/update_controller.dart';
 import '../../core/update/update_service.dart';
 import '../../theme/app_accent.dart';
@@ -16,8 +17,13 @@ import '../../theme/app_motion.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
 import '../../theme/appearance_settings.dart';
+import '../../collector/collect_providers.dart';
+import '../../collector/scheduler.dart';
+import '../../collector/tieba_account.dart';
+import '../../data/bduss.dart';
 import '../collect/collect_settings.dart';
 import '../home/cards.dart';
+import 'about_page.dart';
 import 'font_manage_page.dart';
 
 /// 设置页（字体管理 / 主题模式 / 主题色 swatch / 减弱动效开关 / BDUSS / 数据包 / 并发 / 关于）。
@@ -124,7 +130,7 @@ Future<void> _writeAppearance(
     await action(ref.read(appearanceSettingsControllerProvider));
   } catch (_) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('保存失败')));
+      showAppToast(context, '保存失败');
     }
   }
 }
@@ -213,7 +219,7 @@ class _CollectSection extends ConsumerWidget {
       await action(ref.read(collectSettingsControllerProvider));
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('保存失败')));
+        showAppToast(context, '保存失败');
       }
     }
   }
@@ -224,6 +230,14 @@ class _CollectSection extends ConsumerWidget {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing space = AppSpacing.of(context);
     final CollectSettings settings = ref.watch(collectSettingsProvider).value ?? const CollectSettings();
+    // 需求 5：并发上限按档位（匿名 3 / BDUSS 档 4）；读 effective（已失效 → 匿名口径）。
+    final bool bdussImported =
+        (ref.watch(effectiveBdussProvider).value ?? '').isNotEmpty;
+    final int maxConcurrency = maxConcurrencyFor(bdussImported: bdussImported);
+    final int concurrent = effectiveConcurrency(
+      '${settings.concurrentForums}',
+      bdussImported: bdussImported,
+    );
     return Card(
       child: Padding(
         padding: EdgeInsets.symmetric(vertical: space.space2),
@@ -241,36 +255,191 @@ class _CollectSection extends ConsumerWidget {
               leading: AppIcon('collect', color: colors.textMuted),
               title: Text('跨吧并发数', style: t.bodyStrong.copyWith(color: colors.text)),
               subtitle: Text(
-                '默认 2 · 上限 3 · 提高并发有风控风险',
+                '默认 2 · 上限 $maxConcurrency（${bdussImported ? 'BDUSS 档' : '匿名档'}）· 提高并发有风控风险',
                 style: t.caption.copyWith(color: colors.textMuted),
               ),
               trailing: SegmentedPill<int>(
-                options: const <(int, String)>[(2, '2'), (3, '3')],
-                selected: settings.concurrentForums,
+                options: <(int, String)>[
+                  for (int i = 2; i <= maxConcurrency; i++) (i, '$i'),
+                ],
+                selected: concurrent,
                 onChanged: (int v) => _write(context, ref, (CollectSettingsController c) => c.setConcurrentForums(v)),
               ),
             ),
             Padding(
               padding: EdgeInsets.fromLTRB(space.pagePadding, 0, space.pagePadding, space.space2),
               child: Text(
-                // §8.8 风险说明原文（设置页并发配置项旁明示）。
+                // §8.8 风险说明原文（设置页并发配置项旁明示；上限数字按档位内插）。
                 '并发提高 = 单位时间请求数提高 = 触发风控（429/110xxx/冷却）概率提高；'
-                '调到 3 风险自担，且任吧连续失败 ≥3 仍触发全局暂停。',
+                '调到上限（匿名 $kMaxConcurrencyAnonymous / BDUSS 档 $kMaxConcurrencyBduss）风险自担，'
+                '且任吧连续失败 ≥3 仍触发全局暂停。',
                 style: t.caption.copyWith(color: colors.textMuted),
               ),
             ),
-            ListTile(
-              leading: AppIcon('key', color: colors.textMuted),
-              title: Text('BDUSS 导入', style: t.bodyStrong.copyWith(color: colors.text)),
-              // P2 范围（§8.13）：未实现导入前只做诚实标注，不放假入口。
-              subtitle: Text(
-                '匿名模式 · 不存储凭证 · 暂未提供导入 · 详见「关于与合规」',
-                style: t.caption.copyWith(color: colors.textMuted),
+            // BDUSS 导入 / 测试 / 清除（需求 8/5）：凭证只进设备本地系统加密存储，见 data/bduss.dart。
+            const _BdussTile(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// BDUSS 导入 / 测试 / 清除（需求 8/5）：凭证只进**设备本地系统加密存储**
+/// （data/bduss.dart），不进 settings 表、不写日志、不上传；导入后采集与在线搜索
+/// 请求带账号身份，每日配额 300 → 600、间隔 1.0–2.0s、并发上限 4（原型 §8.11）；
+/// 可随时清除回匿名档。失效（采集命中登录态特征自动降级，§8.10）时显示
+/// 「已失效 · 请重新导入」，「测试」按钮可主动校验当前凭证。
+class _BdussTile extends ConsumerStatefulWidget {
+  const _BdussTile();
+
+  @override
+  ConsumerState<_BdussTile> createState() => _BdussTileState();
+}
+
+class _BdussTileState extends ConsumerState<_BdussTile> {
+  /// 测试请求进行中（按钮禁用 + 转圈）。
+  bool _testing = false;
+
+  /// 导入 / 替换：整段 `BDUSS=…; STOKEN=…` Cookie 或裸值都接受
+  /// （[parseBdussInput] 负责提取与粗校验）。
+  Future<void> _import() async {
+    final AppColors colors = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    final AppSpacing space = AppSpacing.of(context);
+    final TextEditingController controller = TextEditingController();
+    final String? submitted = await showDialog<String>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('BDUSS 导入'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '从贴吧 App / 网页版的 Cookie 里复制 BDUSS 粘贴到此处（只需 BDUSS，'
+              '不要填账号密码）。凭证只存本机系统加密存储：不入库、不上传，可随时清除。',
+              style: t.caption.copyWith(color: colors.textMuted),
+            ),
+            SizedBox(height: space.space3),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'BDUSS=…（或直接粘贴值）',
+                border: OutlineInputBorder(),
+                isDense: true,
               ),
             ),
           ],
         ),
+        actions: <Widget>[
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('取消')),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+            child: const Text('保存'),
+          ),
+        ],
       ),
+    );
+    // controller 不手动 dispose（同 _editFallbackUrl：退场动画期间 TextField 仍挂载）。
+    if (submitted == null || !mounted) return;
+    final String? bduss = parseBdussInput(submitted);
+    if (bduss == null) {
+      showAppToast(context, '看起来不是 BDUSS（应为 40 位以上字母数字串）');
+      return;
+    }
+    try {
+      await ref.read(bdussControllerProvider).save(bduss);
+      if (mounted) showAppToast(context, '已导入 BDUSS · 每日配额 $kDailyBudgetBduss');
+    } catch (_) {
+      if (mounted) showAppToast(context, '保存失败');
+    }
+  }
+
+  /// 「测试」：用当前凭证调 initNickname（app-form + APP_SALT 签名，一次请求）；
+  /// 成功显示昵称，失败按 无效/风控/网络 分档提示。凭证只在请求体里，不外泄。
+  Future<void> _test(String bduss) async {
+    if (_testing) return;
+    setState(() => _testing = true);
+    try {
+      final TiebaAccountProbeResult r =
+          await ref.read(tiebaAccountProbeProvider).check(bduss);
+      if (!mounted) return;
+      final String message = switch (r.kind) {
+        TiebaAccountProbeKind.ok =>
+          'BDUSS 有效 · ${r.nickname.isEmpty ? '（昵称未取到）' : r.nickname}',
+        TiebaAccountProbeKind.invalid => 'BDUSS 无效或已失效 · 请重新导入',
+        TiebaAccountProbeKind.risk => '测试被风控拦截（${r.message}）· 稍后再试',
+        TiebaAccountProbeKind.network => '测试失败：网络异常（${r.message}）',
+        TiebaAccountProbeKind.server => '测试失败：接口异常（${r.message}）',
+      };
+      showAppToast(context, message);
+      if (r.kind == TiebaAccountProbeKind.invalid) {
+        // 与采集侧自动降级同源（幂等）；重新导入即清除标记。
+        await ref.read(bdussControllerProvider).markInvalid();
+      }
+    } catch (_) {
+      if (mounted) showAppToast(context, '测试失败：无法发起请求');
+    } finally {
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  Future<void> _clear() async {
+    try {
+      await ref.read(bdussControllerProvider).clear();
+      if (mounted) showAppToast(context, '已清除 BDUSS · 回到匿名模式');
+    } catch (_) {
+      if (mounted) showAppToast(context, '清除失败');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppColors colors = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    final String? bduss = ref.watch(bdussProvider).value;
+    final bool invalid = ref.watch(bdussInvalidProvider).value ?? false;
+    return ListTile(
+      leading: AppIcon('key', color: colors.textMuted),
+      title: Text(
+          invalid ? 'BDUSS 已失效' : (bduss == null ? 'BDUSS 导入' : 'BDUSS 已导入'),
+          style: t.bodyStrong.copyWith(color: colors.text)),
+      subtitle: Text(
+        bduss == null
+            ? '匿名模式 · 每日配额 $kDailyBudgetAnonymous · 导入后 $kDailyBudgetBduss · 详见「关于与合规」'
+            : (invalid
+                ? '已失效 · 请重新导入（当前按匿名档运行）'
+                : '${maskBduss(bduss)} · 每日配额 $kDailyBudgetBduss · 仅存本机加密存储'),
+        style: t.caption.copyWith(color: colors.textMuted),
+      ),
+      // 已导入：行尾给「测试 / 清除」；点行本身 = 重新导入（替换）。
+      trailing: bduss == null
+          ? RotatedBox(quarterTurns: 3, child: AppIcon('chev', size: 16, color: colors.textMuted))
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (_testing)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  TextButton(onPressed: () => _test(bduss), child: const Text('测试')),
+                TextButton(
+                  onPressed: _testing ? null : _clear,
+                  child: const Text('清除'),
+                ),
+              ],
+            ),
+      onTap: () => _import(),
     );
   }
 }
@@ -297,7 +466,7 @@ class _AccentSectionState extends ConsumerState<_AccentSection> {
       await ref.read(accentControllerProvider).select(id);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('保存失败')));
+        showAppToast(context, '保存失败');
       }
     }
   }
@@ -459,7 +628,7 @@ class _AboutSection extends ConsumerWidget {
   const _AboutSection();
 
   void _snack(BuildContext context, String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    showAppToast(context, message);
   }
 
   /// 手动检查（§10.1 检查时机之二）：三态分流 —— 有新版弹更新卡片；
@@ -688,7 +857,7 @@ class _AboutSection extends ConsumerWidget {
               style: t.caption.copyWith(color: colors.textMuted),
             ),
             trailing: RotatedBox(quarterTurns: 3, child: AppIcon('chev', size: 16, color: colors.textMuted)),
-            onTap: () => context.push('/about'),
+            onTap: () => openCenterPage(context, const AboutPage()),
           ),
         ],
       ),

@@ -90,25 +90,28 @@ void main() {
     testWidgets('频控数字由 scheduler 常量内插（改常量即改文案）', (WidgetTester tester) async {
       await pumpAbout(tester);
 
-      expect(find.textContaining('间隔 1.5–3.0 秒随机抖动'), findsOneWidget);
+      expect(find.textContaining('匿名档 1.5–3.0 秒、BDUSS 档 1.0–2.0 秒随机抖动'), findsOneWidget);
       expect(find.textContaining('每日最多 300 次请求'), findsOneWidget);
+      expect(find.textContaining('账号档提高到 600 次'), findsOneWidget);
       expect(find.textContaining('按 30 / 60 / 120 秒退避、最多重试 3 次'), findsOneWidget);
       expect(find.textContaining('连续失败 3 次进入 48 小时冷却'), findsOneWidget);
       expect(find.textContaining('全局连续失败 3 次整轮暂停'), findsOneWidget);
-      expect(find.textContaining('默认 2、上限 3'), findsOneWidget);
+      expect(find.textContaining('默认 2、上限 匿名 3 / BDUSS 档 4'), findsOneWidget);
     });
   });
 
-  group('块三 · BDUSS 与隐私声明（原型 §11.2）', () {
-    testWidgets('当前匿名不存凭证 / 未来仅本地加密 / 本地数据不出设备', (WidgetTester tester) async {
+  group('块三 · BDUSS 与隐私声明（原型 §11.2 / §8.10）', () {
+    testWidgets('凭证可选导入 / 仅本地加密 / 只管身份与配额 / 可清除 / 本地数据不出设备', (WidgetTester tester) async {
       await pumpAbout(tester);
 
-      expect(find.textContaining('当前版本为匿名模式'), findsOneWidget);
-      expect(find.textContaining('不采集、不存储、不传输任何账号凭证'), findsOneWidget);
-      expect(find.textContaining('尚未提供任何导入入口'), findsOneWidget);
+      expect(find.textContaining('账号凭证（BDUSS）为可选'), findsOneWidget);
+      expect(find.textContaining('不导入时全程匿名'), findsOneWidget);
+      expect(find.textContaining('只填 BDUSS，不要填账号密码'), findsOneWidget);
       expect(find.textContaining('flutter_secure_storage'), findsOneWidget);
       expect(find.textContaining('Android Keystore / iOS Keychain'), findsOneWidget);
-      expect(find.textContaining('不落明文、不写日志'), findsOneWidget);
+      expect(find.textContaining('不落明文、不写日志、不进数据库'), findsOneWidget);
+      expect(find.textContaining('每日请求配额 300 → 600'), findsOneWidget);
+      expect(find.textContaining('可随时在设置页一键清除'), findsOneWidget);
       expect(find.textContaining('绝不上传到任何第三方服务器'), findsOneWidget);
       expect(find.textContaining('不上传、不同步'), findsOneWidget);
       expect(find.textContaining('不含任何统计或广告 SDK'), findsOneWidget);
@@ -116,12 +119,16 @@ void main() {
   });
 
   group('频控常量口径（改动须同步关于页文案）', () {
-    test('scheduler.dart 的匿名档频控参数', () {
+    test('scheduler.dart 的匿名/BDUSS 两档频控参数', () {
       expect(kMinIntervalMs, 1500);
       expect(kMaxIntervalMs, 3000);
+      expect(kMinIntervalBdussMs, 1000);
+      expect(kMaxIntervalBdussMs, 2000);
       expect(kDailyBudgetAnonymous, 300);
+      expect(kDailyBudgetBduss, 600);
       expect(kDefaultConcurrency, 2);
-      expect(kMaxConcurrency, 3);
+      expect(kMaxConcurrencyAnonymous, 3);
+      expect(kMaxConcurrencyBduss, 4);
       expect(kMaxThreadRetries, 3);
       expect(kForumFailureCooldown, 3);
       expect(kForumCooldownDuration, const Duration(hours: 48));
@@ -163,11 +170,11 @@ void main() {
       expect(find.text('BDUSS 与隐私声明'), findsOneWidget);
     });
 
-    testWidgets('采集小节 BDUSS 行给出匿名模式与合规页指引', (WidgetTester tester) async {
+    testWidgets('设置页 BDUSS 行给出匿名档与配额口径', (WidgetTester tester) async {
       await pumpSettingsWithRouter(tester);
 
       expect(find.text('BDUSS 导入'), findsOneWidget);
-      expect(find.text('匿名模式 · 不存储凭证 · 暂未提供导入 · 详见「关于与合规」'), findsOneWidget);
+      expect(find.text('匿名模式 · 每日配额 300 · 导入后 600 · 详见「关于与合规」'), findsOneWidget);
     });
   });
 }

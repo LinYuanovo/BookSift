@@ -1,4 +1,4 @@
-/// 贴吧在线搜索客户端（app-form 通道 `c/s/searchpost`，匿名 + APP_SALT MD5 签名）。
+/// 贴吧在线搜索客户端（app-form 通道 `c/s/searchpost`；默认匿名，可带 BDUSS，均走 APP_SALT MD5 签名）。
 ///
 /// 规格出处（docs/2026-10-12_产品原型设计-Flutter扫书App.md）：
 /// - §8.2 接口总表（行 1268）：POST `http://tiebac.baidu.com/c/s/searchpost`，
@@ -135,7 +135,8 @@ class TiebaSearchFormatException implements Exception {
   String toString() => 'TiebaSearchFormatException($detail)';
 }
 
-/// 匿名在线搜索客户端（dio 可注入；测试用 mock adapter 脚本化 JSON/错误，零真实网络）。
+/// 在线搜索客户端（dio 可注入；默认匿名，可传 [TiebaSearchClient.bduss] 切账号档）。
+/// 测试用 mock adapter 脚本化 JSON/错误，零真实网络。
 ///
 /// search() 只抛两类异常：[CollectRequestException]（网络/风控/服务端，collector
 /// 统一口径）与 [TiebaSearchFormatException]（结构漂移，§8.12）。
@@ -145,6 +146,7 @@ class TiebaSearchClient {
     Random? random,
     this.minIntervalMs = 1500,
     this.maxIntervalMs = 3000,
+    this.bduss,
   })  : _rng = random ?? Random(),
         _dio = dio ??
             Dio(BaseOptions(
@@ -165,6 +167,10 @@ class TiebaSearchClient {
 
   /// 节流上限（ms）。
   final int maxIntervalMs;
+
+  /// 贴吧登录凭证（null = 匿名档）。非空时作为普通表单参数（键名 `BDUSS`）参与
+  /// sign 计算（aiotieba api/agree/_api.py:30 同口径）；账号维度配额 300→600（§8.11）。
+  final String? bduss;
 
   /// 1.5~3.0s 均匀随机抖动（TiebaClient._throttle 同款）。
   Future<void> _throttle() async {
@@ -194,6 +200,12 @@ class TiebaSearchClient {
       'sm': '$sm',
       'word': query,
     };
+    // BDUSS 档（§8.11）：普通表单参数，必须在签名前注入（agree/_api.py:30 同口径）；
+    // 匿名（null/空）时不加键 —— body 字节与历史完全一致。
+    final String? bduss = this.bduss;
+    if (bduss != null && bduss.isNotEmpty) {
+      params['BDUSS'] = bduss;
+    }
     params['sign'] = computeFormSign(params);
     // urlencode body（core/http.py:105-108：quote_plus 口径 = Uri.encodeQueryComponent，
     // 空格 → '+'；签名按原始值计算，编码只作用于传输层）。

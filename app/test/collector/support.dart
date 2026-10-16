@@ -319,21 +319,28 @@ class TestEnv {
     int? concurrency,
     int holdTicks = 4,
     int? seed,
+    bool bdussImported = false,
+    TiebaApi Function()? anonymousApiFactory,
+    void Function()? onAccountInvalid,
+    FakeClock? clock,
   }) async {
-    final FakeClock clock = FakeClock();
+    final FakeClock effectiveClock = clock ?? FakeClock();
     final AppDatabase db = AppDatabase(NativeDatabase.memory());
     final CollectRepository repo = CollectRepository(db);
-    final FakeTiebaApi api = FakeTiebaApi(clock, holdTicks: holdTicks);
+    final FakeTiebaApi api = FakeTiebaApi(effectiveClock, holdTicks: holdTicks);
     final List<CollectRunState> snapshots = <CollectRunState>[];
     final CollectService service = CollectService(
       db: db,
       repo: repo,
       api: api,
       workerFactory: () async => LocalPostWorker(classifier ?? fakeClassify),
-      clock: clock,
-      sleeper: fakeSleeper(clock),
+      clock: effectiveClock,
+      sleeper: fakeSleeper(effectiveClock),
       rng: Random(seed ?? 42),
       budgetLimit: budgetLimit,
+      bdussImported: bdussImported,
+      anonymousApiFactory: anonymousApiFactory,
+      onAccountInvalid: onAccountInvalid,
       onState: snapshots.add,
     );
     for (final String f in forums) {
@@ -343,7 +350,12 @@ class TestEnv {
       await repo.setSetting('concurrent_forums', '$concurrency');
     }
     return TestEnv._(
-        db: db, repo: repo, api: api, clock: clock, service: service, snapshots: snapshots);
+        db: db,
+        repo: repo,
+        api: api,
+        clock: effectiveClock,
+        service: service,
+        snapshots: snapshots);
   }
 
   Future<void> dispose() => db.close();

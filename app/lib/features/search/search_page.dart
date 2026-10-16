@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:animations/animations.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +10,8 @@ import 'package:go_router/go_router.dart';
 import '../../collector/tieba_search.dart';
 import '../../core/external_launch.dart';
 import '../../core/icons.dart';
+import '../../core/widgets/app_toast.dart';
+import '../../core/nav/center_slot.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/collect_repository.dart' show kDefaultForums;
@@ -20,6 +23,7 @@ import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
 import '../content/detail_slot.dart';
+import '../content/online_post_page.dart';
 import '../export/booklist_export.dart';
 import '../export/export_sheet.dart';
 import '../home/cards.dart';
@@ -459,6 +463,7 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
     });
     final SearchDraft draft = ref.watch(searchDraftProvider);
     final SearchTab tab = ref.watch(searchTabProvider);
+    final String onlineForum = ref.watch(onlineForumProvider);
     final bool online = draft.submitted && tab == SearchTab.online;
     final AppMotionTheme motion = AppMotionTheme.of(context);
     // 浏览位置记忆的存储（widget 测试挂具下为 null = 停用，见 searchPositionStoreProvider）。
@@ -473,6 +478,13 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
         children: <Widget>[
           _SearchTabs(
             tab: tab,
+            onlineForums: kDefaultForums,
+            onlineForum: onlineForum,
+            // 切吧 = 旧吧结果作废：清回手动触发入口（不自动发请求，单请求口径）。
+            onForumChanged: (String v) {
+              ref.read(onlineForumProvider.notifier).state = v;
+              ref.read(onlineSearchProvider.notifier).reset();
+            },
             // 筛选动作只在本地库 Tab 显示（在线无六维条件）。
             showFilters: tab == SearchTab.local,
             canClear: !draft.filter.isDefault,
@@ -703,7 +715,7 @@ class _HistoryRow extends ConsumerWidget {
           onTap: () => ref.read(searchDraftProvider.notifier).applyHistory(entry),
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: entry.query));
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('关键词已复制到剪贴板')));
+            showAppToast(context, '关键词已复制到剪贴板');
           },
           borderRadius: AppRadius.mdBorder,
           child: Row(
@@ -1177,7 +1189,7 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
     ref.listen<AsyncValue<SearchOutcome>>(searchResultProvider(effective),
         (AsyncValue<SearchOutcome>? prev, AsyncValue<SearchOutcome> next) {
       if (next.value?.degraded == true && prev?.value?.degraded != true) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('已降级为慢速搜索')));
+        showAppToast(context, '已降级为慢速搜索');
       }
     });
 
@@ -1446,13 +1458,16 @@ class _GroupHitCard extends StatelessWidget {
   }
 }
 
-/// 本地/在线双 Tab：本地库 / 贴吧在线 / 目录（常驻行，紧贴搜索框下沿）；
+/// 本地/在线双 Tab：本地库 / 贴吧在线（+ 在线档的「吧」切换）/ 目录（常驻行，紧贴搜索框下沿）；
 /// 本地库时其左再加「清除 / 确认」筛选动作（用户口径：与目录同排）。
 class _SearchTabs extends StatelessWidget {
   const _SearchTabs({
     required this.tab,
     required this.onChanged,
     required this.onToc,
+    required this.onlineForums,
+    required this.onlineForum,
+    required this.onForumChanged,
     this.showFilters = false,
     this.canClear = false,
     this.onClear,
@@ -1471,6 +1486,11 @@ class _SearchTabs extends StatelessWidget {
   /// 「目录」钮点击（弹已加载结果行目录）。
   final VoidCallback onToc;
 
+  /// 在线 Tab 可选的吧（与采集默认关注吧同源）+ 当前选中项。
+  final List<String> onlineForums;
+  final String onlineForum;
+  final ValueChanged<String> onForumChanged;
+
   @override
   Widget build(BuildContext context) {
     final AppColors c = AppColors.of(context);
@@ -1480,8 +1500,11 @@ class _SearchTabs extends StatelessWidget {
     // 行尾（动作组右侧），动作组看起来不贴右（用户口径：改成居右对齐）。
     // 分段控件在 Align(centerLeft) 内仍取固有宽（411dp 档不出现「本…/贴…」截断）；
     // 极窄屏/大字阶先压缩自身（段内省略），动作组保持完整。
+    //
+    // 行内边距上下同档（space2 / space2）：旧写法下边距 0 → 分段控件与「目录」钮
+    // 贴着下方发丝线，看上去没居中（用户口径：这一行上下要对齐）。
     return Padding(
-      padding: EdgeInsets.fromLTRB(s.pagePadding, s.space2, s.pagePadding, 0),
+      padding: EdgeInsets.symmetric(horizontal: s.pagePadding, vertical: s.space2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
@@ -1489,13 +1512,30 @@ class _SearchTabs extends StatelessWidget {
             flex: 8,
             child: Align(
               alignment: Alignment.centerLeft,
-              child: SegmentedPill<SearchTab>(
-                options: const <(SearchTab, String)>[
-                  (SearchTab.local, '本地库'),
-                  (SearchTab.online, '贴吧在线'),
+              // Wrap 而非 Row：窄屏（compact 档）放不下两颗分段控件时，吧切换换到第二行，
+              // 不压出 RenderFlex 溢出（411dp 档实测溢出 60px）。
+              child: Wrap(
+                spacing: s.space2,
+                runSpacing: s.space2,
+                children: <Widget>[
+                  SegmentedPill<SearchTab>(
+                    options: const <(SearchTab, String)>[
+                      (SearchTab.local, '本地库'),
+                      (SearchTab.online, '贴吧在线'),
+                    ],
+                    selected: tab,
+                    onChanged: onChanged,
+                  ),
+                  // 吧切换只在在线档出现（本地库检索与吧无关，不占位）。
+                  if (tab == SearchTab.online)
+                    SegmentedPill<String>(
+                      options: <(String, String)>[
+                        for (final String f in onlineForums) (f, f),
+                      ],
+                      selected: onlineForum,
+                      onChanged: onForumChanged,
+                    ),
                 ],
-                selected: tab,
-                onChanged: onChanged,
               ),
             ),
           ),
@@ -1594,9 +1634,11 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
     final AppSpacing s = AppSpacing.of(context);
     final OnlineSearchState online = ref.watch(onlineSearchProvider);
     final String query = ref.watch(searchDraftProvider).filter.query.trim();
+    // 当前选中的吧（结果里记的是产出时的吧名，两者不一致 = 该结果已作废）。
+    final String forum = ref.watch(onlineForumProvider);
     final OnlineSearchNotifier notifier = ref.read(onlineSearchProvider.notifier);
     // 输入词已变（结果过期）→ 回手动触发入口，不拿旧词结果冒充新词。
-    final bool stale = online.query != query;
+    final bool stale = online.query != query || online.forum != forum;
     // 排序 = 客户端重排**已加载**结果（切换不重新发请求；口径见 onlineSortProvider 注释）。
     final List<OnlineThread> rows =
         sortOnlineThreads(online.threads, ref.watch(onlineSortProvider));
@@ -1671,7 +1713,7 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
               title: '贴吧在线搜索',
               message: query.isEmpty
                   ? '输入关键词后实时搜索贴吧（匿名接口，无需登录）'
-                  : '在「${kDefaultForums.first}」内实时搜索 "$query"\n匿名接口 · 单请求手动触发 · ≥1.5s 节流',
+                  : '在「$forum」内实时搜索 "$query"\n匿名接口 · 单请求手动触发 · ≥1.5s 节流',
               action: AppButton(
                 label: query.isEmpty ? '请先输入关键词' : '搜索贴吧',
                 kind: AppButtonKind.accent,
@@ -1800,7 +1842,13 @@ class _OnlineThreadCard extends StatelessWidget {
     final String title = thread.title.isEmpty ? '（无标题）' : thread.title;
     return AccentCard(
       tone: SemanticTone.neutral,
-      onTap: () => context.push('/online/${thread.tid}'),
+      onTap: () => openCenterPage(
+        context,
+        OnlinePostPage(tid: thread.tid),
+        type: SharedAxisTransitionType.horizontal,
+        // 窄屏保持原路由（/online/:tid）语义。
+        fullScreen: () => context.push('/online/${thread.tid}'),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[

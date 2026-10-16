@@ -31,6 +31,7 @@ class CollectPlan {
     required this.budgetLimit,
     required this.concurrentForums,
     required this.wifiOnly,
+    this.bdussImported = false,
   });
 
   /// 全部关注吧水位。
@@ -48,7 +49,14 @@ class CollectPlan {
   final int concurrentForums;
   final bool wifiOnly;
 
+  /// 本轮账号档：true = 走 BDUSS（间隔 1.0–2.0s / 并发上限 4）。
+  final bool bdussImported;
+
   int get budgetRemaining => (budgetLimit - budgetUsed).clamp(0, budgetLimit);
+
+  /// 本轮实际全局限速区间（按账号档位取，与 CollectService 同源）。
+  int get minIntervalMs => intervalMsFor(bdussImported: bdussImported).minMs;
+  int get maxIntervalMs => intervalMsFor(bdussImported: bdussImported).maxMs;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'forums': forums.map((ForumWatermark f) => f.toJson()).toList(),
@@ -62,8 +70,9 @@ class CollectPlan {
         },
         'concurrentForums': concurrentForums,
         'wifiOnly': wifiOnly,
-        'minIntervalMs': kMinIntervalMs,
-        'maxIntervalMs': kMaxIntervalMs,
+        'accountTier': bdussImported ? 'bduss' : 'anonymous',
+        'minIntervalMs': minIntervalMs,
+        'maxIntervalMs': maxIntervalMs,
       };
 }
 
@@ -163,6 +172,7 @@ abstract final class HeadlessCollect {
   static Future<CollectPlan> plan({
     required AppDatabase db,
     int budgetLimit = kDailyBudgetAnonymous,
+    String? bduss,
   }) async {
     final CollectRepository repo = CollectRepository(db);
     final List<CollectionStateEntry> rows = await repo.forums();
@@ -182,8 +192,11 @@ abstract final class HeadlessCollect {
     final String? budgetDate = await repo.getSetting(CollectSettingsKeys.budgetDate);
     final int budgetUsed =
         int.tryParse(await repo.getSetting(CollectSettingsKeys.budgetCount) ?? '') ?? 0;
-    final int concurrent =
-        int.tryParse(await repo.getSetting(SettingsKeys.concurrentForums) ?? '') ?? 2;
+    final bool bdussImported = (bduss ?? '').isNotEmpty;
+    final int concurrent = effectiveConcurrency(
+      await repo.getSetting(SettingsKeys.concurrentForums),
+      bdussImported: bdussImported,
+    );
     final bool wifiOnly =
         (await repo.getSetting(SettingsKeys.wifiOnly) ?? 'false') == 'true';
     return CollectPlan(
@@ -195,6 +208,7 @@ abstract final class HeadlessCollect {
       budgetLimit: budgetLimit,
       concurrentForums: concurrent,
       wifiOnly: wifiOnly,
+      bdussImported: bdussImported,
     );
   }
 
@@ -211,12 +225,14 @@ abstract final class HeadlessCollect {
     required List<String> dictLines,
     TiebaApi? api,
     int budgetLimit = kDailyBudgetAnonymous,
+    String? bduss,
     bool useIsolateWorker = true,
     CollectClock clock = const SystemClock(),
     Sleeper? sleeper,
     NetworkGate networkGate = const AlwaysAllowNetworkGate(),
   }) async {
-    final ProtoTiebaApi? owned = api == null ? ProtoTiebaApi() : null;
+    final bool bdussImported = (bduss ?? '').isNotEmpty;
+    final ProtoTiebaApi? owned = api == null ? ProtoTiebaApi(bduss: bduss) : null;
     final TiebaApi effective = api ?? owned!;
     final CollectRepository repo = CollectRepository(db);
     CollectRunState latest = const CollectRunState.idle();
@@ -284,6 +300,10 @@ abstract final class HeadlessCollect {
         log.emitCollect(entry);
       },
       budgetLimit: budgetLimit,
+      bdussImported: bdussImported,
+      // 账号档专用：登录态失效 → 本轮换匿名客户端（CLI 无凭证落盘，
+      // 失效提示由 CollectService 的「降级」日志承担）。
+      anonymousApiFactory: bdussImported ? ProtoTiebaApi.new : null,
       clock: clock,
       sleeper: sleeper,
       networkGate: networkGate,

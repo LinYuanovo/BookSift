@@ -284,6 +284,43 @@ void main() {
       expect(plain.avoidCount, 6);
     });
 
+    test('帖页书目 chip 与书卡三分口径同源：标题写「推荐」的帖 → 条目算 1 推荐', () async {
+      // 真实回归（用户反馈：帖「推荐一本宝藏书」其书目显示 0 推荐）。旧口径帖页 chip 只数
+      // 原帖颜色标记（SUM(flag=1)）→ 无绿标恒 0；新口径与 [Queries.kindCountsOf] 同源，
+      // 标题推书词也算推荐，帖页数字与书聚合页头一致。
+      await db.customStatement(
+          "INSERT INTO posts (channel, title) VALUES ('哀伤雪刃', '推荐一本宝藏书')");
+      final int pid = ((await db
+                  .customSelect(
+                      "SELECT id FROM posts WHERE title = '推荐一本宝藏书' ORDER BY id DESC LIMIT 1")
+                  .getSingle())
+              .data['id']! as num)
+          .toInt();
+      await db.customStatement(
+          "INSERT INTO book_groups (name_norm, name_display) VALUES ('回归·宝藏书', '回归·宝藏书')");
+      final int gid = ((await db
+                  .customSelect(
+                      "SELECT id FROM book_groups WHERE name_norm = '回归·宝藏书'")
+                  .getSingle())
+              .data['id']! as num)
+          .toInt();
+      await db.customStatement(
+          'INSERT INTO book_entries (name, name_norm, channel, content_hash, category, '
+          "recommender, post_ref, book_group_id) VALUES ('回归·宝藏书', '回归·宝藏书', "
+          "'哀伤雪刃', 'regress-recommend-title-1', '扫书', '楼主', $pid, $gid)");
+
+      final PostDetailData? detail = await q.postDetail(pid);
+      expect(detail, isNotNull);
+      expect(detail!.books, hasLength(1));
+      expect(detail.books.single.recommend, 1); // 旧口径 = 0（条目无绿标）
+      expect(detail.books.single.avoid, 0);
+
+      // 帖页 chip ↔ 书聚合页头同数字（同一 [Queries.kindCountsOf] 口径）。
+      final BookDetailData? book = await q.bookDetail(gid);
+      expect(book!.recommendCount, 1);
+      expect(book.avoidCount, 0);
+    });
+
     test('历史六维快照去重 + 书签/收藏 toggle', () async {
       await q.addHistory(
         const SearchFilter(query: '无限流', year: '2024', category: '扫书'),

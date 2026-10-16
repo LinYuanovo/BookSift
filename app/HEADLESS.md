@@ -130,7 +130,8 @@ lib/data/db/app_database.dart        drift schema
 ### 3.1 barrel 规则（`lib/booksift.dart`）
 
 导出 4 组：`headless/*`、`collector/{collect_service,collect_state,ingest,scheduler,tieba_api,watermark,worker}`、
-`classify/classifier.dart`、`data/db/app_database.dart`、`data/repo/{collect_repository,queries}`、`core/constants.dart`。
+`classify/classifier.dart`、`data/bduss_format.dart`（BDUSS 解析/掩码，纯 Dart）、`data/db/app_database.dart`、
+`data/repo/{collect_repository,queries}`、`core/constants.dart`。
 
 > **加导出前必须确认目标库 import 里没有 `package:flutter`**——漏一个，`dart run` 会因解析不到
 > `package:flutter` 直接失败（不是运行时报错，是加载期）。riverpod 装配一律放 `*_providers.dart`，
@@ -180,9 +181,9 @@ lib/data/db/app_database.dart        drift schema
 
 | 成员 | 行 | 说明 |
 |---|---|---|
-| `HeadlessCollect.plan({db, budgetLimit})` | 163 | **零请求**，只读 db |
-| `HeadlessCollect.run({db, log, dictLines, api?, budgetLimit, useIsolateWorker, clock?, sleeper?, networkGate?})` | 208 | 真跑；返回 `CollectRunResult` |
-| `CollectPlan` | 24 | 吧水位 / 可跑吧 / 冷却吧 / 预算 / 并发 / 仅WiFi / 限速区间 |
+| `HeadlessCollect.plan({db, budgetLimit, bduss?})` | 163 | **零请求**，只读 db；`bduss` 只影响档位展示（间隔/并发上限） |
+| `HeadlessCollect.run({db, log, dictLines, api?, budgetLimit, bduss?, useIsolateWorker, clock?, sleeper?, networkGate?})` | 208 | 真跑；返回 `CollectRunResult` |
+| `CollectPlan` | 24 | 吧水位 / 可跑吧 / 冷却吧 / 预算 / 并发 / 仅WiFi / 限速区间 / 账号档（`accountTier`） |
 | `CollectRunSummary` | 71 | `CollectRunState` 的机读投影 |
 | `CollectRunResult` | 144 | `state` + `summary` + `logCount`（逐条日志真实计数） |
 
@@ -239,7 +240,7 @@ sha256 走 `sha256.bind(file.openRead()).first`，流式、不整体读入内存
 | `classify` | `:480` | `--title --floor`(可重复) `--text-file --no-dict` | 零 | 否 |
 | `logs` | `:593` | `--limit` | 零 | **是** |
 | `seed` | `:641` | `--dir --[no-]verify` | 零 | 否 |
-| `collect` | `:706` | `--net --budget --[no-]isolate --seed-forums` | **双闸** | **是** |
+| `collect` | `:706` | `--net --budget --bduss（或环境变量 BOOKSIFT_BDUSS）--[no-]isolate --seed-forums` | **双闸** | **是** |
 
 多词查询：位置参数会被 `join(' ')` 成一个查询串（`query 剑来 番外` → `"剑来 番外"`，再按空格分词 AND）。
 
@@ -256,7 +257,10 @@ sha256 走 `sha256.bind(file.openRead()).first`，流式、不整体读入内存
 ### 4.4 网络双闸
 
 `collect --net` 需同时满足：`--net` 旗标 **且** 环境变量 `BOOKSIFT_NET=1`。
-另有 `--budget`（默认 **8**，硬上限 `kDailyBudgetAnonymous`=300，越界直接 exit 2）。
+另有 `--budget`（默认 **8**，硬上限按档：匿名 `kDailyBudgetAnonymous`=300 / 带凭证 `kDailyBudgetBduss`=600，越界直接 exit 2）。
+`--bduss <值>`（或环境变量 `BOOKSIFT_BDUSS`，**参数优先**）走账号档：请求间隔 1.0–2.0s、并发上限 4；
+接受裸值或整段 `BDUSS=…` Cookie 片段（`parseBdussInput` 同源解析）；**凭证绝不进日志 / `--json`**（日志只打掩码，如 `FAKE_B……DE==`）。
+headless 侧读不到系统加密存储（flutter_secure_storage），故凭证只走参数/环境变量——不要在共享终端里 export 真凭证。
 `--seed-forums` 可在关注吧为空时播种默认两吧。
 
 ### 4.5 两种运行方式
@@ -358,7 +362,7 @@ $db  = "$tmp\app_copy.db"
 
 | # | 缺口 | 现状 | 建议 |
 |---|---|---|---|
-| A1 | `collect` 无 `--forum` 过滤 | 只能跑全部 enabled 吧（`bin:706` 只有 4 个 flag） | 加 `--forum`（可重复）在 `plan`/`run` 前过滤；小样本验证时很关键 |
+| A1 | `collect` 无 `--forum` 过滤 | 只能跑全部 enabled 吧（`bin:706` 只有 5 个 flag） | 加 `--forum`（可重复）在 `plan`/`run` 前过滤；小样本验证时很关键 |
 | A2 | `query` 只暴露 search + suggest | 门面已有 `bookDetail/postDetail/bookEntries/rank/hotBooks/timeline/randomBooks/categoryPreview`（`query.dart:134-172`），CLI 未接 | 加 `booksift show book <gid>` / `show post <pid>` / `rank` 子命令 |
 | A3 | **无 JSONL 回放命令** | `logs` 读的是 db 里 `collection_logs` 粗汇总，与 `logs/*.jsonl` 是两回事，命名极易混淆 | 加 `logs --run <id>` / `logs --file <path>`，支持按 `scope`/`level`/`event` 过滤 |
 | A4 | 无 `--version` | doctor 也不报 CLI 自身版本 | 排查「agent 用的是哪版 exe」时无据可查；`pubspec.yaml` 的 version 可读出 |

@@ -44,15 +44,77 @@ void main() {
     });
   });
 
-  group('effectiveConcurrency（§8.8 默认2上限3）', () {
-    test('缺省 2、钳制 [1,3]、非法回落', () {
+  group('档位映射（需求 5：间隔/并发两档，匿名值不变）', () {
+    test('intervalMsFor：匿名 1500–3000 原样；BDUSS 档 1000–2000（§8.11）', () {
+      final ({int minMs, int maxMs}) anon = intervalMsFor(bdussImported: false);
+      expect(anon.minMs, kMinIntervalMs);
+      expect(anon.minMs, 1500);
+      expect(anon.maxMs, kMaxIntervalMs);
+      expect(anon.maxMs, 3000);
+
+      final ({int minMs, int maxMs}) bd = intervalMsFor(bdussImported: true);
+      expect(bd.minMs, kMinIntervalBdussMs);
+      expect(bd.minMs, 1000);
+      expect(bd.maxMs, kMaxIntervalBdussMs);
+      expect(bd.maxMs, 2000);
+    });
+
+    test('maxConcurrencyFor：匿名 3、BDUSS 档 4（默认 2 两档同）', () {
+      expect(kDefaultConcurrency, 2);
+      expect(maxConcurrencyFor(bdussImported: false), kMaxConcurrencyAnonymous);
+      expect(maxConcurrencyFor(bdussImported: false), 3);
+      expect(maxConcurrencyFor(bdussImported: true), kMaxConcurrencyBduss);
+      expect(maxConcurrencyFor(bdussImported: true), 4);
+    });
+  });
+
+  group('effectiveConcurrency（§8.8 默认2；上限匿名3/BDUSS档4）', () {
+    test('缺省 2、匿名钳制 [1,3]、非法回落（行为与历史一字不变）', () {
       expect(effectiveConcurrency(null), 2);
       expect(effectiveConcurrency(''), 2);
       expect(effectiveConcurrency('3'), 3);
-      expect(effectiveConcurrency('5'), 3, reason: '上限 3');
+      expect(effectiveConcurrency('5'), 3, reason: '匿名上限 3');
       expect(effectiveConcurrency('0'), 1);
       expect(effectiveConcurrency('-1'), 1);
       expect(effectiveConcurrency('x'), 2);
+    });
+
+    test('BDUSS 档：4 放行、5 钳到 4', () {
+      expect(effectiveConcurrency('4', bdussImported: true), 4);
+      expect(effectiveConcurrency('5', bdussImported: true), 4, reason: 'BDUSS 档上限 4');
+      expect(effectiveConcurrency('4'), 3, reason: '同一原值在匿名档仍钳到 3');
+    });
+  });
+
+  group('isLoginInvalidError（§8.10 失效检测）', () {
+    test('110000–110999 与未登录文案命中；429/网络/服务端错误不命中', () {
+      expect(
+        isLoginInvalidError(const CollectRequestException(
+            kind: CollectFailureKind.rateLimited, code: 110001, message: 'errorno=110001 需登录')),
+        isTrue,
+      );
+      expect(
+        isLoginInvalidError(const CollectRequestException(
+            kind: CollectFailureKind.rateLimited, code: 0, message: '请先登录后再操作')),
+        isTrue,
+      );
+      expect(
+        isLoginInvalidError(const CollectRequestException(
+            kind: CollectFailureKind.rateLimited, code: 429, message: 'HTTP 429')),
+        isFalse,
+        reason: '匿名档风控 429 不触发账号降级',
+      );
+      expect(
+        isLoginInvalidError(const CollectRequestException(
+            kind: CollectFailureKind.network, code: 110001, message: '需登录')),
+        isFalse,
+        reason: '非 rateLimited 类别不触发',
+      );
+      expect(
+        isLoginInvalidError(const CollectRequestException(
+            kind: CollectFailureKind.serverError, code: 4, message: 'errorno=4')),
+        isFalse,
+      );
     });
   });
 

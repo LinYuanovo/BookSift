@@ -66,13 +66,13 @@ void main() {
   late FakeBookRepository repo;
   setUp(() => repo = FakeBookRepository(library: demoLibrary()));
 
-  group('筛选面板（固定两行 + Tab 行动作组）', () {
-    testWidgets('两行维度 chips；清除/确认/目录在 Tab 行同排；compact 零溢出',
+  group('筛选面板（按宽智能换行 + Tab 行动作组）', () {
+    testWidgets('宽度不足时维度 chips 按宽换行；清除/确认/目录在 Tab 行同排；compact 零溢出',
         (WidgetTester tester) async {
       useSurface(tester); // 390×844 compact
       await tester.pumpWidget(testApp(repo, initial: searchRoute(kQuery)));
       await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull, reason: '两行布局后 compact 宽度零溢出');
+      expect(tester.takeException(), isNull, reason: '智能换行后 compact 宽度零溢出');
 
       // 维度 chips = 「年·全部」式摘要（值仍在浮层里选）。
       expect(find.text('年·全部'), findsOneWidget);
@@ -93,10 +93,11 @@ void main() {
         reason: '411dp 档也不出「本…/贴…」截断',
       );
 
-      // 两行布局：年/月/旬 与 来源/类别 的 y 不同（第一行 vs 第二行）。
+      // 智能换行：390 宽放不下 6 颗 chip → 来源 落在 年 之后的 run（y 更大）。
+      // 行分组由容器宽度决定（宽容器单行守卫见 filter_panel_test.dart）。
       final double yYear = tester.getTopLeft(find.text('年·全部')).dy;
       final double yChannel = tester.getTopLeft(find.text('来源·全部')).dy;
-      expect(yChannel, greaterThan(yYear), reason: '固定两行（年 月 旬 / 来源 类别 时间）');
+      expect(yChannel, greaterThan(yYear), reason: 'compact 宽度放不下 → 按宽换行');
 
       // 点维度 chip → 值域浮层（带联动计数）；选值 → 摘要回写。
       await tester.tap(find.text('年·全部'));

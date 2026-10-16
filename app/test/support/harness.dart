@@ -114,7 +114,9 @@ Widget testApp(
 ProviderContainer containerOf(WidgetTester tester, Finder of) =>
     ProviderScope.containerOf(tester.element(of));
 
-/// 推进 SnackBar 的 4s 自动消失 timer（否则用例结束时残留 pending timer 会判失败）。
+/// 推进轻提示的自动消失 timer 并等离场收敛：SnackBar 4s / 全局 toast 停留 2.2s
+/// （showAppToast，见 core/widgets/app_toast.dart）——否则用例结束时残留 pending
+/// timer 会判失败（TESTING.md §3.5）。
 Future<void> dismissSnackBars(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 5));
   await tester.pumpAndSettle();

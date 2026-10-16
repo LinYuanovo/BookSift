@@ -29,6 +29,12 @@ class AboutPage extends ConsumerWidget {
   /// 全局间隔上限（秒，1 位小数）：`kMaxIntervalMs` 3000 → 「3.0」。
   static String get _maxIntervalSec => (kMaxIntervalMs / 1000).toStringAsFixed(1);
 
+  /// BDUSS 档间隔下限（秒，1 位小数）：`kMinIntervalBdussMs` 1000 → 「1.0」。
+  static String get _bdMinIntervalSec => (kMinIntervalBdussMs / 1000).toStringAsFixed(1);
+
+  /// BDUSS 档间隔上限（秒，1 位小数）：`kMaxIntervalBdussMs` 2000 → 「2.0」。
+  static String get _bdMaxIntervalSec => (kMaxIntervalBdussMs / 1000).toStringAsFixed(1);
+
   /// 单帖退避序列（`retryBackoff` 30s×2ⁿ，重试 ≤ `kMaxThreadRetries`）。
   static String get _backoffSeq => List<int>.generate(
         kMaxThreadRetries,
@@ -58,15 +64,17 @@ class AboutPage extends ConsumerWidget {
       ];
 
   List<String> get _tosBullets => <String>[
-        '全局限速：所有并发分支共享同一令牌桶，相邻请求启动间隔 $_minIntervalSec–$_maxIntervalSec 秒随机抖动；',
-        '每日预算：匿名档每日最多 $kDailyBudgetAnonymous 次请求，触顶当日停止、次日 0 点重置；',
+        '全局限速：所有并发分支共享同一令牌桶，相邻请求启动间隔匿名档 $_minIntervalSec–$_maxIntervalSec 秒、'
+            'BDUSS 档 $_bdMinIntervalSec–$_bdMaxIntervalSec 秒随机抖动；',
+        '每日预算：匿名档每日最多 $kDailyBudgetAnonymous 次请求，导入 BDUSS 的账号档提高到 '
+            '$kDailyBudgetBduss 次；触顶当日停止、次日 0 点重置；',
         '退避熔断：单帖失败按 $_backoffSeq 秒退避、最多重试 $kMaxThreadRetries 次；'
             '同一吧连续失败 $kForumFailureCooldown 次进入 ${kForumCooldownDuration.inHours} 小时冷却；'
             '全局连续失败 $kGlobalFailurePause 次整轮暂停。',
       ];
 
   List<String> get _tosTail => <String>[
-        '除跨吧并发数（默认 $kDefaultConcurrency、上限 $kMaxConcurrency，设置页可调）外，'
+        '除跨吧并发数（默认 $kDefaultConcurrency、上限 匿名 $kMaxConcurrencyAnonymous / BDUSS 档 $kMaxConcurrencyBduss，设置页可调）外，'
             '以上频控参数不对用户开放调高。',
         '我们把采集定位为「用户在自己设备上的低频订阅行为」：不做高频压测，也不做批量商用抓取。',
         '把并发调到上限会提高单位时间请求数，使用 BDUSS 则让请求带上账号身份 —— '
@@ -74,17 +82,22 @@ class AboutPage extends ConsumerWidget {
             '是否使用由你决定，风险自行承担。',
       ];
 
-  /// BDUSS 与隐私声明（原型 §11.2）：当前匿名模式为事实，未来导入为承诺。
+  /// BDUSS 与隐私声明（原型 §11.2 / §8.10）：导入入口已实装（设置页「BDUSS 导入」行）。
   List<String> get _privacyHead => <String>[
-        '当前版本为匿名模式：不采集、不存储、不传输任何账号凭证（BDUSS / Cookie / 密码）。'
-            '设置页的「BDUSS 导入」一行只是未来计划的提示，尚未提供任何导入入口。',
-        '未来若提供 BDUSS 导入，它将：',
+        '账号凭证（BDUSS）为可选：不导入时全程匿名，只读接口照常可用。导入入口在设置页'
+            '「BDUSS 导入」一行 —— 从贴吧 App / 网页版的 Cookie 里复制粘贴即可'
+            '（只填 BDUSS，不要填账号密码）。',
+        '导入后，它将：',
       ];
 
   List<String> get _privacyBullets => <String>[
         '仅通过 flutter_secure_storage 存放在设备本地的系统加密存储中'
-            '（Android Keystore / iOS Keychain），不落明文、不写日志；',
-        '只用于对贴吧官方接口做请求签名以提高配额；',
+            '（Windows 凭据管理器 / Android Keystore / iOS Keychain），不落明文、不写日志、不进数据库；',
+        '只用于对贴吧官方接口发起请求时携带账号身份 —— 每日请求配额 $kDailyBudgetAnonymous → '
+            '$kDailyBudgetBduss，仅此而已；',
+        '可随时在设置页一键清除，清除即回匿名档；设置页「测试」按钮可用一次 initNickname 请求校验当前凭证；',
+        '失效自动降级（§8.10）：采集 / 在线搜索命中「登录态失效」特征时自动回退匿名档并标记失效'
+            '（不删凭证），重新导入即恢复；',
         '绝不上传到任何第三方服务器 —— 本应用没有自建服务端。',
       ];
 

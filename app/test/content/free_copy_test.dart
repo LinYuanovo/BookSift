@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -15,8 +16,8 @@ import '../support/harness.dart';
 
 // P1-6 阅读流自由复制（多选文本复制）：长按/图标进入选择模式 → 逐楼层 SelectionArea
 // 跨段多选 → 系统工具栏复制；选择模式下书名/链接点击手势暂停，退出手势恢复。
-// 任务 3（真机：图标态切换无感知）：进出选择模式各有 SnackBar 说明，选择模式期间
-// 楼层流顶部常驻细提示条（accentSoft 底 + caption + 关闭钮可退出）。
+// 任务 6：进出选择模式各弹一条 toast（showAppToast），楼层流**不再**有常驻提示条
+// ——正文不被下压；toast 自行淡出，不需要关闭钮（AppBar 开关仍是同一出口）。
 //
 // 口径出处：
 //   · 原型 §3.1 P1-6「长按进入选择模式」；§5.6 帖子详情富文本管线（书名再搜/链接复制不得破坏）；
@@ -25,8 +26,8 @@ import '../support/harness.dart';
 //     整包会让上下帖 PageView 横滑在正文区全面失效；逐楼层包裹时非正文区仍可翻页；
 //   · 选择模式书名降级为纯文本 span（《》原样可复制）→ find.text 精确匹配不到独立 Text，
 //     recognizer 一律 null；
-//   · SnackBar 4s 自动消失是假时钟 Timer：_setSelectMode 用 clearSnackBars 保证任一
-//     时刻至多一条，用例收尾一次 dismissSnackBars 即可（TESTING.md §3.5）。
+//   · toast 与 SnackBar 一样是假时钟 Timer（停留 2.2s）：showAppToast 保证同一时刻
+//     至多一条，用例收尾一次 dismissSnackBars 即可推进（TESTING.md §3.5）。
 //
 // 全部 testWidgets 零真实 IO（FakeBookRepository + harness 三哨兵，app/test/TESTING.md §3.1）。
 
@@ -229,37 +230,87 @@ void main() {
       await dismissSnackBars(tester);
     });
 
-    testWidgets('任务 3 反馈：进出 SnackBar 说明 + 楼层流顶部提示条（× 可退出）', (WidgetTester tester) async {
+    testWidgets('任务 6 反馈：进出各一条 toast，楼层流无固定提示条（正文不被下压）', (WidgetTester tester) async {
       useSurface(tester);
       await tester.pumpWidget(testApp(repo, initial: '/post/7'));
       await tester.pumpAndSettle();
 
-      // 阅读模式：无提示条。
+      // 阅读模式：进/出两条文案都不在。
+      expect(find.text('自由复制：长按楼层正文选择文字'), findsNothing);
       expect(find.text('自由复制模式：长按楼层正文选择文字'), findsNothing);
 
-      // 进入：SnackBar 用法说明 + 楼层流顶部常驻提示条（accentSoft 底 + caption 档）。
+      // 进入：弹一条用法说明 toast；固定提示条已删除。
       await tester.tap(find.byTooltip('自由复制'));
       await tester.pumpAndSettle();
-      expect(find.text('自由复制：长按楼层正文选择文字'), findsOneWidget, reason: 'SnackBar 用法说明');
-      final Finder banner = find.text('自由复制模式：长按楼层正文选择文字');
-      expect(banner, findsOneWidget, reason: '楼层流顶部提示条');
+      expect(find.text('自由复制：长按楼层正文选择文字'), findsOneWidget, reason: '进入 toast 用法说明');
       expect(
-        tester.widget<Text>(banner).style?.color,
-        AppColors.light.accentStrong,
-        reason: 'caption 档文字用 accentStrong（accentSoft 底上对比度达 token 口径）',
+        find.text('自由复制模式：长按楼层正文选择文字'),
+        findsNothing,
+        reason: '楼层流顶部固定提示条已删除（不再把正文下压）',
       );
+      expect(find.byType(SelectionArea), findsNWidgets(2));
 
-      // SnackBar 消失后提示条仍常驻（选择模式期间恒在）。
+      // toast 自行淡出后页面不残留提示；选择模式本身仍在（页面级状态）。
       await dismissSnackBars(tester);
-      expect(banner, findsOneWidget);
+      expect(find.text('自由复制：长按楼层正文选择文字'), findsNothing, reason: 'toast 自行消失');
+      expect(find.byType(SelectionArea), findsNWidgets(2), reason: '选择模式持续有效');
 
-      // 提示条 × 退出：SelectionArea 撤销 + 退出 SnackBar。
-      await tester.tap(find.byTooltip('退出自由复制模式'));
+      // 退出：再弹一条 toast（AppBar 开关是同一出口）；SelectionArea 撤销。
+      await tester.tap(find.byTooltip('退出自由复制'));
+      await tester.pumpAndSettle();
+      expect(find.text('已退出自由复制'), findsOneWidget, reason: '退出 toast');
+      expect(find.byType(SelectionArea), findsNothing);
+      await dismissSnackBars(tester);
+      expect(find.text('已退出自由复制'), findsNothing, reason: 'toast 自行淡出，无需关闭钮');
+    });
+  });
+
+  // 需求 3（用户口径）：**电脑上帖子详情默认就能自由复制**，不必先点「自由复制模式」；
+  // 且单击书名/链接仍然可用（书名/链接并回文本流但保留 recognizer）。
+  // 触屏端行为不变（默认不选中，长按进模式——否则 SelectionArea 会抢走横滑翻页）。
+  group('桌面档：帖子详情随时可自由复制', () {
+    late FakeBookRepository repo;
+    setUp(() => repo = FakeBookRepository(library: demoLibrary()));
+
+    testWidgets('Windows：默认逐楼层 SelectionArea；书名可整段复制且单击仍能搜索', (WidgetTester tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      try {
+        useSurface(tester, width: 1440, height: 900);
+        await tester.pumpWidget(
+          testApp(repo, home: const ContentDetailPage(selection: PostSelection(postId: 7))),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.byType(SelectionArea), findsNWidgets(2), reason: '未点开关就已可选中');
+        expect(find.byTooltip('自由复制'), findsOneWidget, reason: 'AppBar 开关仍在（切成「纯复制」档）');
+
+        bool hasWidgetSpan = false;
+        TextSpan? bookSpan;
+        final Text rich = tester.widget<Text>(find.textContaining('本期主推'));
+        rich.textSpan!.visitChildren((InlineSpan span) {
+          if (span is WidgetSpan) {
+            hasWidgetSpan = true;
+          }
+          if (span is TextSpan && (span.text ?? '').startsWith('《篡水浒》')) {
+            bookSpan = span;
+          }
+          return true;
+        });
+        expect(hasWidgetSpan, isFalse, reason: '书名不能再用 WidgetSpan+InkWell，否则整段复制会漏掉书名');
+        expect(bookSpan, isNotNull, reason: '书名并回文本流');
+        expect(bookSpan!.recognizer, isNotNull, reason: '桌面档单击书名仍要能跳搜索');
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+
+    testWidgets('Android：默认仍不可选中（保持长按进模式）', (WidgetTester tester) async {
+      useSurface(tester);
+      await tester.pumpWidget(
+        testApp(repo, home: const ContentDetailPage(selection: PostSelection(postId: 7))),
+      );
       await tester.pumpAndSettle();
       expect(find.byType(SelectionArea), findsNothing);
-      expect(banner, findsNothing);
-      expect(find.text('已退出自由复制'), findsOneWidget);
-      await dismissSnackBars(tester);
     });
   });
 }

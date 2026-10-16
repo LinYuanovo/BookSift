@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../core/icons.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../data/repo/queries.dart';
@@ -15,7 +16,10 @@ import '../../theme/app_motion.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
+import '../../core/nav/center_slot.dart';
 import '../content/detail_slot.dart';
+import '../profile/settings_page.dart';
+import '../rank/rank_page.dart';
 import 'cards.dart';
 
 // 首页（§5.2 时间线 + §5.13 热门榜入口 + 随机书荒）。
@@ -200,7 +204,8 @@ class _HomePageState extends ConsumerState<HomePage> {
             // 设计 01 首页 appbar 设置 = i-gear（index.html:1148）。
             icon: AppIcon('gear', size: 20, color: AppColors.of(context).textSecondary),
             tooltip: '设置',
-            onPressed: () => context.push('/settings'),
+            // 宽屏（expanded）在中间功能区原位显示，窄屏仍是全窗页（core/nav/center_slot.dart）。
+            onPressed: () => openCenterPage(context, const SettingsPage()),
           ),
         ],
       ),
@@ -353,7 +358,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               onTap: () {
                 Clipboard.setData(ClipboardData(text: card.post.title ?? ''));
                 Navigator.of(sheetContext).pop();
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('标题已复制到剪贴板')));
+                showAppToast(context, '标题已复制到剪贴板');
               },
             ),
             if (card.books.isNotEmpty)
@@ -363,7 +368,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               onTap: () async {
                 final BookChip chip = card.books.first;
                 final NavigatorState navigator = Navigator.of(sheetContext);
-                final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+                final BuildContext rootContext = context;
                 if (chip.bookGroupId != null) {
                   await ref.read(queriesProvider).toggleFavorite(
                     targetType: FavoriteTarget.bookGroup,
@@ -372,7 +377,9 @@ class _HomePageState extends ConsumerState<HomePage> {
                   );
                 }
                 navigator.pop();
-                messenger.showSnackBar(const SnackBar(content: Text('已收藏')));
+                if (rootContext.mounted) {
+                  showAppToast(rootContext, '已收藏');
+                }
               },
             ),
             ListTile(
@@ -645,7 +652,7 @@ class _FeatureGrid extends ConsumerWidget {
               iconName: 'flame',
               label: '热门榜',
               subtitle: top == null ? '推荐次数 Top' : '推荐次数 Top · ${top.name}',
-              onTap: () => context.push('/rank'),
+              onTap: () => openCenterPage(context, const RankPage()),
             ),
           ),
           SizedBox(width: s.space3),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +11,7 @@ import '../../collector/collect_providers.dart';
 import '../../collector/post_refresh.dart';
 import '../../core/external_launch.dart';
 import '../../core/icons.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/database_provider.dart';
@@ -106,21 +108,15 @@ class _ContentDetailPageState extends ConsumerState<ContentDetailPage> {
     super.dispose();
   }
 
-  /// P1-6 选择模式统一进出（任务 3，真机：仅图标态切换无感知）：AppBar 开关、
-  /// 楼层长按、提示条关闭钮三入口同走这里，进出各给一条 SnackBar 说明。
-  /// clearSnackBars 防连点排队多条提示（也保证任一时刻至多一个 4s 待决 timer）。
+  /// P1-6 选择模式统一进出（任务 3，真机：仅图标态切换无感知）：AppBar 开关与
+  /// 楼层长按两入口同走这里，进出各给一条 toast 说明（需求 6：不再常驻提示条）。
+  /// showAppToast 同一时刻只保留一条，连点不会排队多条提示、也不残留待决 timer。
   void _setSelectMode(bool on) {
     if (_selectMode == on) {
       return;
     }
     setState(() => _selectMode = on);
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(on ? '自由复制：长按楼层正文选择文字' : '已退出自由复制'),
-        ),
-      );
+    showAppToast(context, on ? '自由复制：长按楼层正文选择文字' : '已退出自由复制');
   }
 
   /// 上/下一个命中（环形循环，任务 4）；0 命中时按钮已置灰，count 兜底防模零。
@@ -315,7 +311,7 @@ class _ContentDetailPageState extends ConsumerState<ContentDetailPage> {
                     ? AppColors.of(context).accentStrong
                     : AppColors.of(context).textSecondary,
               ),
-              // 任务 3：统一走 _setSelectMode（SnackBar 用法说明/退出提示）。
+              // 任务 3：统一走 _setSelectMode（toast 用法说明/退出提示）。
               onPressed: () => _setSelectMode(!_selectMode),
             ),
             PopupMenuButton<String>(
@@ -379,7 +375,6 @@ class _ContentDetailPageState extends ConsumerState<ContentDetailPage> {
                     : null,
                 selectMode: _selectMode,
                 onEnterSelectMode: () => _setSelectMode(true),
-                onExitSelectMode: () => _setSelectMode(false),
                 // 任务 4：搜索词全页共享（横滑中邻页也见琥珀高亮），
                 // 「当前命中」只属于正在浏览的帖。
                 searchWord: searchWord,
@@ -403,7 +398,6 @@ class _PostBody extends ConsumerStatefulWidget {
     required this.position,
     required this.selectMode,
     required this.onEnterSelectMode,
-    required this.onExitSelectMode,
     this.snapshot,
     this.highlight,
     this.initialFloorSeq,
@@ -428,9 +422,6 @@ class _PostBody extends ConsumerStatefulWidget {
 
   /// 长按楼层正文 → 请求进入选择模式（P1-6 主入口）。
   final VoidCallback onEnterSelectMode;
-
-  /// 楼层流顶部提示条「×」→ 请求退出选择模式（任务 3）。
-  final VoidCallback onExitSelectMode;
 
   /// 任务 4 页内搜索词（空 = 未激活；着色口径见 FloorRichText.searchWord）。
   final String searchWord;
@@ -627,9 +618,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(added ? '已加入书签（含楼层位置）' : '已移除书签')));
+    showAppToast(context, added ? '已加入书签（含楼层位置）' : '已移除书签');
   }
 
   Future<void> _toggleFavorite(PostDetailData data) async {
@@ -647,9 +636,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(added ? '已收藏' : '已取消收藏')));
+    showAppToast(context, added ? '已收藏' : '已取消收藏');
   }
 
   Future<void> _copyAll(PostDetailData data) async {
@@ -665,9 +652,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('全文已复制到剪贴板')));
+    showAppToast(context, '全文已复制到剪贴板');
   }
 
   void _showToc(PostDetailData data) {
@@ -824,10 +809,12 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
     final Post post = data.post;
-    final SemanticTone tone = postToneOf(postKind: post.postKind);
+    final SemanticTone tone = postToneOf(postKind: post.postKind, title: post.title);
     final String? tidUrl = post.tid == null
         ? null
         : 'https://tieba.baidu.com/p/${post.tid}';
+    // 楼层正文可否直接选中：手动选择模式（触屏）∪ 桌面默认档（需求 3）。
+    final bool selectable = widget.selectMode || _desktopFreeSelect;
     return RefreshIndicator(
       onRefresh: () async => ref.invalidate(postDetailProvider(widget.postId)),
       // 任务 4：楼层流接 ScrollChrome（常驻细滚动条 + 滚动中浮出跳顶/跳底）。
@@ -897,7 +884,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
                   GestureDetector(
                     // P1-6：选择模式下原帖链接点击暂停（与书名/URL 手势暂停同口径）。
                     // 任务 5：改走外链统一出口（贴吧 App 优先，未装回落浏览器，失败
-                    // SnackBar 如实告知）——真机反馈：复制链接无感知，直达才符「原帖」语义。
+                    // toast 如实告知）——真机反馈：复制链接无感知，直达才符「原帖」语义。
                     onTap: widget.selectMode
                         ? null
                         : () => openThreadExternallyWithFeedback(context, tidUrl),
@@ -950,33 +937,6 @@ class _PostBodyState extends ConsumerState<_PostBody> {
               ),
             ],
             Divider(height: s.space6),
-            if (widget.selectMode)
-              // 任务 3（真机：图标态切换无感知）：选择模式期间楼层流顶部常驻细提示条，
-              // accentSoft 底 + caption 档说明 + 关闭钮直接退出（与 AppBar 开关同一出口）。
-              Container(
-                margin: EdgeInsets.only(bottom: s.space2),
-                padding: EdgeInsets.fromLTRB(s.space3, s.space1, s.space1, s.space1),
-                decoration: BoxDecoration(
-                  color: c.accentSoft,
-                  borderRadius: AppRadius.mdBorder,
-                ),
-                child: Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        '自由复制模式：长按楼层正文选择文字',
-                        style: t.caption.copyWith(color: c.accentStrong),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: '退出自由复制模式',
-                      visualDensity: VisualDensity.compact,
-                      icon: AppIcon('close', size: 16, color: c.accentStrong),
-                      onPressed: widget.onExitSelectMode,
-                    ),
-                  ],
-                ),
-              ),
             if (data.floors.isEmpty)
               const AppEmptyState(
                 title: '原帖内容已不可用',
@@ -1002,18 +962,20 @@ class _PostBodyState extends ConsumerState<_PostBody> {
                 // P1-6：长按楼层正文进入自由复制选择模式；选择模式下置 null（不注册
                 // recognizer），长按让位给 SelectionArea 的原生长按选词。书名 InkWell 的
                 // 长按复制书名（MI-3）在命中区内更深处，竞技场仍优先，不受影响。
+                //
+                // 桌面档（鼠标/触控板，用户口径）：**默认就可自由复制**，不必先切模式；
+                // 单击书名/链接仍可用（keepTapWhileSelectable），故没有功能损失。
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onLongPress: widget.selectMode
-                      ? null
-                      : widget.onEnterSelectMode,
+                  onLongPress: selectable ? null : widget.onEnterSelectMode,
                   // 逐楼层包 SelectionArea：楼层内跨段多选（拖拽双 handle + 系统工具栏复制）。
                   // 不整流单包 —— Android 上 SelectableRegion 对水平拖拽即时取胜
                   // （eagerVictoryOnDrag，framework selectable_region.dart），整包会让上下帖
                   // PageView 横滑在正文区全面失效；逐楼层包裹时头部/楼层头/空隙仍可翻页。
-                  child: widget.selectMode
-                      ? SelectionArea(child: _floorBody(f))
-                      : _floorBody(f),
+                  // 桌面无「横滑翻页」手势，整层可选中不影响任何交互。
+                  child: selectable
+                      ? SelectionArea(child: _floorBody(f, keepTap: _desktopFreeSelect))
+                      : _floorBody(f, keepTap: false),
                 ),
               ),
             ],
@@ -1023,9 +985,23 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     );
   }
 
-  /// 单楼层正文列（富文本 + 内联图片）；选择模式下 FloorRichText 降级为纯文本可选（P1-6）。
-  Widget _floorBody(FloorData f) {
+  /// 桌面端（Windows/Linux/macOS）：帖子详情默认「随时可自由复制」（用户口径），
+  /// 不要求先进入自由复制模式；触屏仍沿用长按进模式（见 build 内注释）。
+  bool get _desktopFreeSelect {
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /// 单楼层正文列（富文本 + 内联图片）；可选中档 FloorRichText 并回文本流（P1-6）。
+  Widget _floorBody(FloorData f, {required bool keepTap}) {
     final AppSpacing s = AppSpacing.of(context);
+    final bool selectable = widget.selectMode || _desktopFreeSelect; // 同 _content 口径
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -1037,7 +1013,8 @@ class _PostBodyState extends ConsumerState<_PostBody> {
           searchFocusIndex: widget.searchFocus?.floorId == f.floor.id
               ? widget.searchFocus!.indexInFloor
               : -1,
-          selectable: widget.selectMode,
+          selectable: selectable,
+          keepTapWhileSelectable: keepTap,
           onBookTap: (String name) =>
               context.go('/search?q=${Uri.encodeComponent(name)}'),
         ),
@@ -1163,9 +1140,10 @@ class PostBookChip extends StatelessWidget {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
     return InkWell(
+      // 书聚合页：expanded 在中间功能区原位显示，窄屏全窗 push（§5.5）。
       onTap: book.groupId == null
           ? null
-          : () => context.push('/book/${book.groupId}'),
+          : () => openBookDetail(context, book.groupId!),
       borderRadius: AppRadius.pillBorder,
       child: Container(
         height: AppMetrics.bookChipHeight,

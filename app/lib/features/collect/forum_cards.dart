@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../collector/collect_controller.dart';
+import '../../collector/scheduler.dart';
 import '../../core/icons.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../data/db/app_database.dart';
+import '../../data/bduss.dart';
 import '../../data/repo/collect_repository_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
@@ -45,15 +48,19 @@ final FutureProvider<List<CollectionLog>> recentCollectLogsSafeProvider =
 
 
 
-/// 账号卡：匿名模式徽标 + BDUSS 诚实标注（P2 不做假功能，§5.9 '[导入BDUSS提配额]'）。
-class AccountCard extends StatelessWidget {
+/// 账号卡：当前账号档徽标 + 配额口径（§5.9 / §8.11：导入 BDUSS → 每日配额 300→600；
+/// 凭证存储与导入入口见 data/bduss.dart 与设置页）。
+class AccountCard extends ConsumerWidget {
   const AccountCard({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final AppColors c = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
+    // 生效凭证（已失效 → 按匿名档运行）；失效时行内额外提示重新导入。
+    final bool imported = (ref.watch(effectiveBdussProvider).value ?? '').isNotEmpty;
+    final bool invalid = ref.watch(bdussInvalidProvider).value ?? false;
     return Container(
       padding: EdgeInsets.all(s.cardPadding),
       decoration: BoxDecoration(
@@ -65,13 +72,20 @@ class AccountCard extends StatelessWidget {
         children: <Widget>[
           AppIcon('user', size: 20, color: c.textMuted),
           SizedBox(width: s.space3),
-          const CollectBadge(label: '匿名模式', variant: CollectBadgeVariant.originSelf),
+          CollectBadge(
+            label: imported ? '账号模式' : '匿名模式',
+            variant: CollectBadgeVariant.originSelf,
+          ),
           const Spacer(),
-          // §8.13：匿名档四接口全可用；BDUSS 导入属 P2 —— 只标注，不做假入口。
+          // §8.11：配额数字与 scheduler.dart 常量同源（匿名 300 / BDUSS 档 600）。
           // Dynamic Type：标注可收缩省略（1.0 缩放取固有宽，视觉不变）。
           Flexible(
             child: Text(
-              '导入 BDUSS 可提高配额（暂未提供）',
+              imported
+                  ? '已导入 BDUSS · 每日配额 $kDailyBudgetBduss'
+                  : (invalid
+                      ? 'BDUSS 已失效 · 请到设置页重新导入 · 当前每日配额 $kDailyBudgetAnonymous'
+                      : '未导入 BDUSS · 每日配额 $kDailyBudgetAnonymous'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: t.caption.copyWith(color: c.textMuted),
@@ -194,7 +208,7 @@ class ForumSection extends ConsumerWidget {
       ref.invalidate(collectForumsProvider);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('添加失败')));
+        showAppToast(context, '添加失败');
       }
     }
   }
@@ -230,7 +244,7 @@ class ForumSection extends ConsumerWidget {
                 await ref.read(collectControllerProvider).setForumEnabled(entry.fname, v);
               } catch (_) {
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('操作失败')));
+                  showAppToast(context, '操作失败');
                 }
               }
               ref.invalidate(collectForumsProvider);

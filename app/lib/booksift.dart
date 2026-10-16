@@ -42,6 +42,7 @@ export 'collector/worker.dart';
 export 'classify/classifier.dart';
 
 // ── 数据层 ────────────────────────────────────────────────────────────────
+export 'data/bduss_format.dart';
 export 'data/db/app_database.dart';
 export 'data/repo/collect_repository.dart';
 export 'data/repo/queries.dart';

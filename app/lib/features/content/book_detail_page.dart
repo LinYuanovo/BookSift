@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/external_launch.dart';
 import '../../core/icons.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/queries.dart';
@@ -90,7 +91,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(added ? '已收藏该书' : '已取消收藏')));
+    showAppToast(context, added ? '已收藏该书' : '已取消收藏');
   }
 
   void _openEntrySource(EntryRow e) {
@@ -116,7 +117,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
       // 不再复制剪贴板兜底：口径与帖头「原帖 ↗」统一（core/external_launch.dart）。
       openThreadExternallyWithFeedback(context, url);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('原帖已不可溯源')));
+      showAppToast(context, '原帖已不可溯源');
     }
   }
 
@@ -306,7 +307,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
               switch (v) {
                 case 'copy':
                   Clipboard.setData(ClipboardData(text: data.group.nameDisplay ?? data.group.nameNorm));
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('书名已复制到剪贴板')));
+                  showAppToast(context, '书名已复制到剪贴板');
                 case 'share':
                   _exportRecommendations(data, entries);
                 case 'export':

@@ -69,9 +69,10 @@ abstract interface class TiebaApi {
 /// 内部节流关闭（min=max=0）：全局间隔/预算由调度层的 [GlobalRateLimiter]
 /// 统一核算（§8.8「必须一处核算」）；RiskMonitor 计数保留作观测。
 class ProtoTiebaApi implements TiebaApi {
-  ProtoTiebaApi({TiebaClient? client})
+  /// [bduss] 非空 → 请求带账号身份（配额档 600，§8.11）；注入 [client] 时忽略 [bduss]。
+  ProtoTiebaApi({TiebaClient? client, String? bduss})
       : _client = client ??
-            TiebaClient(minIntervalMs: 0, maxIntervalMs: 0),
+            TiebaClient(minIntervalMs: 0, maxIntervalMs: 0, bduss: bduss),
         _ownsClient = client == null;
 
   /// 冒烟工具用：自带节流（1.5–3.0s）的客户端直连场景。
@@ -83,6 +84,9 @@ class ProtoTiebaApi implements TiebaApi {
   final bool _ownsClient;
 
   RiskMonitor get risk => _client.risk;
+
+  /// 当前客户端携带的 BDUSS（null = 匿名档）。装配链路测试的观察点。
+  String? get bduss => _client.bduss;
 
   @override
   Future<ThreadsPage> getThreads(String fname,

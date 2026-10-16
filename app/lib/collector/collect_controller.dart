@@ -10,6 +10,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/bduss.dart';
 import '../data/repo/collect_repository_providers.dart';
 import '../data/repo/database_provider.dart';
 import 'collect_service.dart';
@@ -52,6 +53,13 @@ class CollectAddForumException implements Exception {
 }
 
 /// 运行态 Notifier（真实现；实现要点见 [CollectService] 与 §8.8 并发模型）。
+///
+/// BDUSS（需求 8/5）切换时机 = **每轮 run 启动时**：客户端（`tiebaApiProvider`，
+/// 导入后已换新）与配额/间隔/并发档（`dailyBudgetFor` + `intervalMsFor` +
+/// `effectiveConcurrency` 按 bdussImported 选档）都在 [startAll] 建本轮服务时取
+/// `effectiveBdussProvider`（失效标记 → 匿名）的当下值。不在 build() 里 watch ——
+/// 它是异步依赖，落定瞬间会把本 notifier 标记为 outdated（"dependency changed but
+/// before rebuild"），与「运行中服务唯一、可取消」的语义冲突（controller_test 实测）。
 class CollectRunNotifier extends Notifier<CollectRunState>
     implements CollectController {
   CollectService? _service;
@@ -61,34 +69,52 @@ class CollectRunNotifier extends Notifier<CollectRunState>
   CollectRunState build() {
     _disposed = false;
     ref.onDispose(() => _disposed = true);
-    _service = CollectService(
-      db: ref.watch(appDatabaseProvider),
-      repo: ref.watch(collectRepositoryProvider),
-      api: ref.watch(tiebaApiProvider),
-      workerFactory: ref.watch(postWorkerFactoryProvider),
-      networkGate: ref.watch(networkGateProvider),
-      clock: ref.watch(collectClockProvider),
-      sleeper: ref.watch(collectSleeperProvider),
+    return const CollectRunState.idle();
+  }
+
+  /// 新建本轮服务（装配依赖此处 `ref.read` 现取：bduss 导入/清除/失效后的档位
+  /// 切换在下一轮采集生效；运行中不换档，避免半途换身份与孤儿服务）。
+  CollectService _newService() {
+    // 生效凭证（已标记失效 → null，按匿名档跑）。
+    final String? bduss = ref.read(effectiveBdussProvider).value;
+    final bool imported = (bduss ?? '').isNotEmpty;
+    return CollectService(
+      db: ref.read(appDatabaseProvider),
+      repo: ref.read(collectRepositoryProvider),
+      api: ref.read(tiebaApiProvider),
+      workerFactory: ref.read(postWorkerFactoryProvider),
+      networkGate: ref.read(networkGateProvider),
+      clock: ref.read(collectClockProvider),
+      sleeper: ref.read(collectSleeperProvider),
+      budgetLimit: dailyBudgetFor(bduss),
+      bdussImported: imported,
+      // 账号档专用：登录态失效 → 本轮换匿名客户端（ProtoTiebaApi 不带凭证）
+      // + 标记凭证失效（幂等；不删凭证，重导即清标记）。
+      anonymousApiFactory: imported ? ProtoTiebaApi.new : null,
+      onAccountInvalid: imported
+          ? () => unawaited(ref.read(bdussControllerProvider).markInvalid())
+          : null,
       onState: (CollectRunState s) {
         if (!_disposed) state = s;
       },
     );
-    return const CollectRunState.idle();
-  }
-
-  CollectService get _svc {
-    final CollectService? s = _service;
-    if (s == null) throw StateError('CollectRunNotifier 未挂载（build 未执行）');
-    return s;
   }
 
   @override
-  Future<void> startAll() => _svc.run();
+  Future<void> startAll() {
+    final CollectService? current = _service;
+    if (current != null && current.isRunning) {
+      return current.completion; // 运行中再调 = no-op（同一轮）
+    }
+    final CollectService service = _newService();
+    _service = service;
+    return service.run();
+  }
 
   @override
   Future<void> cancel() async {
-    final CollectService s = _svc;
-    if (!s.isRunning) return;
+    final CollectService? s = _service;
+    if (s == null || !s.isRunning) return;
     s.requestCancel();
     await s.completion;
   }

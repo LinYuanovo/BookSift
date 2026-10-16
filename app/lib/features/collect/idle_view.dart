@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../collector/collect_controller.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../core/window_size.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
@@ -24,7 +25,7 @@ class CollectIdleView extends ConsumerWidget {
       await ref.read(collectControllerProvider).startAll();
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('启动失败')));
+        showAppToast(context, '启动失败');
       }
     }
   }

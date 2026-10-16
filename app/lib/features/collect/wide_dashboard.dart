@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/bduss.dart';
 import '../../collector/collect_state.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
@@ -262,22 +264,24 @@ class _DashRing extends StatelessWidget {
 }
 
 /// dash-forums：并发吧每吧一行 pbar + 子状态（index.html:2846–2859）。
-class _DashForums extends StatelessWidget {
+class _DashForums extends ConsumerWidget {
   const _DashForums({required this.state, required this.concurrency});
 
   final CollectRunState state;
   final int concurrency;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final AppColors c = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
+    // 需求 8/5：与 AppBar 徽标同口径（导入 BDUSS = 账号模式；失效后按匿名档运行）。
+    final String mode = ref.watch(effectiveBdussProvider).value == null ? '匿名' : '账号';
     return DashCard(
       children: <Widget>[
         _DashHd(
           title: '并发吧 · ${state.forums.length}',
           badge: CollectBadge(
-            label: '匿名 · 并发 $concurrency',
+            label: '$mode · 并发 $concurrency',
             variant: CollectBadgeVariant.originSelf,
           ),
         ),

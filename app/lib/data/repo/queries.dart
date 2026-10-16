@@ -646,7 +646,8 @@ class FloorData {
   final List<FloorImage> images;
 }
 
-/// 帖内提及书目的全站推荐/排雷次数（= 有多少相关帖子推荐过该书几次）。
+/// 帖内提及书目的全站推荐/排雷次数（按该书全部条目计，三分口径同 [Queries.kindCountsOf]：
+/// 颜色标记 → 帖标题推书/排雷词 → 类别，与书卡/书聚合页计数同源）。
 class PostBookCount {
   const PostBookCount({
     required this.groupId,
@@ -2008,35 +2009,57 @@ class Queries implements BookRepository, SearchSettingsKv {
     for (final FloorImage img in images) {
       byFloor.putIfAbsent(img.floorId, () => <FloorImage>[]).add(img);
     }
-    // 帖内提及书目 → 每本书的全站推荐/排雷次数（跨帖聚合：一条推荐记录=一帖一次）。
+    // 帖内提及书目 → 每本书的全站推荐/排雷次数（跨帖聚合）。计数走 [kindCountsOf]
+    // 同一三分口径（颜色标记 → 帖标题 → 类别）：否则「推荐一本宝藏书」这类无绿标的推荐帖，
+    // 帖页书目 chip 挂 0 推荐而书卡挂 1 推荐，两个页面自相矛盾（用户反馈原症状）。
     final List<QueryRow> bookRows = await db
         .customSelect(
           'SELECT MAX(g.id) AS gid, MAX(g.name_display) AS name, '
-          'COALESCE(SUM(${_flagSql()} = 1), 0) AS rec, '
-          'COALESCE(SUM(${_flagSql()} = -1), 0) AS avoid '
+          '${_kindPayload('b')} AS kinds '
           'FROM book_entries b LEFT JOIN book_groups g ON g.name_norm = b.name_norm '
+          'LEFT JOIN posts p ON p.id = b.post_ref '
           'WHERE b.name_norm IN '
           '(SELECT name_norm FROM book_entries WHERE post_ref = ?) '
-          'GROUP BY b.name_norm ORDER BY rec DESC, avoid DESC, b.name_norm',
+          'GROUP BY b.name_norm',
           variables: <Variable<Object>>[Variable<int>(postId)],
-          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.bookGroups},
+          readsFrom: <TableInfo<Table, Object?>>{
+            db.bookEntries,
+            db.bookGroups,
+            db.posts,
+          },
         )
         .get();
+    final List<PostBookCount> books = <PostBookCount>[];
+    for (final QueryRow r in bookRows) {
+      final (int _, int recommend, int avoid) =
+          kindCountsOf(r.data['kinds'] as String?);
+      books.add(PostBookCount(
+        groupId: (r.data['gid'] as num?)?.toInt(),
+        name: (r.data['name'] as String?) ?? '',
+        recommend: recommend,
+        avoid: avoid,
+      ));
+    }
+    // 排序随计数下移（原 SQL ORDER BY rec DESC, avoid DESC, name_norm）：
+    // 推荐多者在前，再排雷多者，再按书名稳定序。
+    books.sort((PostBookCount a, PostBookCount b) {
+      final int byRec = b.recommend.compareTo(a.recommend);
+      if (byRec != 0) {
+        return byRec;
+      }
+      final int byAvoid = b.avoid.compareTo(a.avoid);
+      if (byAvoid != 0) {
+        return byAvoid;
+      }
+      return a.name.compareTo(b.name);
+    });
     return PostDetailData(
       post: post,
       floors: <FloorData>[
         for (final Floor f in floors)
           FloorData(floor: f, images: byFloor[f.id] ?? const <FloorImage>[]),
       ],
-      books: <PostBookCount>[
-        for (final QueryRow r in bookRows)
-          PostBookCount(
-            groupId: (r.data['gid'] as num?)?.toInt(),
-            name: (r.data['name'] as String?) ?? '',
-            recommend: (r.data['rec']! as num).toInt(),
-            avoid: (r.data['avoid']! as num).toInt(),
-          ),
-      ],
+      books: books,
     );
   }
 

@@ -1,14 +1,17 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../collector/collect_controller.dart';
 import '../../collector/collect_state.dart';
+import '../../data/bduss.dart';
 import '../../core/icons.dart';
+import '../../core/widgets/app_toast.dart';
+import '../../core/nav/center_slot.dart';
 import '../../core/window_size.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
+import '../profile/settings_page.dart';
 import 'badges.dart';
 import 'buttons.dart';
 import 'collect_settings.dart';
@@ -51,7 +54,7 @@ class _CollectPageState extends ConsumerState<CollectPage> {
       await ref.read(collectControllerProvider).startAll();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('启动失败')));
+        showAppToast(context, '启动失败');
       }
     }
   }
@@ -66,7 +69,7 @@ class _CollectPageState extends ConsumerState<CollectPage> {
       await ref.read(collectControllerProvider).cancel();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('取消失败')));
+        showAppToast(context, '取消失败');
       }
     }
   }
@@ -83,6 +86,20 @@ class _CollectPageState extends ConsumerState<CollectPage> {
         ? ref.watch(collectSettingsProvider).value ?? const CollectSettings()
         : const CollectSettings();
 
+    // 需求 5：采集命中「登录态失效」会自动降级并标记 → 只在新标记落定时提示一次
+    // （toast + 采集日志里的「降级」事件；设置页 / 账号卡另行显示失效态文案）。
+    ref.listen<AsyncValue<bool>>(bdussInvalidProvider,
+        (AsyncValue<bool>? prev, AsyncValue<bool> next) {
+      final bool before = prev?.value ?? false;
+      if (!before && (next.value ?? false)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (context.mounted) {
+            showAppToast(context, 'BDUSS 已失效，已自动回退匿名档 · 请到设置页重新导入');
+          }
+        });
+      }
+    });
+
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final WindowSizeClass size = WindowSize.fromWidth(constraints.maxWidth);
@@ -97,7 +114,12 @@ class _CollectPageState extends ConsumerState<CollectPage> {
                 GestureDetector(
                   key: const ValueKey<String>('collect-anon-badge'),
                   onLongPress: kDebugMode ? _toggleDemo : null,
-                  child: const CollectBadge(label: '匿名模式', variant: CollectBadgeVariant.originSelf),
+                  // 需求 8/5：导入 BDUSS 即账号模式（配额 600）；失效标记后按匿名档运行
+                  // （effective 口径，与采集装配同源）。
+                  child: CollectBadge(
+                    label: ref.watch(effectiveBdussProvider).value == null ? '匿名模式' : '账号模式',
+                    variant: CollectBadgeVariant.originSelf,
+                  ),
                 ),
               ],
             ),
@@ -119,7 +141,7 @@ class _CollectPageState extends ConsumerState<CollectPage> {
               IconButton(
                 tooltip: '采集设置',
                 icon: AppIcon('gear', size: 20, color: c.textSecondary),
-                onPressed: () => context.push('/settings'),
+                onPressed: () => openCenterPage(context, const SettingsPage()),
               ),
               if (running && size == WindowSizeClass.expanded)
                 Padding(

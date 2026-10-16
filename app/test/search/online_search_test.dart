@@ -534,7 +534,15 @@ void main() {
       expect(Uri.splitQueryString(adapter.bodies.single)['only_thread'], '1');
       expect(find.text('【扫书】十日终焉 超好看'), findsOneWidget);
       expect(find.text('十日终焉 求书'), findsOneWidget);
-      expect(find.text('yy小说吧'), findsOneWidget, reason: '吧名 MetaChip');
+      // 吧名 MetaChip 限定在结果区内找：Tab 行的吧切换分段控件也带同样的吧名文本。
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey<String>('online-results-view')),
+          matching: find.text('yy小说吧'),
+        ),
+        findsOneWidget,
+        reason: '吧名 MetaChip',
+      );
       expect(find.text('扫书人甲'), findsOneWidget);
       expect(find.text('12 回复'), findsOneWidget);
       expect(find.text(formatOnlineDate(1760000000)), findsOneWidget);
@@ -689,6 +697,41 @@ void main() {
       await tester.pumpAndSettle();
       expect(adapter.requests, hasLength(1));
       expect(find.text('键盘触发帖'), findsOneWidget);
+    });
+
+    testWidgets('吧切换：切到「哀伤雪刃」→ 旧结果作废、再触发时 kw 换吧（用户口径：加哀伤雪刃吧）',
+        (WidgetTester tester) async {
+      final ScriptedAdapter adapter = ScriptedAdapter(<ResponseBody>[
+        jsonBody(searchJson(
+          posts: <Map<String, dynamic>>[postItem(tid: 1, title: 'yy 结果帖')],
+          page: pageInfo(),
+        )),
+        jsonBody(searchJson(
+          posts: <Map<String, dynamic>>[postItem(tid: 2, title: '雪刃结果帖', fname: '哀伤雪刃')],
+          page: pageInfo(),
+        )),
+      ]);
+      useSurface(tester);
+      await tester.pumpWidget(onlineApp(repo, adapter, initial: searchRoute(kQuery)));
+      await tester.pumpAndSettle();
+      await gotoOnlineAndSearch(tester);
+
+      expect(find.text('yy 结果帖'), findsOneWidget);
+      expect(Uri.splitQueryString(adapter.bodies.single)['kw'], 'yy小说吧', reason: '默认第一个关注吧');
+
+      // 切吧 = 旧吧结果作废回手动入口（不发请求），提示文案跟着换吧名。
+      await tester.tap(find.text('哀伤雪刃'));
+      await tester.pumpAndSettle();
+      expect(find.text('yy 结果帖'), findsNothing, reason: '跨吧结果不作数');
+      expect(adapter.requests, hasLength(1), reason: '切吧本身不发请求（单请求手动触发口径）');
+      expect(find.textContaining('在「哀伤雪刃」内实时搜索'), findsOneWidget);
+
+      // 再手动触发：请求体 kw = 新吧。
+      await tester.tap(find.text('搜索贴吧'));
+      await tester.pumpAndSettle();
+      expect(adapter.requests, hasLength(2));
+      expect(Uri.splitQueryString(adapter.bodies[1])['kw'], '哀伤雪刃');
+      expect(find.text('雪刃结果帖'), findsOneWidget);
     });
   });
 }

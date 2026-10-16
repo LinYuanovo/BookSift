@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../collector/scheduler.dart' show kMaxConcurrencyBduss;
 import '../../core/constants.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/database_provider.dart';
@@ -7,8 +8,11 @@ import '../../data/repo/database_provider.dart';
 /// 采集相关设置（settings 表 KV：`wifi_only` / `concurrent_forums`）。
 ///
 /// 默认值出处：仅 WiFi 默认开（原型 §8.11 网络行「默认仅 WiFi，可关」）；
-/// 并发默认 2、上限 3（原型 §8.8）。读取失败（如 widget 测试的 appDatabaseProvider
-/// 哨兵、首启竞态）一律回落默认值，不阻断 UI。
+/// 并发默认 2、上限 3（匿名）/ 4（BDUSS 档，原型 §8.8 + 需求 5）。
+/// 这里存的是**用户原值**（钳到 [2, 4]），按档生效的钳制走
+/// `scheduler.effectiveConcurrency(value, bdussImported:)`（设置页/调度器共用）。
+/// 读取失败（如 widget 测试的 appDatabaseProvider 哨兵、首启竞态）一律回落默认值，
+/// 不阻断 UI。
 class CollectSettings {
   const CollectSettings({this.wifiOnly = true, this.concurrentForums = 2});
 
@@ -28,7 +32,8 @@ final FutureProvider<CollectSettings> collectSettingsProvider =
         final String? concurrent = await read(SettingsKeys.concurrentForums);
         return CollectSettings(
           wifiOnly: wifi == null ? true : wifi != 'false',
-          concurrentForums: (int.tryParse(concurrent ?? '') ?? 2).clamp(2, 3),
+          concurrentForums:
+              (int.tryParse(concurrent ?? '') ?? 2).clamp(2, kMaxConcurrencyBduss),
         );
       } catch (_) {
         return const CollectSettings();
@@ -45,7 +50,7 @@ class CollectSettingsController {
       _write(SettingsKeys.wifiOnly, value ? 'true' : 'false');
 
   Future<void> setConcurrentForums(int value) =>
-      _write(SettingsKeys.concurrentForums, '${value.clamp(2, 3)}');
+      _write(SettingsKeys.concurrentForums, '${value.clamp(2, kMaxConcurrencyBduss)}');
 
   Future<void> _write(String key, String value) async {
     final AppDatabase db = _ref.read(appDatabaseProvider);

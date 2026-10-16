@@ -11,6 +11,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
+import '../../core/nav/center_slot.dart';
 import '../content/detail_slot.dart';
 import '../export/booklist_export.dart';
 import '../export/export_sheet.dart';
@@ -18,6 +19,7 @@ import '../home/cards.dart';
 import '../search/search_state.dart';
 import '../share/share_card.dart';
 import '../share/share_sheet.dart';
+import 'settings_page.dart';
 
 // 我的页（原型 §5.10）：书签夹 / 收藏夹 / 搜索历史 三段实时列表 + 设置 / 关于入口。
 //
@@ -127,7 +129,7 @@ class ProfilePage extends ConsumerWidget {
                     quarterTurns: 3,
                     child: AppIcon('chev', size: 16),
                   ),
-                  onTap: () => context.push('/settings'),
+                  onTap: () => openCenterPage(context, const SettingsPage()),
                 ),
                 const Divider(height: AppMetrics.hairline, indent: 56),
                 ListTile(

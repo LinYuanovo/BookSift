@@ -4,9 +4,11 @@ import 'dart:convert';
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../collector/scheduler.dart' show CollectFailureKind, CollectRequestException;
+import '../../collector/scheduler.dart'
+    show CollectFailureKind, CollectRequestException, intervalMsFor;
 import '../../collector/tieba_search.dart';
 import '../../core/constants.dart';
+import '../../data/bduss.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/collect_repository.dart' show kDefaultForums;
 import '../../data/repo/queries.dart';
@@ -308,12 +310,21 @@ final FutureProvider<List<HotBook>> hotBooksProvider =
 
 // ── 贴吧在线搜索（P2-2：c/s/searchpost 匿名 app-form 通道，§8.2/§8.4） ──────
 
-/// 在线搜索客户端注入点：生产 = 真实 dio + 1.5~3.0s 节流；
+/// 在线搜索客户端注入点：生产 = 真实 dio + 按档节流（匿名 1.5~3.0s / 账号 1.0~2.0s）；
 /// 测试 `overrideWithValue(TiebaSearchClient(dio: mock, minIntervalMs: 0, …))`
 /// （mock dio adapter 脚本化 JSON/错误，零真实网络，TESTING.md §1）。
 final Provider<TiebaSearchClient> tiebaSearchClientProvider =
     Provider<TiebaSearchClient>((Ref ref) {
-  final TiebaSearchClient client = TiebaSearchClient();
+  // 与采集同源：带账号身份（BDUSS 作为 searchpost 表单参数参与 APP_SALT 签名）、
+  // 间隔随档放宽（scheduler.intervalMsFor）；凭证失效即自动回落匿名档。
+  final String? bduss =
+      ref.watch(effectiveBdussProvider.select((AsyncValue<String?> s) => s.value));
+  final ({int maxMs, int minMs}) interval = intervalMsFor(bdussImported: bduss != null);
+  final TiebaSearchClient client = TiebaSearchClient(
+    bduss: bduss,
+    minIntervalMs: interval.minMs,
+    maxIntervalMs: interval.maxMs,
+  );
   ref.onDispose(client.close);
   return client;
 });
@@ -323,6 +334,11 @@ enum SearchTab { local, online }
 
 /// autoDispose：离开搜索页即回本地 Tab 默认（在线结果 state 独立保留，切回即见）。
 final searchTabProvider = StateProvider.autoDispose<SearchTab>((Ref ref) => SearchTab.local);
+
+/// 在线搜索的「吧」切换：默认第一个关注吧，可切到任意 [kDefaultForums] 条目。
+/// 与采集同源（`search_in_forum` 的 `kw` 就是吧名原样，不带「吧」字后缀）。
+final onlineForumProvider =
+    StateProvider.autoDispose<String>((Ref ref) => kDefaultForums.first);
 
 /// 在线搜索阶段。
 enum OnlineStatus { idle, loading, ready, error }
@@ -335,6 +351,7 @@ class OnlineSearchState {
   const OnlineSearchState({
     this.status = OnlineStatus.idle,
     this.query = '',
+    this.forum = '',
     this.threads = const <OnlineThread>[],
     this.hasMore = false,
     this.page = 0,
@@ -346,6 +363,9 @@ class OnlineSearchState {
 
   /// 产出当前结果的搜索词（≠ 当前输入词 → UI 按过期处理，回手动触发入口）。
   final String query;
+
+  /// 产出当前结果的吧名（≠ 当前选中的吧 → 同样按过期处理，避免跨吧结果冒充）。
+  final String forum;
   final List<OnlineThread> threads;
   final bool hasMore;
 
@@ -361,6 +381,7 @@ class OnlineSearchState {
   OnlineSearchState copyWith({
     OnlineStatus? status,
     String? query,
+    String? forum,
     List<OnlineThread>? threads,
     bool? hasMore,
     int? page,
@@ -370,6 +391,7 @@ class OnlineSearchState {
       OnlineSearchState(
         status: status ?? this.status,
         query: query ?? this.query,
+        forum: forum ?? this.forum,
         threads: threads ?? this.threads,
         hasMore: hasMore ?? this.hasMore,
         page: page ?? this.page,
@@ -396,8 +418,9 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
     if (q.isEmpty || state.status == OnlineStatus.loading) {
       return;
     }
-    state = OnlineSearchState(status: OnlineStatus.loading, query: q);
-    await _run(q, forum, pn: 1, append: false);
+    final String target = forum ?? _ref.read(onlineForumProvider);
+    state = OnlineSearchState(status: OnlineStatus.loading, query: q, forum: target);
+    await _run(q, target, pn: 1, append: false);
   }
 
   /// 手动加载下一页（追加；仅在 hasMore 且非在途时可用）。
@@ -407,22 +430,27 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
       return;
     }
     state = cur.copyWith(status: OnlineStatus.loading, errorKind: OnlineErrorKind.none, errorDetail: '');
-    await _run(cur.query, forum, pn: cur.page + 1, append: true);
+    // 翻页沿用本页结果的吧名（中途切吧由 UI 重置状态，不会追错吧）。
+    await _run(cur.query, forum ?? cur.forum, pn: cur.page + 1, append: true);
   }
 
-  Future<void> _run(String q, String? forum, {required int pn, required bool append}) async {
+  /// 切吧 / 失效重置：清回手动触发入口（不自动发请求，匿名通道单请求口径）。
+  void reset() => state = OnlineSearchState(forum: _ref.read(onlineForumProvider));
+
+  Future<void> _run(String q, String forum, {required int pn, required bool append}) async {
     try {
       // only_thread=1：仅主题帖（行 = 帖子粒度，点行复制原帖链接语义干净）。
       // sm 固定取默认 0（接口原序）：排序一律客户端重排，口径见 onlineSortProvider 注释。
       final OnlineSearchPage page = await _ref
           .read(tiebaSearchClientProvider)
-          .search(forum ?? kDefaultForums.first, q, pn: pn, rn: 30, onlyThread: true);
+          .search(forum, q, pn: pn, rn: 30, onlyThread: true);
       if (!mounted) return;
       final List<OnlineThread> merged =
           append ? <OnlineThread>[...state.threads, ...page.threads] : page.threads;
       state = OnlineSearchState(
         status: OnlineStatus.ready,
         query: q,
+        forum: forum,
         threads: _dedupByTid(merged),
         hasMore: page.hasMore,
         page: pn,
@@ -442,7 +470,8 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
         // 追加失败：保住已加载列表，仅记错误（页脚按钮转「重试」）。
         state = state.copyWith(errorKind: kind, errorDetail: detail);
       } else {
-        state = OnlineSearchState(status: OnlineStatus.error, query: q, errorKind: kind, errorDetail: detail);
+        state = OnlineSearchState(
+            status: OnlineStatus.error, query: q, forum: forum, errorKind: kind, errorDetail: detail);
       }
     }
   }

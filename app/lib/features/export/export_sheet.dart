@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/icons.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
@@ -264,9 +265,7 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
       ShareOutcomeKind.unsupported => outcome.message ?? '当前平台不支持该操作',
       ShareOutcomeKind.failed => outcome.message ?? '导出失败',
     };
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(text)));
+    showAppToast(context, text);
   }
 
   @override
