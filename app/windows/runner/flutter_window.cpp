@@ -134,6 +134,108 @@ void SaveWindowPlacement(HWND window) {
                              file.c_str());
 }
 
+// ── 自绘标题栏命中测试（WM_NCHITTEST：屏幕坐标 → HT* 码） ─────────────────────
+//   HTCLIENT            = Flutter 客户区（标题栏三颗按钮 / 正文 / 滚动条都归 Flutter）；
+//   HTLEFT / … / HTCAPTION = 系统非客户区（四边四角缩放、顶部拖动区）。
+//
+// ⚠ 真实鼠标路径上系统只问**最底层**的那个窗口：Flutter 视图是铺满客户区的子窗口，
+// 顶层窗口自己的 WM_NCHITTEST 收不到消息。所以本函数有两处调用方：
+//   1) 顶层窗口的 WM_NCHITTEST（命中对象直接是顶层窗口时）；
+//   2) 视图子窗口的 wndproc 包装 ViewWndProc —— 判成非客户区返回 HTTRANSPARENT，
+//      系统会继续问同线程的父窗口，顶层再给出最终 HT* 码。
+// 两边共用这一个几何函数，保证「判在哪」和「谁执行拖动/缩放」不会错位。
+LRESULT HitTestNonClient(HWND window, LPARAM lparam) {
+  // WM_NCHITTEST 的坐标是**屏幕坐标**。
+  const POINT screen_point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+  RECT window_rect{};
+  if (!GetWindowRect(window, &window_rect)) {
+    return HTCLIENT;
+  }
+  // 缩放基准取 Flutter 视图窗口（与 embedder 的 DPR 同源，子窗口还没建时退回顶层窗口）。
+  HWND scale_window = window;
+  if (const HWND view = GetWindow(window, GW_CHILD)) {
+    scale_window = view;
+  }
+
+  const int resize_border = ScaleForWindow(scale_window, kResizeBorderLogicalWidth);
+  if (!IsZoomed(window)) {
+    const bool on_left = screen_point.x < window_rect.left + resize_border;
+    const bool on_right = screen_point.x >= window_rect.right - resize_border;
+    const bool on_top = screen_point.y < window_rect.top + resize_border;
+    const bool on_bottom = screen_point.y >= window_rect.bottom - resize_border;
+    if (on_top && on_left) {
+      return HTTOPLEFT;
+    }
+    if (on_top && on_right) {
+      return HTTOPRIGHT;
+    }
+    if (on_bottom && on_left) {
+      return HTBOTTOMLEFT;
+    }
+    if (on_bottom && on_right) {
+      return HTBOTTOMRIGHT;
+    }
+    if (on_left) {
+      return HTLEFT;
+    }
+    if (on_right) {
+      return HTRIGHT;
+    }
+    if (on_top) {
+      return HTTOP;
+    }
+    if (on_bottom) {
+      return HTBOTTOM;
+    }
+  }
+
+  // 顶部条 = Flutter 自绘标题栏：右侧按钮簇留给 Dart（HTCLIENT，点按/悬停都在
+  // Flutter 侧），其余是拖动区（HTCAPTION → 系统负责拖动/双击最大化/右键系统菜单）。
+  const int title_bar_height = ScaleForWindow(scale_window, kTitleBarLogicalHeight);
+  const int buttons_width = ScaleForWindow(scale_window, kCaptionButtonsLogicalWidth);
+  if (screen_point.y < window_rect.top + title_bar_height &&
+      screen_point.x < window_rect.right - buttons_width) {
+    return HTCAPTION;
+  }
+  return HTCLIENT;
+}
+
+// Flutter 视图子窗口的 wndproc 包装：把「非客户区」命中交回顶层窗口。
+//
+// 背景（实测复现）：视图子窗口铺满客户区，系统做鼠标命中测试时只问子窗口，子窗口
+// 默认回 HTCLIENT → 顶层那套 HTLEFT/HTCAPTION 判定永远不生效：拖四边四角不缩放
+// （光标一直是箭头、真实拖拽窗口尺寸 dW=0），拖标题栏也不移动窗口。
+// 判成非客户区时返回 HTTRANSPARENT（系统继续问同线程的底层窗口 = 顶层窗口 → 得到
+// HTLEFT/HTCAPTION，随后拖动/缩放/双击最大化/右键系统菜单全走系统原生路径）；
+// 判成客户区时原样 HTCLIENT，点击/悬停/滚动/IME 消息照旧进 Flutter。
+WNDPROC g_view_previous_proc = nullptr;
+
+LRESULT CALLBACK ViewWndProc(HWND view, UINT message, WPARAM wparam,
+                             LPARAM lparam) {
+  if (message == WM_NCHITTEST) {
+    const HWND top_level = GetParent(view);
+    const LRESULT code =
+        top_level == nullptr ? HTCLIENT : HitTestNonClient(top_level, lparam);
+    return code == HTCLIENT ? HTCLIENT : HTTRANSPARENT;
+  }
+  return CallWindowProcW(g_view_previous_proc, view, message, wparam, lparam);
+}
+
+void InstallViewHitTestForwarding(HWND view) {
+  if (view == nullptr) {
+    return;
+  }
+  if (reinterpret_cast<WNDPROC>(GetWindowLongPtrW(view, GWLP_WNDPROC)) ==
+      &ViewWndProc) {
+    return;  // 已装过（幂等）
+  }
+  const LONG_PTR previous = SetWindowLongPtrW(
+      view, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&ViewWndProc));
+  if (previous != 0) {
+    g_view_previous_proc = reinterpret_cast<WNDPROC>(previous);
+  }
+}
+
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -158,6 +260,9 @@ bool FlutterWindow::OnCreate() {
   }
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
+  // 视图子窗口铺满客户区：给它装 WM_NCHITTEST 转发，否则顶层的缩放边框/拖动区
+  // 判定收不到消息（明细见 ViewWndProc）。
+  InstallViewHitTestForwarding(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     if (start_maximized_) {
@@ -253,62 +358,6 @@ void FlutterWindow::ApplySavedPlacement() {
 
 void FlutterWindow::SavePlacement() { SaveWindowPlacement(GetHandle()); }
 
-LRESULT FlutterWindow::HitTestNcArea(HWND window, LPARAM lparam) const {
-  // WM_NCHITTEST 的坐标是**屏幕坐标**。
-  const POINT screen_point{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-  RECT window_rect{};
-  if (!GetWindowRect(window, &window_rect)) {
-    return HTCLIENT;
-  }
-  // 缩放基准取 Flutter 视图窗口（与 embedder 的 DPR 同源，子窗口还没建时退回顶层窗口）。
-  HWND scale_window = window;
-  if (const HWND view = GetWindow(window, GW_CHILD)) {
-    scale_window = view;
-  }
-
-  const int resize_border = ScaleForWindow(scale_window, kResizeBorderLogicalWidth);
-  if (!IsZoomed(window)) {
-    const bool on_left = screen_point.x < window_rect.left + resize_border;
-    const bool on_right = screen_point.x >= window_rect.right - resize_border;
-    const bool on_top = screen_point.y < window_rect.top + resize_border;
-    const bool on_bottom = screen_point.y >= window_rect.bottom - resize_border;
-    if (on_top && on_left) {
-      return HTTOPLEFT;
-    }
-    if (on_top && on_right) {
-      return HTTOPRIGHT;
-    }
-    if (on_bottom && on_left) {
-      return HTBOTTOMLEFT;
-    }
-    if (on_bottom && on_right) {
-      return HTBOTTOMRIGHT;
-    }
-    if (on_left) {
-      return HTLEFT;
-    }
-    if (on_right) {
-      return HTRIGHT;
-    }
-    if (on_top) {
-      return HTTOP;
-    }
-    if (on_bottom) {
-      return HTBOTTOM;
-    }
-  }
-
-  // 顶部条 = Flutter 自绘标题栏：右侧按钮簇留给 Dart（HTCLIENT，点按/悬停都在
-  // Flutter 侧），其余是拖动区（HTCAPTION → 系统负责拖动/双击最大化/右键系统菜单）。
-  const int title_bar_height = ScaleForWindow(scale_window, kTitleBarLogicalHeight);
-  const int buttons_width = ScaleForWindow(scale_window, kCaptionButtonsLogicalWidth);
-  if (screen_point.y < window_rect.top + title_bar_height &&
-      screen_point.x < window_rect.right - buttons_width) {
-    return HTCAPTION;
-  }
-  return HTCLIENT;
-}
-
 LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
@@ -318,23 +367,28 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   // 这两条必须抢在 Flutter 引擎之前处理（引擎不认这套 NC 规则）。
   switch (message) {
     case WM_NCCALCSIZE: {
-      // 客户区 = 整窗。wParam==TRUE 时 lParam 是 NCCALCSIZE_PARAMS（rgrc[0]），
-      // FALSE 时就是 RECT*，两者同一块内存布局，都按屏幕坐标处理。
+      // 客户区 = 整窗（自绘标题栏）。wParam==TRUE 时 lParam 是 NCCALCSIZE_PARAMS
+      // （rgrc[0]），FALSE 时就是 RECT*，两者同一块内存布局，都按屏幕坐标处理。
       //
       // ⚠ 入参矩形就是系统**提议的新窗口矩形**：返回 0 且不修改它 = 客户区铺满整窗。
       // 绝不能改用 GetWindowRect() 自己算——NC 重算发生在窗口真正移动/缩放**之前**，
-      // 那时取到的是旧矩形。实测（tools/verify_window_behavior.ps1 基线）三个症状同源：
-      //   最大化还原后客户区停在最大化尺寸（win 1280x720 / client 1721x926，顶部错位）；
-      //   最小化还原后停在窗口图标尺寸（client 158x26，界面没法点）；
-      //   拖拽改大小时客户区永远滞后一拍。
+      // 那时取到的是旧矩形（旧实现里「最小化还原」因此把客户区留在窗口图标尺寸
+      // 158x26，界面点不动）。
       RECT* client_rect = (wparam == TRUE)
                               ? &reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam)->rgrc[0]
                               : reinterpret_cast<RECT*>(lparam);
       if (IsZoomed(hwnd) && !IsIconic(hwnd)) {
         // 最大化时窗口矩形盖住整块显示器（含任务栏），按显示器工作区裁回。
+        //
+        // ⚠ 显示器必须按**提议矩形**判定：最大化 → 最小化 → 任务栏还原时，这次
+        // WM_NCCALCSIZE 里窗口自身还停在最小化坐标 (-32000,-32000)，用
+        // MonitorFromWindow 会取「离它最近的显示器」——实测本机是副屏竖屏
+        // （1080x1920@125%，工作区 1080x1860），客户区于是被裁成 1080x1860，
+        // 而窗口是 2582x1390：Flutter 视图塞进错误尺寸 → 界面错位、整窗点不动。
+        // 提议矩形就是这次变更后的窗口矩形，按它取显示器不会有这个问题。
         MONITORINFO monitor_info{};
         monitor_info.cbSize = sizeof(monitor_info);
-        if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+        if (GetMonitorInfo(MonitorFromRect(client_rect, MONITOR_DEFAULTTONEAREST),
                            &monitor_info)) {
           *client_rect = monitor_info.rcWork;
         }
@@ -342,7 +396,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       return 0;
     }
     case WM_NCHITTEST:
-      return HitTestNcArea(hwnd, lparam);
+      return HitTestNonClient(hwnd, lparam);
     case WM_CLOSE:
       // 关闭前落盘窗口位置/尺寸/最大化态（用户口径：下次启动恢复）。
       SavePlacement();

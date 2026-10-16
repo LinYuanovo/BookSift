@@ -1,4 +1,9 @@
 /// 水位机制（§8.7：collection_state.last_thread_time / last_tid）。
+///
+/// **不是**“先拉全量帖子再按日期差筛”：[CollectService] 按 get_threads 的
+/// create_time 倒序逐页拉取，页内用 [isNewerThanWatermark] 逐条比较；
+/// 首次遇到不新于水位的帖子后，扫完当前页即停止（增量最多 5 页；冷启动水位=0
+/// 只回看最近 2 页）。水位推进只取本轮按时间升序的连续成功前缀，见 [advancePrefix]。
 library;
 
 import 'tieba/src/models.dart';

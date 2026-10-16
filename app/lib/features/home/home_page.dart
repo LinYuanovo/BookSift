@@ -7,6 +7,8 @@ import '../../core/constants.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../core/icons.dart';
 import '../../core/widgets/scroll_chrome.dart';
+import '../../collector/collect_controller.dart';
+import '../../collector/collect_state.dart';
 import '../../data/repo/queries.dart';
 import '../../data/repo/queries_providers.dart';
 import '../../data/seed_import.dart';
@@ -187,6 +189,17 @@ class _HomePageState extends ConsumerState<HomePage> {
     ref.listen<SeedImportState>(seedBootstrapProvider, (SeedImportState? prev, SeedImportState next) {
       if (next.phase == SeedImportPhase.done && prev?.phase != SeedImportPhase.done) {
         ref.invalidate(queriesProvider);
+      }
+    });
+    // 采集成功结束后首页仍可能停在旧的 FutureProvider 快照：首页（StatefulShellRoute
+    // 分支）保持挂载，监听运行相位回落即可在后台完成一次原地刷新，无需重启或手动下拉。
+    ref.listen<CollectRunState>(collectRunStateProvider, (CollectRunState? prev, CollectRunState next) {
+      final bool finished =
+          (prev?.isRunning ?? false) && !next.isRunning && next.phase == CollectPhase.idle;
+      final bool hasSuccess = next.forums.any((ForumRunState f) => f.status == ForumStatus.done);
+      if (finished && hasSuccess) {
+        ref.read(homePageCountProvider.notifier).state = 1;
+        ref.invalidate(homeFeedProvider);
       }
     });
     return Scaffold(
@@ -792,4 +805,3 @@ class _RandomBooksSheet extends ConsumerWidget {
     );
   }
 }
-

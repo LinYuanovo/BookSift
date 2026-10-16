@@ -121,6 +121,11 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
     }
   }
 
+  void _copyBookName(String name) {
+    Clipboard.setData(ClipboardData(text: name));
+    showAppToast(context, '书名已复制到剪贴板');
+  }
+
   /// ⋮「导出该书推荐」（原型 §5.11）：把当前筛选下的多条推荐语拼成一张分享卡。
   /// 拼接口径：每条 `「推荐语」—— 推荐人 · 日期 · 排雷`（无推荐语的条目显式标注，不静默丢）。
   void _exportRecommendations(BookDetailData data, List<EntryRow> entries) {
@@ -306,8 +311,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
               }
               switch (v) {
                 case 'copy':
-                  Clipboard.setData(ClipboardData(text: data.group.nameDisplay ?? data.group.nameNorm));
-                  showAppToast(context, '书名已复制到剪贴板');
+                  _copyBookName(data.group.nameDisplay ?? data.group.nameNorm);
                 case 'share':
                   _exportRecommendations(data, entries);
                 case 'export':
@@ -379,7 +383,12 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
             Text('BOOK · 书聚合', style: t.label.copyWith(color: c.accentStrong, letterSpacing: 1.76)),
             SizedBox(height: s.space1),
             // 书名大标题（衬线 display，设计系统 §3 #04）。
-            Text('《$name》', style: t.display.copyWith(color: c.text)),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onLongPress: () => _copyBookName(name),
+              onDoubleTap: () => _copyBookName(name),
+              child: Text('《$name》', style: t.display.copyWith(color: c.text)),
+            ),
             SizedBox(height: s.space2),
             // 副行（index.html:1446）：作者 · 字数 · N 条独立评价；word_count_max 缺省不拼、
             // 连载状态无字段 —— 不造假。
@@ -590,4 +599,3 @@ class _SemanticSortKey {
   @override
   int get hashCode => Object.hash(filter, sort);
 }
-

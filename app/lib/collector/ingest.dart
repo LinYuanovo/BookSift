@@ -87,11 +87,14 @@ class IngestPipeline {
   }) {
     final DateTime now = collectedAt ?? DateTime.now();
     return db.transaction(() async {
-      // ── 1. posts：INSERT OR IGNORE by tid（去重层 1，§8.7） ──
-      final Post? existing = await (db.select(db.posts)
+      final String dateStr = _beijingDate(rec.createTime);
+
+      // ── 1. posts：优先按 tid 认帖；历史种子/旧采集行可能 tid 为空或与源不一致，
+      // 再按「同吧 + 同标题」回认，避免同一主题被自采又插一行（去重层 1，§8.7） ──
+      final Post? byTid = await (db.select(db.posts)
             ..where((Posts t) => t.tid.equals(rec.tid)))
           .getSingleOrNull();
-      final String dateStr = _beijingDate(rec.createTime);
+      final Post? existing = byTid ?? await _findLegacySeedPost(rec);
       int postId;
       bool newPost = false;
       if (existing == null) {
@@ -117,6 +120,24 @@ class IngestPipeline {
         ));
       } else {
         postId = existing.id;
+        // 同帖重采（或回认种子帖）：同步会变化的帖元信息；floor_count/image_count
+        // 在楼层合并完成后按实际行数重算。
+        await (db.update(db.posts)..where((Posts t) => t.id.equals(postId)))
+            .write(PostsCompanion(
+          tid: Value<int?>(rec.tid),
+          title: Value<String?>(rec.title),
+          author: Value<String?>(rec.author),
+          authorName: Value<String?>(
+              rec.authorUserName.isEmpty ? null : rec.authorUserName),
+          userId: Value<int?>(rec.authorId),
+          date: Value<String?>(dateStr.isEmpty ? null : dateStr),
+          dateRaw: Value<String?>('${rec.createTime}'),
+          postType: Value<String>(analysis.kind ?? '扫书'),
+          postKind: Value<String>(analysis.kind ?? '扫书'),
+          recommendFlag: Value<int>(analysis.flag),
+          origin: Value<String>(Origin.collected),
+          collectedAt: Value<DateTime?>(now),
+        ));
       }
 
       // ── 2. floors：按 pid UPSERT（去重层 2；编辑过的楼层更新文本，§8.7） ──
@@ -127,6 +148,12 @@ class IngestPipeline {
         for (final Floor f in existingFloors)
           if (f.pid != null) f.pid!: f,
       };
+      // 种子楼层 pid 为空：回认同一帖后按 seq 与自采楼层对齐，避免把整帖正文
+      // 作为新楼层再插一遍。
+      final Map<int, Floor> bySeq = <int, Floor>{
+        for (final Floor f in existingFloors)
+          if (f.pid == null) f.seq: f,
+      };
       final Map<int, int> floorIdByPid = <int, int>{};
       int floorsAdded = 0;
       int imagesAdded = 0;
@@ -136,8 +163,10 @@ class IngestPipeline {
             ? DateTime.fromMillisecondsSinceEpoch(f.time * 1000, isUtc: true)
             : null;
         final Floor? ex = f.pid != 0 ? byPid[f.pid] : null;
+        final Floor? legacy = ex == null && f.pid != 0 ? bySeq[f.seq] : null;
+        final Floor? matched = ex ?? legacy;
         int floorId;
-        if (ex == null) {
+        if (matched == null) {
           floorId = await db.into(db.floors).insert(FloorsCompanion.insert(
             postId: postId,
             seq: f.seq,
@@ -151,25 +180,40 @@ class IngestPipeline {
           floorsAdded++;
           imagesAdded += await _insertImages(floorId, f.images);
         } else {
-          floorId = ex.id;
+          floorId = matched.id;
           // 幂等：文本未变则整行不动（第二遍跑全 skipped、行数不变）。
-          if (ex.content != f.text || ex.textNormHash != textHash) {
+          final bool textChanged =
+              matched.content != f.text || matched.textNormHash != textHash;
+          final int? pid = f.pid == 0 ? null : f.pid;
+          if (textChanged || matched.pid != pid || matched.seq != f.seq) {
             await (db.update(db.floors)
                   ..where((Floors t) => t.id.equals(floorId)))
                 .write(FloorsCompanion(
+              pid: Value<int?>(pid),
               content: Value<String>(f.text),
               textNormHash: Value<String?>(textHash),
               charCount: Value<int>(f.text.length),
               seq: Value<int>(f.seq),
+              createdAt: Value<DateTime?>(createdAt ?? matched.createdAt),
+              authorId: Value<int?>(f.authorId == 0 ? matched.authorId : f.authorId),
             ));
-            await (db.delete(db.images)
-                  ..where((Images t) => t.floorId.equals(floorId)))
-                .go();
-            imagesAdded += await _insertImages(floorId, f.images);
+            if (textChanged) {
+              await (db.delete(db.images)
+                    ..where((Images t) => t.floorId.equals(floorId)))
+                  .go();
+              imagesAdded += await _insertImages(floorId, f.images);
+            }
           }
         }
         if (f.pid != 0) floorIdByPid[f.pid] = floorId;
       }
+
+      final int floorCount = (await (db.select(db.floors)
+            ..where((Floors t) => t.postId.equals(postId)))
+          .get())
+          .length;
+      await (db.update(db.posts)..where((Posts t) => t.id.equals(postId)))
+          .write(PostsCompanion(floorCount: Value<int>(floorCount)));
 
       // ── 3. book_entries：按帖去重（§8.7 去重层 3 修订；口径见 entryContentHash）──
       //
@@ -188,12 +232,68 @@ class IngestPipeline {
       final Set<int> touchedGroups = <int>{};
       final String kind = analysis.kind ?? '扫书';
       for (final EntryDraft e in analysis.entries) {
+        final int? matchedFloorId = floorIdByPid[e.floorPid];
         final String postHash = entryContentHash(
           nameNorm: e.nameNorm,
           authorNorm: e.authorNorm,
           commentNormHash: e.commentNormHash,
           postRef: postId,
         );
+
+        // 同一帖同一本书只保留一条：种子帖原 payload 可能按不同楼层拆成多行，
+        // 或自采推荐语在后续楼层被补充/修订。更长的新评论就地替换旧行，
+        // 否则保留旧行（keeper 口径与 maintenance.dedupBookEntries 一致：长评优先）。
+        final BookEntry? sameBook = await (db.select(db.bookEntries)
+              ..where((BookEntries t) =>
+                  t.postRef.equals(postId) & t.nameNorm.equals(e.nameNorm))
+              ..limit(1))
+            .getSingleOrNull();
+        if (sameBook != null) {
+          final bool sameFloor = matchedFloorId != null && sameBook.floorRef == matchedFloorId;
+          final bool sameText = sameBook.commentNormHash == e.commentNormHash;
+          if (sameFloor && sameText) {
+            skippedDup++;
+            continue;
+          }
+          // 同一楼层重采 = 编辑事实，短文也按新文覆盖；不同楼层才是“同帖同书
+          // 多行”的历史重复，此时用长评 keeper 避免把完整版换成截断版。
+          if (!sameFloor) {
+            final int oldLen = normText(sameBook.comment ?? '').length;
+            final int newLen = normText(e.comment).length;
+            if (oldLen >= newLen) {
+              skippedDup++;
+              continue;
+            }
+          }
+          final int gid = await _upsertGroup(
+            nameNorm: e.nameNorm,
+            name: e.name,
+            author: e.author,
+            authorNorm: e.authorNorm,
+            fname: rec.fname,
+            date: dateStr,
+          );
+          await (db.update(db.bookEntries)
+                ..where((BookEntries t) => t.id.equals(sameBook.id)))
+              .write(_entryValues(
+            e: e,
+            rec: rec,
+            kind: kind,
+            postId: postId,
+            floorId: matchedFloorId,
+            dateStr: dateStr,
+            gid: gid,
+            now: now,
+            postHash: postHash,
+          ));
+          touchedGroups.add(gid);
+          if (sameBook.bookGroupId != null) {
+            touchedGroups.add(sameBook.bookGroupId!);
+          }
+          skippedDup++;
+          continue;
+        }
+
         final BookEntry? hit = await (db.select(db.bookEntries)
               ..where((BookEntries t) =>
                   t.contentHash.isIn(<String>[postHash, e.contentHash]))
@@ -239,34 +339,16 @@ class IngestPipeline {
           date: dateStr,
         );
         touchedGroups.add(gid);
-        await db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
-          name: e.name,
-          nameNorm: e.nameNorm,
-          channel: rec.fname,
-          // 按帖口径 hash（含 postId）：跨帖同书同语各记一条推荐（见 §3 注释）。
-          contentHash: postHash,
-          author: Value<String?>(e.author),
-          authorNorm: Value<String?>(e.authorNorm.isEmpty ? null : e.authorNorm),
-          authorKind: Value<String?>(e.author != null ? 'parsed' : null),
-          recommender: Value<String?>(rec.author),
-          comment: Value<String?>(e.comment),
-          commentSrc: Value<String?>('collected_floor'),
-          commentNormHash: Value<String?>(e.commentNormHash),
-          date: Value<String?>(dateStr.isEmpty ? null : dateStr),
-          dateRaw: Value<String?>('${rec.createTime}'),
-          // category 冗余自 posts.post_kind（§7.2：避免搜索 join）。
-          category: Value<String>(kind),
-          postRef: Value<int?>(postId),
-          floorRef: Value<int?>(floorIdByPid[e.floorPid]),
-          srcTid: Value<int?>(rec.tid),
-          srcUrl: Value<String?>(_srcUrl(rec.tid)),
-          // word_count = 小说字数；自采拿不到该数据，写 NULL（评论长度≠字数，
-          // 写长度会污染书详情字数副行与字数榜）。同书内置条目经
-          // book_groups.word_count_max = MAX(word_count) 跨条目继承，NULL 不参与。
-          quality: Value<int>(e.quality),
-          bookGroupId: Value<int?>(gid),
-          origin: Value<String>(Origin.collected),
-          collectedAt: Value<DateTime?>(now),
+        await db.into(db.bookEntries).insert(_entryValues(
+          e: e,
+          rec: rec,
+          kind: kind,
+          postId: postId,
+          floorId: matchedFloorId,
+          dateStr: dateStr,
+          gid: gid,
+          now: now,
+          postHash: postHash,
         ));
         entriesAdded++;
       }
@@ -286,6 +368,32 @@ class IngestPipeline {
         postRefBackfilled: backfilled,
       );
     });
+  }
+
+  /// 种子库历史帖的 tid 可能为 NULL，或旧采集行与当前源 tid 不一致；同吧同标题
+  /// 即视为同一主题；作者只在双方都有值时作为消歧条件，避免把同标题的不同帖误并。
+  Future<Post?> _findLegacySeedPost(ThreadRecord rec) async {
+    final String title = rec.title.trim();
+    if (title.isEmpty) {
+      return null;
+    }
+    final List<Post> all = await (db.select(db.posts)
+          ..where((Posts t) =>
+              t.channel.equals(rec.fname) & t.title.equals(title)))
+        .get();
+    final List<Post> candidates =
+        all.where((Post p) => p.origin != Origin.collected).toList();
+    if (candidates.isEmpty) {
+      return null;
+    }
+    if (rec.author.isNotEmpty) {
+      for (final Post p in candidates) {
+        if (p.author == null || p.author!.isEmpty || p.author == rec.author) {
+          return p;
+        }
+      }
+    }
+    return candidates.first;
   }
 
   Future<int> _insertImages(int floorId, List<ImageInfo> images) async {
@@ -376,6 +484,48 @@ class IngestPipeline {
 
 /// 帖子源链（§7.2 src_url 口径）。
 String _srcUrl(int tid) => 'https://tieba.baidu.com/p/$tid';
+
+/// 自采 entry 的统一写入值（insert 与同帖同书覆盖共用，避免字段漂移）。
+BookEntriesCompanion _entryValues({
+  required EntryDraft e,
+  required ThreadRecord rec,
+  required String kind,
+  required int postId,
+  required int? floorId,
+  required String dateStr,
+  required int gid,
+  required DateTime now,
+  required String postHash,
+}) =>
+    BookEntriesCompanion(
+      name: Value<String>(e.name),
+      nameNorm: Value<String>(e.nameNorm),
+      channel: Value<String>(rec.fname),
+      // 按帖口径 hash（含 postId）：跨帖同书同语各记一条推荐（见 §3 注释）。
+      contentHash: Value<String>(postHash),
+      author: Value<String?>(e.author),
+      authorNorm: Value<String?>(e.authorNorm.isEmpty ? null : e.authorNorm),
+      authorKind: Value<String?>(e.author != null ? 'parsed' : null),
+      recommender: Value<String?>(rec.author),
+      comment: Value<String?>(e.comment),
+      commentSrc: Value<String?>('collected_floor'),
+      commentNormHash: Value<String?>(e.commentNormHash),
+      date: Value<String?>(dateStr.isEmpty ? null : dateStr),
+      dateRaw: Value<String?>('${rec.createTime}'),
+      // category 冗余自 posts.post_kind（§7.2：避免搜索 join）。
+      category: Value<String>(kind),
+      postRef: Value<int?>(postId),
+      floorRef: Value<int?>(floorId),
+      srcTid: Value<int?>(rec.tid),
+      srcUrl: Value<String?>(_srcUrl(rec.tid)),
+      // word_count = 小说字数；自采拿不到该数据，写 NULL（评论长度≠字数，
+      // 写长度会污染书详情字数副行与字数榜）。同书内置条目经
+      // book_groups.word_count_max = MAX(word_count) 跨条目继承，NULL 不参与。
+      quality: Value<int>(e.quality),
+      bookGroupId: Value<int?>(gid),
+      origin: Value<String>(Origin.collected),
+      collectedAt: Value<DateTime?>(now),
+    );
 
 /// epoch 秒 → 北京时间 'YYYY-MM-DD'（贴吧时间戳为东八区，models.dart 同口径）。
 String _beijingDate(int epochSec) {

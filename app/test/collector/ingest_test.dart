@@ -173,7 +173,59 @@ void main() {
     expect(g.entryTotal, 1, reason: '聚合计数不因重入虚增');
   });
 
-  test('楼层编辑按 pid UPSERT 更新文本，行数不变（§8.7 去重层 2）', () async {
+  test('种子帖 tid 与源不一致：按同吧同标题回认，楼层/条目就地合并，不新建重复帖', () async {
+    final int seedPostId = await db.into(db.posts).insert(PostsCompanion.insert(
+          title: const Value<String?>('月度扫书'),
+          tid: const Value<int?>(99999),
+          channel: 'yy小说吧',
+          origin: const Value<String>('seed'),
+          date: const Value<String?>('2025-10-01'),
+          floorCount: const Value<int>(1),
+        ));
+    final int seedFloorId = await db.into(db.floors).insert(FloorsCompanion.insert(
+          postId: seedPostId,
+          seq: 1,
+          content: const Value<String>('《雪中悍刀行》 作者：烽火戏诸侯 旧推荐语'),
+        ));
+    final int seedEntryId =
+        await db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
+              name: '雪中悍刀行',
+              nameNorm: '雪中悍刀行',
+              channel: 'yy小说吧',
+              contentHash: 'seedhashlegacy0001',
+              comment: const Value<String?>('《雪中悍刀行》 作者：烽火戏诸侯 旧推荐语'),
+              commentNormHash: Value<String?>(
+                  h16(normText('《雪中悍刀行》 作者：烽火戏诸侯 旧推荐语'))),
+              postRef: Value<int?>(seedPostId),
+              floorRef: Value<int?>(seedFloorId),
+              origin: const Value<String>('seed'),
+            ));
+
+    final IngestResult r = await ingestOne();
+
+    expect(r.newPost, false);
+    expect(await db.posts.count().getSingle(), 1);
+    final Post post = await db.select(db.posts).getSingle();
+    expect(post.id, seedPostId);
+    expect(post.tid, 11001);
+    expect(post.origin, 'collected');
+
+    expect(await db.floors.count().getSingle(), 1);
+    final Floor floor = await db.select(db.floors).getSingle();
+    expect(floor.id, seedFloorId);
+    expect(floor.pid, 110011, reason: '种子 pid 为空时按 seq 对齐并回填 pid');
+    expect(floor.content, _floorText);
+
+    expect(await db.bookEntries.count().getSingle(), 1);
+    final BookEntry entry = await db.select(db.bookEntries).getSingle();
+    expect(entry.id, seedEntryId, reason: '就地覆盖旧行，避免书聚合页重复卡片');
+    expect(entry.postRef, seedPostId);
+    expect(entry.floorRef, seedFloorId);
+    expect(entry.origin, 'collected');
+    expect(entry.comment, _floorText);
+  });
+
+  test('楼层编辑按 pid UPSERT 更新文本，同帖同书仍只保留一条（§8.7 去重层 2）', () async {
     await ingestOne();
     final IngestResult r2 = await ingestOne(
         rec: _record(floorText: '《雪中悍刀行》 作者：烽火戏诸侯 修订后的推荐语'));
@@ -182,11 +234,14 @@ void main() {
     final Floor f = await db.select(db.floors).getSingle();
     expect(f.content, contains('修订后的推荐语'));
     expect(f.textNormHash, h16(normText(f.content)));
-    // 推荐语变了 → content_hash 不同 → 新条目（同书两条推荐语，语义正确）
-    expect(await db.bookEntries.count().getSingle(), 2);
+    // 推荐语变长 → 同帖同书就地把旧行覆盖为完整版，避免书聚合页出现两条
+    // 点击后进入同一帖的重复卡片。
+    expect(await db.bookEntries.count().getSingle(), 1);
+    final BookEntry entry = await db.select(db.bookEntries).getSingle();
+    expect(entry.comment, contains('修订后的推荐语'));
     final BookGroup g = await db.select(db.bookGroups).getSingle();
-    expect(g.entryTotal, 2);
-    expect(g.distinctComment, 2);
+    expect(g.entryTotal, 1);
+    expect(g.distinctComment, 1);
   });
 
   test('dup 命中且 keeper 无溯源 → 回填 post_ref（对标 merge_etl 补链）', () async {

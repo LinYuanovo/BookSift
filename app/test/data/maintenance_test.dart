@@ -33,11 +33,17 @@ Future<int> _addPost(
   required String title,
   String kind = '扫书',
   int flag = 1,
+  int? tid,
+  String origin = 'builtin',
+  String? author,
   String? firstFloor,
 }) async {
   final int id = await db.into(db.posts).insert(PostsCompanion.insert(
         channel: 'yy小说吧',
         title: Value<String?>(title),
+        tid: Value<int?>(tid),
+        origin: Value<String>(origin),
+        author: Value<String?>(author),
         postType: Value<String>(kind), // 种子导入派生口径：post_kind 回退 = post_type
         postKind: Value<String>(kind),
         recommendFlag: Value<int>(flag),
@@ -62,7 +68,9 @@ Future<int> _addEntry(
   String category = '扫书',
   int quality = 2,
   int? postRef,
+  int? floorRef,
   int? groupId,
+  String origin = 'builtin',
 }) =>
     db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
           name: nameNorm,
@@ -76,8 +84,10 @@ Future<int> _addEntry(
           category: Value<String>(category),
           quality: Value<int>(quality),
           postRef: Value<int?>(postRef),
+          floorRef: Value<int?>(floorRef),
           bookGroupId: Value<int?>(groupId),
           wordCount: Value<int?>(comment.length),
+          origin: Value<String>(origin),
         ));
 
 Future<List<int>> _entryIds(AppDatabase db) async =>
@@ -91,6 +101,9 @@ Future<BookGroup> _group(AppDatabase db, int gid) =>
 
 Future<Post> _post(AppDatabase db, int id) =>
     (db.select(db.posts)..where((Posts t) => t.id.equals(id))).getSingle();
+
+Future<Floor> _floorOf(AppDatabase db, int postId) =>
+    (db.select(db.floors)..where((Floors t) => t.postId.equals(postId))).getSingle();
 
 Future<int> _ftsCount(AppDatabase db, String term) async => (await db
             .customSelect('SELECT COUNT(*) AS c FROM book_fts WHERE book_fts MATCH ?',
@@ -216,6 +229,80 @@ void main() {
       expect(resumed.rowsDeleted, 1, reason: '重跑只补剩余 1 组');
       expect(await needsDedup(db), false);
       expect((await _entryIds(db)).length, 3);
+    });
+  });
+
+  group('dedupLegacyCollectedPosts（存量自采/种子重复帖）', () {
+    test('同吧同标题的两行合并为一帖；同帖同书保留长评/自采版本', () async {
+      final int gid = await db.into(db.bookGroups).insert(
+            BookGroupsCompanion.insert(
+              nameNorm: '链书',
+              nameDisplay: const Value<String?>('链书'),
+              entryTotal: const Value<int>(2),
+              distinctComment: const Value<int>(2),
+            ),
+          );
+      final int seedPost = await _addPost(
+        db,
+        title: '月度扫书',
+        origin: 'seed',
+        firstFloor: '旧正文',
+      );
+      final Floor seedFloor = await _floorOf(db, seedPost);
+      await _addEntry(
+        db,
+        nameNorm: '链书',
+        comment: '短评',
+        date: '2025-10-01',
+        postRef: seedPost,
+        floorRef: seedFloor.id,
+        groupId: gid,
+        origin: 'seed',
+      );
+
+      final int collectedPost = await _addPost(
+        db,
+        title: '月度扫书',
+        origin: 'collected',
+        tid: 11001,
+        firstFloor: '新正文',
+      );
+      final Floor collectedFloor = await _floorOf(db, collectedPost);
+      final int collectedEntry = await _addEntry(
+        db,
+        nameNorm: '链书',
+        comment: '短评补全自采',
+        date: '2025-10-09',
+        postRef: collectedPost,
+        floorRef: collectedFloor.id,
+        groupId: gid,
+        origin: 'collected',
+      );
+
+      final LegacyPostDedupStats stats = await dedupLegacyCollectedPosts(db);
+
+      expect(stats.postsMerged, 1);
+      expect(stats.entriesDeleted, 1);
+      expect(await needsLegacyPostDedup(db), false);
+      expect(await db.posts.count().getSingle(), 1);
+      final Post post = await db.select(db.posts).getSingle();
+      expect(post.id, seedPost, reason: '保留 seed 行以维持既有 floor_ref/post_ref 引用');
+      expect(post.tid, 11001);
+      expect(post.origin, 'collected');
+      expect(post.floorCount, 1);
+
+      expect(await db.floors.count().getSingle(), 1);
+      final Floor floor = await db.select(db.floors).getSingle();
+      expect(floor.id, seedFloor.id);
+      expect(floor.content, '新正文');
+
+      expect(await db.bookEntries.count().getSingle(), 1);
+      final BookEntry entry = await db.select(db.bookEntries).getSingle();
+      expect(entry.id, collectedEntry, reason: '长评/自采版本胜出');
+      expect(entry.postRef, seedPost);
+      expect(entry.floorRef, seedFloor.id);
+      expect(entry.origin, 'collected');
+      expect((await _group(db, gid)).entryTotal, 1);
     });
   });
 
@@ -374,6 +461,7 @@ void main() {
       final AppDatabase verifyDb = AppDatabase(NativeDatabase(File(path)));
       expect(await needsDedup(verifyDb), false);
       expect(await needsReclassify(verifyDb), false);
+      expect(await needsLegacyPostDedup(verifyDb), false);
       expect((await verifyDb.select(verifyDb.bookEntries).get()).length, 1);
       final Post post = (await verifyDb.select(verifyDb.posts).get()).single;
       expect(post.postKind, '排雷');

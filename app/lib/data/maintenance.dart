@@ -369,6 +369,274 @@ Future<void> _refreshGroupAggregates(AppDatabase db, int gid) async {
   );
 }
 
+// ─────────────────────────── 存量自采/种子重复帖合并 ───────────────────────────
+
+/// 一次性闸门：早期 unified 种子有 1.1 万行 `posts.tid IS NULL`，旧采集行也可能
+/// 与当前源 tid 不一致；自采只能靠「同吧 + 同标题」回认，修复上线前已产生的双帖
+/// 在这里合并成一行。
+const String _legacyPostDedupSetting = 'legacy_post_dedup_v2';
+const String _legacyPostDedupDone = '1';
+
+Future<bool> needsLegacyPostDedup(AppDatabase db) async =>
+    await _readSetting(db, _legacyPostDedupSetting) != _legacyPostDedupDone;
+
+/// 存量重复帖合并结果（测试/日志用）。
+class LegacyPostDedupStats {
+  const LegacyPostDedupStats({
+    this.pairsScanned = 0,
+    this.postsMerged = 0,
+    this.entriesDeleted = 0,
+    this.groupsRefreshed = 0,
+    this.cancelled = false,
+    this.elapsedMs = 0,
+  });
+
+  final int pairsScanned;
+  final int postsMerged;
+  final int entriesDeleted;
+  final int groupsRefreshed;
+  final bool cancelled;
+  final int elapsedMs;
+
+  @override
+  String toString() => 'LegacyPostDedup(对 $pairsScanned，合并帖 $postsMerged，删条目 $entriesDeleted，'
+      '重算组 $groupsRefreshed，取消 $cancelled)';
+}
+
+/// 合并「同吧 + 同标题」的 seed(NULL tid) 与 collected(tid 非空) 两行：
+/// 以 seed 行为 keeper（保留既有 book_entries/floor_ref 引用），把 collected 的
+/// 楼层按 seq 覆盖/追加、条目重挂到 keeper，再按“同帖同书名”保留长评/自采版本。
+///
+/// 不做全库模糊匹配：只接受同频道、同标题，且作者在双方都有值时一致，避免把同名的
+/// 不同主题误并。每次只处理一对，事务提交后继续；中断则闸门不落，重跑幂等续跑。
+Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
+  AppDatabase db, {
+  bool Function()? isCancelled,
+  void Function(LegacyPostDedupStats)? onProgress,
+}) async {
+  final Stopwatch sw = Stopwatch()..start();
+  var pairsScanned = 0;
+  var postsMerged = 0;
+  var entriesDeleted = 0;
+  var groupsRefreshed = 0;
+  var cancelled = false;
+
+  LegacyPostDedupStats snapshot() => LegacyPostDedupStats(
+        pairsScanned: pairsScanned,
+        postsMerged: postsMerged,
+        entriesDeleted: entriesDeleted,
+        groupsRefreshed: groupsRefreshed,
+        cancelled: cancelled,
+        elapsedMs: sw.elapsedMilliseconds,
+      );
+
+  while (true) {
+    if (isCancelled?.call() ?? false) {
+      cancelled = true;
+      break;
+    }
+    final QueryRow? pair = await db.customSelect('''
+      SELECT s.id AS seed_id, c.id AS collected_id
+      FROM posts s
+      JOIN posts c
+        ON s.origin = 'seed'
+       AND c.origin = 'collected'
+       AND s.channel = c.channel
+       AND s.title IS NOT NULL
+       AND s.title <> ''
+       AND s.title = c.title
+       AND (s.author IS NULL OR s.author = '' OR c.author IS NULL OR c.author = ''
+            OR s.author = c.author)
+      ORDER BY c.id
+      LIMIT 1
+    ''').getSingleOrNull();
+    if (pair == null) {
+      break;
+    }
+    pairsScanned++;
+    final int seedId = pair.read<int>('seed_id');
+    final int collectedId = pair.read<int>('collected_id');
+    final Set<int> affectedGroups = <int>{};
+
+    await db.transaction(() async {
+      final Post? seed = await (db.select(
+        db.posts,
+      )..where((Posts t) => t.id.equals(seedId)))
+          .getSingleOrNull();
+      final Post? collected = await (db.select(
+        db.posts,
+      )..where((Posts t) => t.id.equals(collectedId)))
+          .getSingleOrNull();
+      if (seed == null || collected == null) {
+        return;
+      }
+
+      final List<Floor> seedFloors = await (db.select(db.floors)
+            ..where((Floors t) => t.postId.equals(seedId))
+            ..orderBy(<OrderingTerm Function(Floors)>[
+              (Floors t) => OrderingTerm.asc(t.seq),
+              (Floors t) => OrderingTerm.asc(t.id),
+            ]))
+          .get();
+      final Map<int, Floor> seedBySeq = <int, Floor>{
+        for (final Floor f in seedFloors) f.seq: f,
+      };
+      final List<Floor> collectedFloors = await (db.select(db.floors)
+            ..where((Floors t) => t.postId.equals(collectedId))
+            ..orderBy(<OrderingTerm Function(Floors)>[
+              (Floors t) => OrderingTerm.asc(t.seq),
+              (Floors t) => OrderingTerm.asc(t.id),
+            ]))
+          .get();
+      for (final Floor cf in collectedFloors) {
+        final Floor? sf = seedBySeq[cf.seq];
+        if (sf == null) {
+          await (db.update(db.floors)..where((Floors t) => t.id.equals(cf.id)))
+              .write(FloorsCompanion(postId: Value<int>(seedId)));
+          continue;
+        }
+        // 自采楼层是较新事实：覆盖 seed 行文本，并把引用它的条目先挪到 keeper
+        // 楼层，再删掉 collected 楼层（图片随 FK 级联删除后重新插入）。
+        await db.customUpdate(
+          'UPDATE book_entries SET floor_ref = ? WHERE floor_ref = ?',
+          variables: <Variable<Object>>[
+            Variable.withInt(sf.id),
+            Variable.withInt(cf.id),
+          ],
+          updates: <ResultSetImplementation>{db.bookEntries},
+          updateKind: UpdateKind.update,
+        );
+        await (db.update(
+          db.floors,
+        )..where((Floors t) => t.id.equals(sf.id)))
+            .write(
+          FloorsCompanion(
+            pid: Value<int?>(cf.pid),
+            content: Value<String>(cf.content),
+            textNormHash: Value<String?>(cf.textNormHash),
+            charCount: Value<int>(cf.charCount),
+            createdAt: Value<DateTime?>(cf.createdAt ?? sf.createdAt),
+            authorId: Value<int?>(cf.authorId ?? sf.authorId),
+          ),
+        );
+        await (db.delete(
+          db.floors,
+        )..where((Floors t) => t.id.equals(cf.id)))
+            .go();
+      }
+
+      await db.customUpdate(
+        'UPDATE book_entries SET post_ref = ? WHERE post_ref = ?',
+        variables: <Variable<Object>>[
+          Variable.withInt(seedId),
+          Variable.withInt(collectedId),
+        ],
+        updates: <ResultSetImplementation>{db.bookEntries},
+        updateKind: UpdateKind.update,
+      );
+      await (db.delete(
+        db.posts,
+      )..where((Posts t) => t.id.equals(collectedId)))
+          .go();
+      await (db.update(
+        db.posts,
+      )..where((Posts t) => t.id.equals(seedId)))
+          .write(
+        PostsCompanion(
+          tid: Value<int?>(collected.tid),
+          title: Value<String?>(collected.title),
+          author: Value<String?>(collected.author),
+          authorName: Value<String?>(collected.authorName),
+          userId: Value<int?>(collected.userId),
+          portrait: Value<String>(collected.portrait),
+          date: Value<String?>(collected.date),
+          dateRaw: Value<String?>(collected.dateRaw),
+          channel: Value<String>(collected.channel),
+          subChannel: Value<String?>(collected.subChannel),
+          postType: Value<String>(collected.postType),
+          postKind: Value<String>(collected.postKind),
+          recommendFlag: Value<int>(collected.recommendFlag),
+          origin: Value<String>(Origin.collected),
+          collectedAt: Value<DateTime?>(collected.collectedAt),
+        ),
+      );
+
+      final List<QueryRow> dupNames = await db.customSelect(
+        'SELECT name_norm AS nn FROM book_entries WHERE post_ref = ? '
+        'GROUP BY name_norm HAVING COUNT(*) > 1',
+        variables: <Variable<Object>>[Variable.withInt(seedId)],
+      ).get();
+      for (final QueryRow row in dupNames) {
+        final String nameNorm = row.read<String>('nn');
+        final List<QueryRow> members = await db.customSelect(
+          "SELECT id, COALESCE(comment, '') AS c, origin AS o, quality AS q, "
+          'book_group_id AS gid FROM book_entries WHERE post_ref = ? AND name_norm = ?',
+          variables: <Variable<Object>>[
+            Variable.withInt(seedId),
+            Variable.withString(nameNorm),
+          ],
+        ).get();
+        if (members.length < 2) {
+          continue;
+        }
+        final List<QueryRow> ranked = List<QueryRow>.of(members)
+          ..sort((QueryRow a, QueryRow b) {
+            final int byLen = b.read<String>('c').length.compareTo(a.read<String>('c').length);
+            if (byLen != 0) return byLen;
+            final int byOrigin = (b.read<String>('o') == Origin.collected ? 1 : 0).compareTo(
+              a.read<String>('o') == Origin.collected ? 1 : 0,
+            );
+            if (byOrigin != 0) return byOrigin;
+            final int byQuality = b.read<int>('q').compareTo(a.read<int>('q'));
+            if (byQuality != 0) return byQuality;
+            return a.read<int>('id').compareTo(b.read<int>('id'));
+          });
+        final QueryRow keeper = ranked.first;
+        final int? keeperGroup = keeper.read<int?>('gid');
+        if (keeperGroup != null) {
+          affectedGroups.add(keeperGroup);
+        }
+        for (final QueryRow m in ranked.skip(1)) {
+          final int? gid = m.read<int?>('gid');
+          if (gid != null) {
+            affectedGroups.add(gid);
+          }
+          await (db.delete(
+            db.bookEntries,
+          )..where((BookEntries t) => t.id.equals(m.read<int>('id'))))
+              .go();
+          entriesDeleted++;
+        }
+      }
+
+      await db.customUpdate(
+        '''UPDATE posts SET
+             floor_count = (SELECT COUNT(*) FROM floors WHERE post_id = ?1),
+             image_count = (SELECT COUNT(*) FROM images i JOIN floors f ON f.id = i.floor_id
+                            WHERE f.post_id = ?1)
+           WHERE id = ?1''',
+        variables: <Variable<Object>>[Variable.withInt(seedId)],
+        updates: <ResultSetImplementation>{db.posts},
+        updateKind: UpdateKind.update,
+      );
+      for (final int gid in affectedGroups) {
+        await _refreshGroupAggregates(db, gid);
+        groupsRefreshed++;
+      }
+    });
+    postsMerged++;
+    onProgress?.call(snapshot());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  if (!cancelled) {
+    await _writeSetting(db, _legacyPostDedupSetting, _legacyPostDedupDone);
+  }
+  final LegacyPostDedupStats done = snapshot();
+  onProgress?.call(done);
+  return done;
+}
+
 // ───────────────────────────── 存量帖 v3 分类回填 ─────────────────────────────
 
 /// 回填进度/结果快照（[reclassifyPostsV3] 的 onProgress 回调与返回值）。
@@ -601,7 +869,8 @@ class _MaintenanceJob {
   final SendPort events;
 }
 
-/// 后台执行全部待办维护（先 dedup 后 reclassify；各自独立闸门，全部完成才落账）。
+/// 后台执行全部待办维护（先合并存量重复帖，再 dedup，最后 reclassify；
+/// 各自独立闸门，全部完成才落账）。
 ///
 /// 模式照 seed_import.dart `_ftsRebuildIsolate`：独立 isolate 开第二个 drift 连接
 /// （WAL + busy_timeout，与主连接并发安全），控制端口可中断，批间 yield 进度；
@@ -654,7 +923,8 @@ Stream<MaintenanceEvent> runMaintenance({
   }
 }
 
-/// 维护 isolate 入口：先 dedup 后 reclassify，各自闸门判定，全部完成才落账。
+/// 维护 isolate 入口：先合并存量重复帖，再 dedup，最后 reclassify；
+/// 各自闸门判定，全部完成才落账。
 Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
   final ReceivePort control = ReceivePort();
   job.events.send(MaintenanceEvent(MaintenanceEventKind.ready, port: control.sendPort));
@@ -677,7 +947,25 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
   final Stopwatch sw = Stopwatch()..start();
   try {
     var didWork = false;
-    // 1) book_entries 去重（dedup_version 闸门）。
+    // 1) 存量自采/种子重复帖合并（legacy_post_dedup_v2 闸门）。
+    if (await needsLegacyPostDedup(db)) {
+      final LegacyPostDedupStats stats = await dedupLegacyCollectedPosts(
+        db,
+        isCancelled: () => cancelled,
+        onProgress: (LegacyPostDedupStats s) => job.events.send(MaintenanceEvent(
+          MaintenanceEventKind.progress,
+          phase: MaintenancePhase.dedup,
+          message: 'legacy-post $s',
+        )),
+      );
+      if (stats.cancelled) {
+        job.events.send(const MaintenanceEvent(MaintenanceEventKind.done,
+            cancelled: true, message: '已取消（legacy-post 中断，闸门未落）'));
+        return;
+      }
+      didWork = stats.postsMerged > 0 || stats.entriesDeleted > 0;
+    }
+    // 2) book_entries 去重（dedup_version 闸门）。
     if (await needsDedup(db)) {
       final DedupStats stats = await dedupBookEntries(
         db,
@@ -693,9 +981,9 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
             const MaintenanceEvent(MaintenanceEventKind.done, cancelled: true, message: '已取消（dedup 中断，闸门未落）'));
         return;
       }
-      didWork = stats.rowsDeleted > 0;
+      didWork = didWork || stats.rowsDeleted > 0;
     }
-    // 2) 存量帖 v3 分类回填（classifier_version 闸门；词典一次构建复用）。
+    // 3) 存量帖 v3 分类回填（classifier_version 闸门；词典一次构建复用）。
     if (await needsReclassify(db)) {
       final BookDict dict = job.dictLines.isEmpty ? BookDict.empty() : BookDict.fromLines(job.dictLines);
       final ReclassifyStats stats = await reclassifyPostsV3(

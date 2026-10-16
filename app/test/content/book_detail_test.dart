@@ -121,6 +121,39 @@ void main() {
     repo = FakeBookRepository(library: demoLibrary());
   });
 
+  group('书聚合页书名快速复制', () {
+    testWidgets('长按书名复制不带书名号的书名', (WidgetTester tester) async {
+      final List<String> copied = mockClipboard(tester);
+      useSurface(tester);
+      await tester.pumpWidget(testApp(repo, home: const BookDetailPage(bookGroupId: 900)));
+      await tester.pumpAndSettle();
+
+      await tester.longPress(find.text('《我不想和你一起重生》'));
+      await tester.pumpAndSettle();
+
+      expect(copied, <String>['我不想和你一起重生']);
+      expect(find.text('书名已复制到剪贴板'), findsOneWidget);
+      await dismissSnackBars(tester);
+    });
+
+    testWidgets('双击书名复制不带书名号的书名', (WidgetTester tester) async {
+      final List<String> copied = mockClipboard(tester);
+      useSurface(tester);
+      await tester.pumpWidget(testApp(repo, home: const BookDetailPage(bookGroupId: 900)));
+      await tester.pumpAndSettle();
+
+      final Finder title = find.text('《我不想和你一起重生》');
+      await tester.tap(title);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(title);
+      await tester.pumpAndSettle();
+
+      expect(copied, <String>['我不想和你一起重生']);
+      expect(find.text('书名已复制到剪贴板'), findsOneWidget);
+      await dismissSnackBars(tester);
+    });
+  });
+
   group('书聚合页目录', () {
     testWidgets('入口仅条目非空时显示；弹层行 = 当前筛选条目；点行关闭弹层并滚动定位', (WidgetTester tester) async {
       // 压低视口保证列表可滚动（滚动断言不依赖布局像素估计）。
@@ -438,5 +471,3 @@ void main() {
     });
   });
 }
-
-
