@@ -352,6 +352,7 @@ class OnlineSearchState {
     this.status = OnlineStatus.idle,
     this.query = '',
     this.forum = '',
+    this.sort = OnlineSort.relevance,
     this.threads = const <OnlineThread>[],
     this.hasMore = false,
     this.page = 0,
@@ -366,6 +367,9 @@ class OnlineSearchState {
 
   /// 产出当前结果的吧名（≠ 当前选中的吧 → 同样按过期处理，避免跨吧结果冒充）。
   final String forum;
+
+  /// 产出当前结果的排序档；与当前选择不一致 = 结果过期，回手动触发入口。
+  final OnlineSort sort;
   final List<OnlineThread> threads;
   final bool hasMore;
 
@@ -382,6 +386,7 @@ class OnlineSearchState {
     OnlineStatus? status,
     String? query,
     String? forum,
+    OnlineSort? sort,
     List<OnlineThread>? threads,
     bool? hasMore,
     int? page,
@@ -392,6 +397,7 @@ class OnlineSearchState {
         status: status ?? this.status,
         query: query ?? this.query,
         forum: forum ?? this.forum,
+        sort: sort ?? this.sort,
         threads: threads ?? this.threads,
         hasMore: hasMore ?? this.hasMore,
         page: page ?? this.page,
@@ -413,37 +419,47 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
   final Ref _ref;
 
   /// 手动触发一次在线搜索（pn=1 重置结果；空词/在途忽略）。
-  Future<void> search(String query, {String? forum}) async {
+  /// 取数走吧内 searchpost（kw=吧名、only_thread=1、APP_SALT 签名）；
+  /// [sort] 变化必须重发请求（searchpost 按 sm 返回不同排序，不能本地复用）。
+  Future<void> search(String query, {String? forum, OnlineSort? sort}) async {
     final String q = query.trim();
     if (q.isEmpty || state.status == OnlineStatus.loading) {
       return;
     }
-    final String target = forum ?? _ref.read(onlineForumProvider);
-    state = OnlineSearchState(status: OnlineStatus.loading, query: q, forum: target);
-    await _run(q, target, pn: 1, append: false);
+    final String targetForum = forum ?? _ref.read(onlineForumProvider);
+    final OnlineSort targetSort = sort ?? _ref.read(onlineSortProvider);
+    state = OnlineSearchState(
+        status: OnlineStatus.loading, query: q, forum: targetForum, sort: targetSort);
+    await _run(q, targetForum, targetSort, pn: 1, append: false);
   }
 
   /// 手动加载下一页（追加；仅在 hasMore 且非在途时可用）。
-  Future<void> loadMore({String? forum}) async {
+  Future<void> loadMore() async {
     final OnlineSearchState cur = state;
     if (cur.status == OnlineStatus.loading || !cur.hasMore || cur.page < 1) {
       return;
     }
     state = cur.copyWith(status: OnlineStatus.loading, errorKind: OnlineErrorKind.none, errorDetail: '');
-    // 翻页沿用本页结果的吧名（中途切吧由 UI 重置状态，不会追错吧）。
-    await _run(cur.query, forum ?? cur.forum, pn: cur.page + 1, append: true);
+    // 翻页沿用本页结果的吧名与排序档；切吧/切档由 UI 重置或重发第一页，不会追错条件。
+    await _run(cur.query, cur.forum, cur.sort, pn: cur.page + 1, append: true);
   }
 
   /// 切吧 / 失效重置：清回手动触发入口（不自动发请求，匿名通道单请求口径）。
   void reset() => state = OnlineSearchState(forum: _ref.read(onlineForumProvider));
 
-  Future<void> _run(String q, String forum, {required int pn, required bool append}) async {
+  Future<void> _run(String q, String forum, OnlineSort sort,
+      {required int pn, required bool append}) async {
     try {
-      // only_thread=1：仅主题帖（行 = 帖子粒度，点行复制原帖链接语义干净）。
-      // sm 固定取默认 0（接口原序）：排序一律客户端重排，口径见 onlineSortProvider 注释。
-      final OnlineSearchPage page = await _ref
-          .read(tiebaSearchClientProvider)
-          .search(forum, q, pn: pn, rn: 30, onlyThread: true);
+      // only_thread=1：仅主题帖（行 = 帖子粒度）。
+      // sm 由排序档映射：相关度=2 / 时间=1（服务端排序，切档必须重发请求）。
+      final OnlineSearchPage page = await _ref.read(tiebaSearchClientProvider).search(
+            forum,
+            q,
+            pn: pn,
+            rn: 30,
+            sm: sort == OnlineSort.time ? ForumSearchSort.time : ForumSearchSort.relation,
+            onlyThread: true,
+          );
       if (!mounted) return;
       final List<OnlineThread> merged =
           append ? <OnlineThread>[...state.threads, ...page.threads] : page.threads;
@@ -451,6 +467,7 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
         status: OnlineStatus.ready,
         query: q,
         forum: forum,
+        sort: sort,
         threads: _dedupByTid(merged),
         hasMore: page.hasMore,
         page: pn,
@@ -471,7 +488,12 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
         state = state.copyWith(errorKind: kind, errorDetail: detail);
       } else {
         state = OnlineSearchState(
-            status: OnlineStatus.error, query: q, forum: forum, errorKind: kind, errorDetail: detail);
+            status: OnlineStatus.error,
+            query: q,
+            forum: forum,
+            sort: sort,
+            errorKind: kind,
+            errorDetail: detail);
       }
     }
   }
@@ -487,19 +509,13 @@ final StateNotifierProvider<OnlineSearchNotifier, OnlineSearchState> onlineSearc
     StateNotifierProvider<OnlineSearchNotifier, OnlineSearchState>(
         (Ref ref) => OnlineSearchNotifier(ref));
 
-// ── 贴吧在线结果排序（客户端重排，切换不重新发请求） ────────────────────────
+// ── 贴吧在线结果排序（服务端取数，切换必须重发请求） ────────────────────────
 //
-// 接口侧核对结论：`c/s/searchpost` **原生支持**排序参数 `sm`
-// （aiotieba commit a5472be `src/aiotieba/enums.py SearchInForumType`：0=ALL 全部 /
-// 1=TIME app 时间倒序 / 2=RELATION app 相关性排序；`api/search_in_forum/_api.py:26-45`
-// 把它作为表单参数 `sm` 传出；归档 tieba-api-catalog/API-CATALOG.md:1570 标注该接口
-// 「可匿名 · 风险 low」，匿名通道可用）。客户端侧已透出为
-// `TiebaSearchClient.search(sm:)` / `ForumSearchSort`（collector/tieba_search.dart:54-63）。
-//
-// 但 UI 的排序切换按产品口径**不重新发请求**（单请求手动触发 + 匿名通道频控 §8.11），
-// 而一旦按 sm=1 取回时间序，本地就无法还原「相关度原序」——两档语义会互相污染。
-// 故取数固定 sm=0（接口原序 = 相关度基线），两档排序一律客户端重排**已加载**结果：
-// 相关度 = 接口返回原序；时间 = 按 createTime 倒序稳定排序（见 [sortOnlineThreads]）。
+// 吧内 searchpost 原生支持 `sm` 排序（aiotieba commit a5472be
+// `src/aiotieba/enums.py SearchInForumType`：0=全部 / 1=TIME 时间倒序 /
+// 2=RELATION 相关性；`api/search_in_forum/_api.py:26-45` 把它作为表单参数传出，
+// 归档 tieba-api-catalog/API-CATALOG.md 标注该接口「可匿名 · 风险 low」）。
+// 两档的结果集与顺序均由服务端决定；本地重排无法还原相关度序，因此切档必须重发请求。
 
 /// 在线结果排序档。
 enum OnlineSort { relevance, time }
@@ -513,20 +529,3 @@ String onlineSortLabel(OnlineSort sort) => switch (sort) {
 /// 在线结果排序选择（非 autoDispose：本地/在线 Tab 来回切换保持用户选择）。
 final StateProvider<OnlineSort> onlineSortProvider =
     StateProvider<OnlineSort>((Ref ref) => OnlineSort.relevance);
-
-/// 在线结果客户端重排（口径见本段文件注释）。
-///
-/// 「时间」= 按 [OnlineThread.createTime] 倒序**稳定**排序：Dart `List.sort` 不保证稳定，
-/// 故以原序 index 做 tie-break —— 同时间与无时间（createTime=0，服务端未携带）的行
-/// 保持接口原序，无时间行自然沉底。「相关度」= 原样返回接口序（同一 List 实例，不复制）。
-List<OnlineThread> sortOnlineThreads(List<OnlineThread> threads, OnlineSort sort) {
-  if (sort != OnlineSort.time || threads.length < 2) {
-    return threads;
-  }
-  final List<int> order = List<int>.generate(threads.length, (int i) => i)
-    ..sort((int a, int b) {
-      final int byTime = threads[b].createTime.compareTo(threads[a].createTime);
-      return byTime != 0 ? byTime : a.compareTo(b);
-    });
-  return <OnlineThread>[for (final int i in order) threads[i]];
-}

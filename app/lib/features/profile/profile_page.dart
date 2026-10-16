@@ -186,10 +186,14 @@ class _BookmarksSection extends ConsumerWidget {
       children: <Widget>[
         _SectionHead(label: '书签夹', count: rows.length),
         if (rows.isEmpty)
-          const AppEmptyState(
-            title: '还没有书签',
-            message: '在帖子详情底部点「书签」即可留存当前搜索条件快照',
-            svgIcon: 'bookmark',
+          // 任务 4：本段 Column 是 start 对齐、空态自身收缩 —— 包 Center 才在容器里水平居中
+          // （AppEmptyState 内部已居中，不需要改全局组件）。
+          const Center(
+            child: AppEmptyState(
+              title: '还没有书签',
+              message: '在帖子详情底部点「书签」即可留存当前搜索条件快照',
+              svgIcon: 'bookmark',
+            ),
           ),
         for (final Bookmark b in rows)
           Dismissible(
@@ -206,37 +210,42 @@ class _BookmarksSection extends ConsumerWidget {
             child: InkWell(
               onTap: () => _restore(context, ref, b),
               borderRadius: AppRadius.mdBorder,
-              child: Padding(
-                padding: EdgeInsets.symmetric(vertical: s.space3),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      '「${b.title}」',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: t.bodyStrong.copyWith(color: c.text),
-                    ),
-                    SizedBox(height: s.space1),
-                    Text(
-                      <String>[
-                        if ((b.author ?? '').isNotEmpty) b.author!,
-                        if ((b.channel ?? '').isNotEmpty) b.channel!,
-                        '第 ${b.position + 1} 条',
-                        // 任务 1：有楼层记忆的书签在副标题带出（schema v3 floor_seq）。
-                        if (b.floorSeq != null) '${b.floorSeq}楼',
-                      ].join(' · '),
-                      style: t.caption.copyWith(color: c.textMuted),
-                    ),
-                    // 快照摘要：有则显示（§5.10 线框「快照: 无限流·2024·11月·上旬·扫书」）。
-                    if (_snapshotOf(b).isNotEmpty) ...<Widget>[
+              // 任务 5：收藏/历史行内是 Row（天然铺满），书签行内是收缩的 Column —— 无限宽
+              // 把 InkWell 撑满整行，点击与左滑范围跟另外两段一致（左滑删除逻辑不动）。
+              child: SizedBox(
+                width: double.infinity,
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: s.space3),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        '「${b.title}」',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: t.bodyStrong.copyWith(color: c.text),
+                      ),
                       SizedBox(height: s.space1),
                       Text(
-                        '快照: ${_snapshotOf(b)}',
-                        style: t.caption.copyWith(color: c.accentStrong),
+                        <String>[
+                          if ((b.author ?? '').isNotEmpty) b.author!,
+                          if ((b.channel ?? '').isNotEmpty) b.channel!,
+                          '第 ${b.position + 1} 条',
+                          // 任务 1：有楼层记忆的书签在副标题带出（schema v3 floor_seq）。
+                          if (b.floorSeq != null) '${b.floorSeq}楼',
+                        ].join(' · '),
+                        style: t.caption.copyWith(color: c.textMuted),
                       ),
+                      // 快照摘要：有则显示（§5.10 线框「快照: 无限流·2024·11月·上旬·扫书」）。
+                      if (_snapshotOf(b).isNotEmpty) ...<Widget>[
+                        SizedBox(height: s.space1),
+                        Text(
+                          '快照: ${_snapshotOf(b)}',
+                          style: t.caption.copyWith(color: c.accentStrong),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -308,10 +317,13 @@ class _FavoritesSection extends ConsumerWidget {
           trailing: rows.isEmpty ? null : _ExportFavoritesButton(rows: rows),
         ),
         if (rows.isEmpty)
-          const AppEmptyState(
-            title: '还没有收藏',
-            message: '书聚合页右上角星标、帖子详情「收藏」、时间线长按菜单都能加',
-            svgIcon: 'star',
+          // 任务 4：同书签段，空态在容器里水平居中。
+          const Center(
+            child: AppEmptyState(
+              title: '还没有收藏',
+              message: '书聚合页右上角星标、帖子详情「收藏」、时间线长按菜单都能加',
+              svgIcon: 'star',
+            ),
           ),
         for (final Favorite f in rows)
           Dismissible(
@@ -444,10 +456,13 @@ class _HistorySection extends ConsumerWidget {
                 ),
         ),
         if (rows.isEmpty)
-          const AppEmptyState(
-            title: '暂无搜索历史',
-            message: '在搜索台提交一次条件即会留存六维快照',
-            svgIcon: 'clock',
+          // 任务 4：同书签段，空态在容器里水平居中。
+          const Center(
+            child: AppEmptyState(
+              title: '暂无搜索历史',
+              message: '在搜索台提交一次条件即会留存六维快照',
+              svgIcon: 'clock',
+            ),
           ),
         for (final SearchHistoryEntry h in rows)
           Dismissible(

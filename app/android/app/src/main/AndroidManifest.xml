@@ -6,6 +6,8 @@
          DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION，无 INTERNET。
          未声明 ACCESS_NETWORK_STATE：connectivity_plus 未接入，NetworkGate 恒 true（见 worker.dart）。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Android 12 及以下读取用户字体目录的兜底权限；13+ 系统字体目录无需该权限。 -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>
     <application
         android:label="扫书汇"
         android:name="${applicationName}"

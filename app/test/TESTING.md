@@ -86,7 +86,7 @@ testWidgets('…', (WidgetTester tester) async {
 - `test/support/harness.dart` 的 `testOverrides(repo)` 一次性注入三件事：
   1. `queriesProvider.overrideWithValue(FakeBookRepository())` —— 领域层换纯内存实现
      （`test/support/fake_book_repository.dart`，只有微任务，零 IO / 零 Timer）；
-  2. `fontServiceProvider.overrideWith(...)` —— 字体四端口（settings/picker/registrar/files）全 fake；
+  2. `fontServiceProvider.overrideWith(...)` —— 字体端口（settings/picker/registrar/files/系统字体目录）全 fake；
   3. **`appDatabaseProvider.overrideWith((ref) => throw StateError(...))`** —— 哨兵。
      任何组件路径漏走真库都会立刻炸成显式错误，而不是在假时钟区里静默挂死。
 - 依赖倒置的接缝是 `lib/data/repo/queries.dart` 的 `abstract interface class BookRepository`；

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'data/repo/queries.dart';
 import 'data/repo/queries_providers.dart';
 import 'features/content/content_detail_page.dart';
 import 'features/content/detail_slot.dart';
+import 'features/content/online_post_page.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_radius.dart';
 import 'theme/app_spacing.dart';
@@ -19,12 +21,94 @@ import 'theme/app_typography.dart';
 
 typedef _TabSpec = ({String label, String icon});
 
+/// 三栏「功能区」布局记忆取值（逻辑 px / 占比；见 [ShellLayoutStore]）。
+class ShellLayout {
+  const ShellLayout({
+    required this.railWidth,
+    required this.railWidthExpanded,
+    required this.detailFraction,
+  });
+
+  /// 导航栏当前宽度（含收起态 72）。
+  final double railWidth;
+
+  /// 收起前的展开宽度（重新展开时恢复）。
+  final double railWidthExpanded;
+
+  /// 右侧详情槽占「中间 + 右侧」的比例。
+  final double detailFraction;
+}
+
+/// 三栏布局记忆（settings KV：导航栏宽 / 展开宽 / 详情栏占比）。
+///
+/// 端口与搜索结果位置记忆同源（[SearchSettingsKv]）：widget 测试注入的内存仓不带 KV
+/// → 判定为 null → 记忆自动停用，假时钟区内零真实 IO（TESTING.md §3.1）。
+class ShellLayoutStore {
+  const ShellLayoutStore(this._kv);
+
+  final SearchSettingsKv _kv;
+
+  /// 导航栏宽度值域（下限 = 收起态宽；上限避免把中间功能区挤没）。
+  /// 与 [_AppShellState] 的拖拽夹逼同源（单一出处，禁止两处各写一份）。
+  static const double railMinWidth = 72;
+  static const double railMaxWidth = 360;
+
+  /// 详情栏占比值域（占「中间 + 右侧」）。
+  static const double detailMinFraction = 0.15;
+  static const double detailMaxFraction = 0.85;
+
+  /// 缺省布局（首启 / 读取失败回落）：导航栏展开宽 256、详情栏占比 0.4。
+  static const double defaultRailWidth = 256;
+  static const double defaultDetailFraction = 0.4;
+
+  /// 读三条键：缺失/非法（非数字、NaN、∞）回落缺省，越界夹逼到值域。
+  Future<ShellLayout> read() async {
+    final String? rail = await _kv.readSetting(SettingsKeys.railWidth);
+    final String? railExpanded = await _kv.readSetting(SettingsKeys.railWidthExpanded);
+    final String? fraction = await _kv.readSetting(SettingsKeys.detailFraction);
+    return ShellLayout(
+      railWidth: parseWidth(rail, defaultRailWidth),
+      railWidthExpanded: parseWidth(railExpanded, defaultRailWidth),
+      detailFraction: parseFraction(fraction, defaultDetailFraction),
+    );
+  }
+
+  /// 写三条键（UPSERT；调用方保证值已夹逼）。
+  Future<void> save(ShellLayout layout) async {
+    await _kv.writeSetting(SettingsKeys.railWidth, layout.railWidth.toString());
+    await _kv.writeSetting(SettingsKeys.railWidthExpanded, layout.railWidthExpanded.toString());
+    await _kv.writeSetting(SettingsKeys.detailFraction, layout.detailFraction.toString());
+  }
+
+  /// 解析持久化宽度：缺失/非法回落 [fallback]，越界夹逼到 [railMinWidth, railMaxWidth]。
+  static double parseWidth(String? raw, double fallback) => _parse(raw, fallback, railMinWidth, railMaxWidth);
+
+  /// 解析持久化占比：缺失/非法回落 [fallback]，越界夹逼到详情栏值域。
+  static double parseFraction(String? raw, double fallback) =>
+      _parse(raw, fallback, detailMinFraction, detailMaxFraction);
+
+  static double _parse(String? raw, double fallback, double min, double max) {
+    final double? value = raw == null ? null : double.tryParse(raw);
+    if (value == null || !value.isFinite) {
+      return fallback;
+    }
+    return value.clamp(min, max);
+  }
+}
+
+/// 注入点：queriesProvider 的实现带 settings KV（生产 = Queries）才有；widget 测试的
+/// 内存仓不带 → null，占比记忆自动停用（同 searchPositionStoreProvider 口径）。
+final Provider<ShellLayoutStore?> shellLayoutStoreProvider = Provider<ShellLayoutStore?>((Ref ref) {
+  final Object repo = ref.watch(queriesProvider);
+  return repo is SearchSettingsKv ? ShellLayoutStore(repo) : null;
+});
+
 /// 自适应应用骨架（M1-②）：
 /// compact(<600dp) → 底部 NavigationBar 4 Tab；
 /// medium(600–1024dp，**含 1024**) → NavigationRail；
 /// expanded(>1024dp) → 三栏「功能区」：左侧导航栏（可收起 / 可拖宽）+ 中间功能区
 /// （当前 Tab **叠加**中间页面栈）+ 右侧详情槽；两条分隔条支持**长按拖动**改占比。
-class AppShell extends StatefulWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key, required this.navigationShell, this.location = ''});
 
   final StatefulNavigationShell navigationShell;
@@ -35,32 +119,33 @@ class AppShell extends StatefulWidget {
   final String location;
 
   @override
-  State<AppShell> createState() => _AppShellState();
+  ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> {
   /// 导航栏展开宽度（NavigationRail extended 设计宽：品牌头 224 + 左右 padding 32）。
   static const double _railExpandedWidth = 256;
 
   /// 收起态宽度（= 展开判定阈值：≥ 此题才走 extended 形态，否则图标 + 短标签）。
   static const double _railCollapsedWidth = 72;
 
-  /// 长按拖宽范围（下限同收起态；上限避免把中间功能区挤没）。
-  static const double _railMinWidth = 72;
-  static const double _railMaxWidth = 360;
+  /// 长按拖宽范围（下限同收起态；上限避免把中间功能区挤没）。值域与布局记忆同源。
+  static const double _railMinWidth = ShellLayoutStore.railMinWidth;
+  static const double _railMaxWidth = ShellLayoutStore.railMaxWidth;
 
   /// 中间功能区最小宽 / 右侧详情槽最小宽（拖拽夹逼下限）。
   static const double _centerMinWidth = 360;
   static const double _detailMinWidth = 300;
 
   /// 导航栏当前宽度（长按拖分隔条改；收起钮在 [_railCollapsedWidth] 与上次展开宽之间切换）。
-  double _railWidth = _railExpandedWidth;
+  /// 初值 = 布局记忆缺省；关 App 前的拖定值由 [_restoreLayout] 异步恢复。
+  double _railWidth = ShellLayoutStore.defaultRailWidth;
 
   /// 收起前的展开宽度（重新展开时恢复）。
-  double _railWidthExpanded = _railExpandedWidth;
+  double _railWidthExpanded = ShellLayoutStore.defaultRailWidth;
 
   /// 右侧详情槽占「中间 + 右侧」的比例（长按拖分隔条改）。
-  double _detailFraction = 0.4;
+  double _detailFraction = ShellLayoutStore.defaultDetailFraction;
 
   /// 中间功能区页面栈是否非空（PopScope：Android 系统返回键先退中间栈）。
   bool _centerHasRoutes = false;
@@ -103,11 +188,15 @@ class _AppShellState extends State<AppShell> {
     // 取号与左侧导航栏那条相反：详情栏占「中间 + 右侧」的**右半**，
     // 分隔条左移（Δ<0）＝ 详情栏变宽 → fraction 增；旧写法 +Δ/rest 会让分隔条与
     // 指针反向（用户反馈：往左拖最右侧区域却缩小了）。
-    setState(() => _detailFraction =
-        (_dragOriginFraction - (globalX - origin) / _lastRest).clamp(0.15, 0.85));
+    setState(() => _detailFraction = (_dragOriginFraction - (globalX - origin) / _lastRest)
+        .clamp(ShellLayoutStore.detailMinFraction, ShellLayoutStore.detailMaxFraction));
   }
 
-  void _dragEnd() => _dragOriginX = null;
+  /// 拖动结束：清拖动基准并落盘拖定后的占比（拖动过程中不写）。
+  void _dragEnd() {
+    _dragOriginX = null;
+    _persistLayout();
+  }
 
   static const List<_TabSpec> _tabs = <_TabSpec>[
     (label: '首页', icon: 'home'),
@@ -124,6 +213,52 @@ class _AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _centerRoot = ValueNotifier<Widget>(widget.navigationShell);
+    unawaited(_restoreLayout());
+  }
+
+  /// 读取上次拖定的三栏占比与收起状态（settings KV）。
+  ///
+  /// 端口缺失（widget 测试注入的内存仓不带 KV）＝ 保持缺省；读取失败同样静默回落——
+  /// 布局记忆是增强项，不能阻断骨架渲染（策略同 SearchPositionStore 消费方）。
+  Future<void> _restoreLayout() async {
+    final ShellLayoutStore? store = ref.read(shellLayoutStoreProvider);
+    if (store == null) {
+      return;
+    }
+    try {
+      final ShellLayout saved = await store.read();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _railWidth = saved.railWidth;
+        _railWidthExpanded = saved.railWidthExpanded;
+        _detailFraction = saved.detailFraction;
+      });
+    } catch (_) {
+      // 读失败保持缺省占比（不弹错、不阻断交互）。
+    }
+  }
+
+  /// 布局记忆落盘（拖动结束 / 收起展开各一次，不在拖动过程中每帧写）。
+  void _persistLayout() {
+    final ShellLayoutStore? store = ref.read(shellLayoutStoreProvider);
+    if (store == null) {
+      return;
+    }
+    unawaited(_saveLayout(store));
+  }
+
+  Future<void> _saveLayout(ShellLayoutStore store) async {
+    try {
+      await store.save(ShellLayout(
+        railWidth: _railWidth,
+        railWidthExpanded: _railWidthExpanded,
+        detailFraction: _detailFraction,
+      ));
+    } catch (_) {
+      // 写失败静默：布局记忆是增强项，不打断拖动与交互。
+    }
   }
 
   @override
@@ -187,6 +322,7 @@ class _AppShellState extends State<AppShell> {
         _railWidth = _railCollapsedWidth;
       }
     });
+    _persistLayout();
   }
 
   @override
@@ -600,6 +736,14 @@ class _DetailSlot extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final int? onlineTid = ref.watch(onlinePostDetailProvider);
+    if (onlineTid != null) {
+      return OnlinePostPage(
+        key: ValueKey<int>(onlineTid),
+        tid: onlineTid,
+        onClose: () => ref.read(onlinePostDetailProvider.notifier).state = null,
+      );
+    }
     final PostSelection? selection = ref.watch(detailSelectionProvider);
     if (selection != null) {
       return ContentDetailPage(

@@ -40,6 +40,12 @@ class FlutterWindow : public Win32Window {
   // 最大化态变化推给 Dart（WM_SIZE 后调用）。
   void NotifyMaximizedChanged();
 
+  // 恢复上次关闭时的窗口矩形/最大化态（OnCreate 内调用，窗口仍隐藏）。
+  void ApplySavedPlacement();
+
+  // 关闭时落盘：普通态矩形 + 是否最大化（%LOCALAPPDATA%\BooksSift\window.ini）。
+  void SavePlacement();
+
   // The project to run.
   flutter::DartProject project_;
 
@@ -49,6 +55,9 @@ class FlutterWindow : public Win32Window {
   // 窗口控制通道（Dart → native 调用 + native → Dart 最大化态推送）。
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       window_channel_;
+
+  // 首帧显示时是否直接最大化（= 上次关闭时的状态）。
+  bool start_maximized_ = false;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

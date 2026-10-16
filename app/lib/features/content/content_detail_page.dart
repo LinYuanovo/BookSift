@@ -1252,6 +1252,17 @@ class FloorImages extends StatelessWidget {
     return (images: images, index: initialIndex.clamp(0, images.length - 1));
   }
 
+  /// 查看器外框占可用窗口的比例（任务 3）：宽 60% / 高 80%，横竖屏同口径。
+  static const double viewerWidthFactor = 0.6;
+  static const double viewerHeightFactor = 0.8;
+
+  /// 查看器外框尺寸（任务 3；纯函数便于 plain test，与 [viewerGalleryOf] 同款）：
+  /// 按可用窗口算，不写死像素。
+  static Size viewerFrameOf(Size window) => Size(
+    window.width * viewerWidthFactor,
+    window.height * viewerHeightFactor,
+  );
+
   @override
   Widget build(BuildContext context) {
     final AppColors c = AppColors.of(context);
@@ -1302,23 +1313,30 @@ class FloorImages extends StatelessWidget {
   }
 }
 
-/// 图片查看器（§5.7：全屏 + 双指缩放 + 同层左右滑翻页，任务 2；保存到相册仍属 M2+）。
+/// 图片查看器（§5.7：双指缩放 + 同层左右滑翻页 + i/n 计数，任务 2；任务 3：外框 = 可用
+/// 窗口 60%×80%、点外部即关；保存到相册仍属 M2+）。
 ///
 /// [img] 为被点单图（旧调用点兼容，缺省退化为单张浏览）；[images]/[initialIndex]
 /// 提供时按整层画廊 PageView 翻页并显示 i/n 计数（归一化见 [FloorImages.viewerGalleryOf]）。
+/// [imageBuilder] 是测试注入口：widget 测试用它替换 CachedNetworkImage，避开真实网络 /
+/// 磁盘缓存（生产调用不传，走 [FloorImages.displayUrl] + 防盗链头）。
 void showImageViewer(
   BuildContext context,
   FloorImage img, {
   List<FloorImage>? images,
   int initialIndex = 0,
+  Widget Function(BuildContext context, FloorImage image)? imageBuilder,
 }) {
   final ({List<FloorImage> images, int index}) gallery =
       FloorImages.viewerGalleryOf(img, images, initialIndex);
   showDialog<void>(
     context: context,
+    // 任务 3：外框不再占满窗口，点弹层外（barrier）即关闭。
+    barrierDismissible: true,
     builder: (BuildContext context) => _ImageViewerDialog(
       images: gallery.images,
       initialIndex: gallery.index,
+      imageBuilder: imageBuilder,
     ),
   );
 }
@@ -1326,11 +1344,21 @@ void showImageViewer(
 /// 查看器弹层本体（任务 2）：PageView 每页 InteractiveViewer + CachedNetworkImage
 /// （防盗链头与取链口径同 [FloorImages]）；底部 i/n 计数（tabular 数字防翻页宽度
 /// 跳动，§2.2），右上角关闭钮保留。
+/// 任务 3：外框 = 可用窗口宽 60% / 高 80%（[FloorImages.viewerFrameOf]），点外部关闭。
+/// 左右切换钮：鼠标悬停两侧区域时淡入「上一张/下一张」，移出淡出（AnimatedOpacity +
+/// motion token）；隐藏时 IgnorePointer 放行 PageView 手势。
 class _ImageViewerDialog extends StatefulWidget {
-  const _ImageViewerDialog({required this.images, required this.initialIndex});
+  const _ImageViewerDialog({
+    required this.images,
+    required this.initialIndex,
+    this.imageBuilder,
+  });
 
   final List<FloorImage> images;
   final int initialIndex;
+
+  /// 测试注入口（见 [showImageViewer]）：替换单页图片构建。
+  final Widget Function(BuildContext context, FloorImage image)? imageBuilder;
 
   @override
   State<_ImageViewerDialog> createState() => _ImageViewerDialogState();
@@ -1342,6 +1370,30 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   );
   late int _page = widget.initialIndex;
 
+  /// 左右侧区悬停态：仅悬停对应侧时显示该侧切换钮。
+  bool _hoverLeft = false;
+  bool _hoverRight = false;
+
+  /// 侧区宽度占比：左右各 30%，中段不显示切换钮。
+  static const double _hoverZoneFactor = 0.3;
+
+  bool get _canPrev => _page > 0;
+  bool get _canNext => _page < widget.images.length - 1;
+
+  /// 切到相邻页；越界即忽略（首/末页调用兜底）。时长/曲线走 motion token。
+  void _step(int delta) {
+    final int target = _page + delta;
+    if (target < 0 || target >= widget.images.length) {
+      return;
+    }
+    final AppMotionTheme motion = AppMotionTheme.of(context);
+    _controller.animateToPage(
+      target,
+      duration: motion.transition.duration,
+      curve: motion.transition.curve,
+    );
+  }
+
   @override
   void dispose() {
     _controller.dispose();
@@ -1352,9 +1404,14 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
   Widget build(BuildContext context) {
     final AppColors c = AppColors.of(context);
     final AppSpacing s = AppSpacing.of(context);
+    final AppMotionTheme motion = AppMotionTheme.of(context);
+    final Size frame = FloorImages.viewerFrameOf(MediaQuery.sizeOf(context));
     return Dialog(
       backgroundColor: c.canvas,
       insetPadding: EdgeInsets.zero,
+      // 任务 3：按可用窗口给死外框 —— 覆盖 Dialog 默认 minWidth 280 约束，
+      // 窄窗（竖屏手机）也严格是 60%×80%。
+      constraints: BoxConstraints.tight(frame),
       child: Stack(
         children: <Widget>[
           PageView.builder(
@@ -1363,12 +1420,18 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
             onPageChanged: (int i) => setState(() => _page = i),
             itemBuilder: (BuildContext context, int i) => InteractiveViewer(
               child: Center(
-                child: CachedNetworkImage(
-                  imageUrl: FloorImages.displayUrl(widget.images[i]),
-                  httpHeaders: FloorImages.refererHeaders,
-                  errorWidget: (BuildContext context, String url, Object error) =>
-                      const AppEmptyState(title: '图片已失效', svgIcon: 'image'),
-                ),
+                child:
+                    widget.imageBuilder?.call(context, widget.images[i]) ??
+                    CachedNetworkImage(
+                      imageUrl: FloorImages.displayUrl(widget.images[i]),
+                      httpHeaders: FloorImages.refererHeaders,
+                      errorWidget:
+                          (BuildContext context, String url, Object error) =>
+                              const AppEmptyState(
+                                title: '图片已失效',
+                                svgIcon: 'image',
+                              ),
+                    ),
               ),
             ),
           ),
@@ -1395,6 +1458,77 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
               tooltip: '关闭',
               icon: AppIcon('close', size: 24, color: c.textSecondary),
               onPressed: () => Navigator.of(context).pop(),
+            ),
+          ),
+          // 左右切换钮：悬停侧区淡入、移出淡出；隐藏时 IgnorePointer 不挡横滑，
+          // MouseRegion 取 translucent 命中（仍向下派发指针事件，PageView 手势不断）。
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: frame.width * _hoverZoneFactor,
+            child: MouseRegion(
+              key: const Key('image_viewer_hover_left'),
+              hitTestBehavior: HitTestBehavior.translucent,
+              onEnter: (_) => setState(() => _hoverLeft = true),
+              onExit: (_) => setState(() => _hoverLeft = false),
+              child: AnimatedOpacity(
+                key: const Key('image_viewer_prev_fade'),
+                opacity: _hoverLeft && _canPrev ? 1 : 0,
+                duration: motion.fast,
+                curve: motion.standard,
+                child: IgnorePointer(
+                  ignoring: !(_hoverLeft && _canPrev),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Padding(
+                      padding: EdgeInsets.only(left: s.space2),
+                      child: IconButton(
+                        key: const Key('image_viewer_prev_button'),
+                        tooltip: '上一张',
+                        icon: AppIcon('back', size: 24, color: c.textSecondary),
+                        onPressed: () => _step(-1),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: frame.width * _hoverZoneFactor,
+            child: MouseRegion(
+              key: const Key('image_viewer_hover_right'),
+              hitTestBehavior: HitTestBehavior.translucent,
+              onEnter: (_) => setState(() => _hoverRight = true),
+              onExit: (_) => setState(() => _hoverRight = false),
+              child: AnimatedOpacity(
+                key: const Key('image_viewer_next_fade'),
+                opacity: _hoverRight && _canNext ? 1 : 0,
+                duration: motion.fast,
+                curve: motion.standard,
+                child: IgnorePointer(
+                  ignoring: !(_hoverRight && _canNext),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Padding(
+                      padding: EdgeInsets.only(right: s.space2),
+                      child: IconButton(
+                        key: const Key('image_viewer_next_button'),
+                        tooltip: '下一张',
+                        icon: Transform.flip(
+                          flipX: true,
+                          child: AppIcon('back', size: 24, color: c.textSecondary),
+                        ),
+                        onPressed: () => _step(1),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ],

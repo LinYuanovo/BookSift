@@ -1399,7 +1399,9 @@ class Queries implements BookRepository, SearchSettingsKv {
   /// 都出来，而且每张卡是同一段高亮摘要）。故：
   ///  · 第一级：只匹配书名/作者（FTS 用列过滤 {name author}，LIKE 用四列
   ///    name/name_norm/author/author_norm）；有命中就地收口，不再看正文。
-  ///  · 第二级（第一级零命中）：维持现状全列匹配（含 recommender/comment），
+  ///  · 推荐人兜底（第一级零命中）：只匹配 b.recommender ——「扫书贴作者」的条目级语义，
+  ///    命中即收口（帖子 posts.author 不参与召回，见 [_likeGroups]）。
+  ///  · 第二级（前两级零命中）：维持现状全列匹配（含 recommender/comment），
   ///    保住「按推荐语/推荐人找书」这类真实召回。
   /// 摘要口径同样分级：第一级以**该书书名**为锚在 comment 上截窗（[_groupedPage]），
   /// 且不让 FTS 的 snippet(comment) 生效——列过滤下 snippet 会退回 comment 开头，
@@ -1415,6 +1417,19 @@ class Queries implements BookRepository, SearchSettingsKv {
       final SearchOutcome titleLevel = await _titleLevelFts(words, f);
       if (titleLevel.page.total > 0) {
         return titleLevel;
+      }
+      // 推荐人兜底（LIKE）：FTS 的 {name author} 列过滤覆盖不到 book_entries.recommender。
+      // 语义口径（用户确认）：按「扫书贴作者」搜 = 按**条目级** recommender 搜；
+      // 帖子作者 posts.author / posts.author_name 不参与召回——真机反例：posts.author=
+      // '火舞涅槃星星' 的帖子里 335 条条目 recommender='黄颢晨123'，按帖子作者召回整帖
+      // 等于把别人扫的书算到他头上。命中即收口，避免第二级 comment/floor 带出同楼其它书。
+      final Paged<GroupHit> recommenderLevel = await _likeGroups(
+        words,
+        f,
+        recommenderOnly: true,
+      );
+      if (recommenderLevel.total > 0) {
+        return SearchOutcome(page: recommenderLevel, words: words);
       }
       // ── 第二级：评语 / 楼层正文（角色名、楼内提及都走这里）──
       final String match = words
@@ -1444,7 +1459,7 @@ class Queries implements BookRepository, SearchSettingsKv {
       // 置于 try 外：重试自身的异常按未预期错误传播，不误用「FTS 降级」语义。
       return SearchOutcome(page: await _likeGroups(words, f), words: words);
     }
-    // 含 2 字词（trigram 恒零命中）：第一级四列 LIKE → 零命中才放开到全列。
+    // 含 2 字词（trigram 恒零命中）：第一级四列 LIKE → recommender 兜底 → 零命中才放开全列。
     final Paged<GroupHit> titleLevel = await _likeGroups(
       words,
       f,
@@ -1452,6 +1467,14 @@ class Queries implements BookRepository, SearchSettingsKv {
     );
     if (titleLevel.total > 0) {
       return SearchOutcome(page: titleLevel, words: words);
+    }
+    final Paged<GroupHit> recommenderLevel = await _likeGroups(
+      words,
+      f,
+      recommenderOnly: true,
+    );
+    if (recommenderLevel.total > 0) {
+      return SearchOutcome(page: recommenderLevel, words: words);
     }
     return SearchOutcome(page: await _likeGroups(words, f), words: words);
   }
@@ -1700,32 +1723,45 @@ class Queries implements BookRepository, SearchSettingsKv {
 
   /// LIKE 检索路径（2 字词兜底 / FTS 零命中重试 / FTS 异常降级 / 第一级列过滤不可用）。
   ///
-  /// [titleOnly] = 第一级：只匹配 name/name_norm/author/author_norm 四列。
+  /// [titleOnly] = 第一级：仅匹配 name/name_norm/author/author_norm（书名/小说作者）。
+  /// [recommenderOnly] = 推荐人兜底：只匹配 b.recommender ——「扫书贴作者」的语义归属列
+  /// （条目级；帖子 posts.author / posts.author_name 不参与召回）。
+  /// 前两级命中即收口：不得放开到评语级，否则同楼其它书的 comment 会被带出。
   /// 第二级放开到 recommender/comment，并 OR 进所属楼层正文（floor_fts）：
   /// 角色名经常只出现在楼层正文、不在条目评语里。
   Future<Paged<GroupHit>> _likeGroups(
     List<String> words,
     SearchFilter f, {
     bool titleOnly = false,
+    bool recommenderOnly = false,
   }) {
     final List<Variable<Object>> vars = <Variable<Object>>[];
     final List<String> conds = <String>[];
     // name_norm/author_norm：ETL 归一化列（去标点），承接归一化查询对原文的召回
     // （FTS 零命中重试与 2 字词兜底共用本路径）。
-    final List<String> cols = titleOnly
-        ? const <String>['b.name', 'b.name_norm', 'b.author', 'b.author_norm']
-        : const <String>[
-            'b.name',
-            'b.name_norm',
-            'b.author',
-            'b.author_norm',
-            'b.recommender',
-            'b.comment',
-          ];
+    // 推荐人语义：只认条目自己的 b.recommender（真机反例 posts.author='火舞涅槃星星'
+    // 的 335 条条目 recommender='黄颢晨123'；按帖子作者召回会把别人扫的书算过来）。
+    final List<String> cols = recommenderOnly
+        ? const <String>['b.recommender']
+        : titleOnly
+            ? const <String>[
+                'b.name',
+                'b.name_norm',
+                'b.author',
+                'b.author_norm',
+              ]
+            : const <String>[
+                'b.name',
+                'b.name_norm',
+                'b.author',
+                'b.author_norm',
+                'b.recommender',
+                'b.comment',
+              ];
     for (final String w in words) {
       final String arg = _likeArg(w);
       final String colExpr = cols.map((String c) => "$c LIKE ? ESCAPE '\\'").join(' OR ');
-      if (titleOnly) {
+      if (titleOnly || recommenderOnly) {
         conds.add('($colExpr)');
         for (int i = 0; i < cols.length; i++) {
           vars.add(Variable<String>(arg));

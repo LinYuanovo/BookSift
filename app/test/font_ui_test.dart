@@ -7,12 +7,14 @@ import 'package:booksift/core/fonts/font_ports.dart' show PickedFontFile;
 import 'package:booksift/core/fonts/font_registry.dart';
 import 'package:booksift/core/fonts/font_service.dart';
 import 'package:booksift/core/fonts/font_tokens.dart';
+import 'package:booksift/core/fonts/system_font_catalog.dart';
 import 'package:booksift/features/profile/font_manage_page.dart';
 import 'package:booksift/features/profile/settings_page.dart';
 import 'package:booksift/theme/app_typography.dart';
 import 'package:booksift/theme/book_theme.dart';
 
-import 'font_service_test.dart' show FakeFileStore, FakePicker, FakeRegistrar, FakeSettingsStore, fakeBytes, sampleFont;
+import 'font_service_test.dart'
+    show FakeFileStore, FakePicker, FakeRegistrar, FakeSettingsStore, FakeSystemCatalog, fakeBytes, sampleFont, systemEntry;
 
 /// 与 app.dart 同构的最小测试壳：watch FontService → BookTheme.of 注入 families。
 class TestApp extends ConsumerWidget {
@@ -29,12 +31,20 @@ class TestApp extends ConsumerWidget {
 
 const String sample = 'Aa 扫书汇 ·《十日终焉》2026';
 
-({FontService service, FakeSettingsStore store, FakeFileStore files, FakeRegistrar registrar, FakePicker picker})
+({
+  FontService service,
+  FakeSettingsStore store,
+  FakeFileStore files,
+  FakeRegistrar registrar,
+  FakePicker picker,
+  FakeSystemCatalog catalog,
+})
 uiService({bool withFont = false, String? rolesJson}) {
   final FakeSettingsStore store = FakeSettingsStore();
   final FakeFileStore files = FakeFileStore();
   final FakeRegistrar registrar = FakeRegistrar();
   final FakePicker picker = FakePicker();
+  final FakeSystemCatalog catalog = FakeSystemCatalog();
   if (withFont) {
     store.data[FontSettingsKeys.registry] = FontRegistryCodec.encode(<ImportedFont>[sampleFont()]);
     files.files['f1.ttf'] = fakeBytes();
@@ -42,8 +52,14 @@ uiService({bool withFont = false, String? rolesJson}) {
   if (rolesJson != null) {
     store.data[FontSettingsKeys.roles] = rolesJson;
   }
-  final FontService service = FontService(settings: store, picker: picker, registrar: registrar, files: files);
-  return (service: service, store: store, files: files, registrar: registrar, picker: picker);
+  final FontService service = FontService(
+    settings: store,
+    picker: picker,
+    registrar: registrar,
+    files: files,
+    systemFonts: catalog,
+  );
+  return (service: service, store: store, files: files, registrar: registrar, picker: picker, catalog: catalog);
 }
 
 Widget wrap(Widget home, FontService service) => ProviderScope(
@@ -162,6 +178,63 @@ void main() {
     expect(b.service.registry.length, 1);
     expect(find.text('Kaiti'), findsWidgets); // 我的字体行 + 各角色下拉候选
     expect(b.registrar.loaded, <String>['Kaiti']);
+  });
+
+  testWidgets('读取系统字体：弹选择界面 → 搜索过滤 → 加入我的字体', (WidgetTester tester) async {
+    useTallViewport(tester);
+    final b = uiService();
+    final SystemFontEntry arial = systemEntry();
+    final SystemFontEntry kaiti =
+        systemEntry(familyName: 'Kaiti', fileName: 'Kaiti.otf', filePath: r'C:\Windows\Fonts\Kaiti.otf');
+    b.catalog.fonts = <SystemFontEntry>[kaiti, arial];
+    b.catalog.bytes[kaiti.filePath] = fakeBytes();
+    await b.service.bootstrap();
+    await tester.pumpWidget(wrap(const FontManagePage(), b.service));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('读取系统字体'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Arial'), findsOneWidget);
+    expect(find.text('Kaiti'), findsOneWidget);
+    expect(find.text('仅列出可加载的 ttf / otf / ttc 字体'), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.widgetWithText(FilledButton, '加入我的字体')).onPressed,
+      isNull,
+      reason: '未选中字体时确认按钮禁用',
+    );
+
+    // 搜索过滤（大小写不敏感）
+    await tester.enterText(find.byType(TextField), 'kaiti');
+    await tester.pumpAndSettle();
+    expect(find.text('Arial'), findsNothing);
+    expect(find.text('Kaiti'), findsOneWidget);
+
+    await tester.tap(find.text('Kaiti'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('加入我的字体'));
+    await tester.pumpAndSettle();
+
+    expect(b.service.registry.length, 1);
+    expect(b.service.registry.single.familyName, 'Kaiti');
+    expect(b.registrar.loaded, <String>['Kaiti']);
+    expect(find.text('加入我的字体'), findsNothing, reason: '选择弹层已关闭');
+    expect(find.textContaining('已加入「Kaiti」'), findsOneWidget);
+  });
+
+  testWidgets('读取系统字体：枚举失败 → 明确提示且不打开选择界面', (WidgetTester tester) async {
+    useTallViewport(tester);
+    final b = uiService();
+    b.catalog.listError = '当前系统不支持读取系统字体，请使用「导入字体」选择文件';
+    await b.service.bootstrap();
+    await tester.pumpWidget(wrap(const FontManagePage(), b.service));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('读取系统字体'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('当前系统不支持读取系统字体，请使用「导入字体」选择文件'), findsOneWidget);
+    expect(find.text('加入我的字体'), findsNothing);
   });
 
   testWidgets('删除字体：确认弹层 → 引用角色回退 system', (WidgetTester tester) async {

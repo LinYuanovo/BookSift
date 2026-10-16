@@ -1,14 +1,9 @@
-/// 贴吧在线结果排序（P2-5）：相关度 = 接口返回原序 / 时间 = 客户端按 createTime 倒序稳定重排。
+/// 贴吧在线结果排序（吧内 searchpost）：相关度 = sm=2 / 时间 = sm=1。
 ///
-/// 分组与边界（TESTING.md §1/§3）：
-///  · 「sortOnlineThreads」plain test() —— 纯函数：倒序 / 稳定性 / 相关度原样返回；
-///  · 「在线排序 UI」testWidgets —— 脚本化 dio adapter（复用 online_search_test.dart 定义，
-///    零真实网络），断言切档只重排**已加载**结果、不重新发请求，且取数固定 sm=0
-///    （接口原生支持 sm 排序，但切档不重发请求 → 一律客户端重排，口径见
-///    search_state.dart 的 onlineSortProvider 段注释）。
+/// 两档结果集与顺序均由服务端返回；切换排序必须重发第一页请求，
+/// 不能拿相关度结果在客户端倒序冒充时间排序。翻页沿用当前 sm 与当前吧。
 library;
 
-import 'package:booksift/collector/tieba_search.dart';
 import 'package:booksift/features/home/cards.dart';
 import 'package:booksift/features/search/search_state.dart';
 import 'package:dio/dio.dart' show ResponseBody;
@@ -29,17 +24,6 @@ import 'online_search_test.dart'
         searchJson,
         searchRoute;
 
-OnlineThread th(int tid, int time) => OnlineThread(
-      tid: tid,
-      title: '帖$tid',
-      forumName: 'yy小说吧',
-      author: '扫书人甲',
-      replyNum: 0,
-      createTime: time,
-    );
-
-List<int> tidsOf(List<OnlineThread> rows) => <int>[for (final OnlineThread t in rows) t.tid];
-
 /// 在线结果卡标题的屏幕序（y 升序）= 列表序。
 List<String> titleOrder(WidgetTester tester, List<String> titles) {
   final List<(double, String)> rows = <(double, String)>[
@@ -49,51 +33,39 @@ List<String> titleOrder(WidgetTester tester, List<String> titles) {
 }
 
 void main() {
-  // ── 纯函数（plain test） ────────────────────────────────────────────────
-
-  group('sortOnlineThreads（客户端重排口径）', () {
-    test('相关度档 = 接口返回原序（同一 List 实例，不复制不重排）', () {
-      final List<OnlineThread> rows = <OnlineThread>[th(1, 100), th(2, 900), th(3, 500)];
-      expect(identical(sortOnlineThreads(rows, OnlineSort.relevance), rows), isTrue);
-    });
-
-    test('时间档 = createTime 倒序', () {
-      final List<OnlineThread> rows = <OnlineThread>[th(1, 100), th(2, 900), th(3, 500)];
-      expect(tidsOf(sortOnlineThreads(rows, OnlineSort.time)), <int>[2, 3, 1]);
-    });
-
-    test('时间档稳定：同时间保持接口原序；无时间（createTime=0）行沉底且彼此保序', () {
-      final List<OnlineThread> rows = <OnlineThread>[th(1, 0), th(2, 500), th(3, 500), th(4, 0), th(5, 900)];
-      // Dart List.sort 不保证稳定 → 以原序 index 做 tie-break。
-      expect(tidsOf(sortOnlineThreads(rows, OnlineSort.time)), <int>[5, 2, 3, 1, 4]);
-    });
-
-    test('空/单行列表原样返回（不构造新 List）', () {
-      final List<OnlineThread> one = <OnlineThread>[th(1, 100)];
-      expect(identical(sortOnlineThreads(one, OnlineSort.time), one), isTrue);
-      expect(sortOnlineThreads(const <OnlineThread>[], OnlineSort.time), isEmpty);
-    });
-
-    test('排序档标签 = 相关度 / 时间', () {
-      expect(onlineSortLabel(OnlineSort.relevance), '相关度');
-      expect(onlineSortLabel(OnlineSort.time), '时间');
-    });
+  test('排序档标签 = 相关度 / 时间', () {
+    expect(onlineSortLabel(OnlineSort.relevance), '相关度');
+    expect(onlineSortLabel(OnlineSort.time), '时间');
   });
 
-  // ── UI（testWidgets：脚本化 dio，零真实网络） ─────────────────────────────
-
-  group('在线排序 UI', () {
+  group('在线排序 UI（吧内 searchpost 服务端取数）', () {
     late FakeBookRepository repo;
     setUp(() => repo = FakeBookRepository(library: demoLibrary()));
 
-    testWidgets('排序行两个 chip（选中态随档切换）；切档只重排已加载结果，请求数不变且 sm=0',
+    testWidgets('切「时间」重发 sm=1；切回「相关度」重发 sm=2，结果随之替换',
         (WidgetTester tester) async {
       final ScriptedAdapter adapter = ScriptedAdapter(<ResponseBody>[
         jsonBody(searchJson(
           posts: <Map<String, dynamic>>[
-            postItem(tid: 1, title: '较旧帖', time: 1700000000),
-            postItem(tid: 2, title: '较新帖', time: 1760000000),
-            postItem(tid: 3, title: '中间帖', time: 1730000000),
+            postItem(tid: 1, title: '相关度第一', time: 1700000000),
+            postItem(tid: 2, title: '相关度第二', time: 1760000000),
+            postItem(tid: 3, title: '相关度第三', time: 1730000000),
+          ],
+          page: pageInfo(hasMore: 0, totalCount: 3),
+        )),
+        jsonBody(searchJson(
+          posts: <Map<String, dynamic>>[
+            postItem(tid: 2, title: '时间最新', time: 1760000000),
+            postItem(tid: 3, title: '时间居中', time: 1730000000),
+            postItem(tid: 1, title: '时间最旧', time: 1700000000),
+          ],
+          page: pageInfo(hasMore: 0, totalCount: 3),
+        )),
+        jsonBody(searchJson(
+          posts: <Map<String, dynamic>>[
+            postItem(tid: 1, title: '相关度第一', time: 1700000000),
+            postItem(tid: 2, title: '相关度第二', time: 1760000000),
+            postItem(tid: 3, title: '相关度第三', time: 1730000000),
           ],
           page: pageInfo(hasMore: 0, totalCount: 3),
         )),
@@ -108,44 +80,59 @@ void main() {
 
       await tester.tap(find.text('搜索贴吧'));
       await tester.pumpAndSettle();
-
-      const List<String> titles = <String>['较旧帖', '较新帖', '中间帖'];
       expect(adapter.requests, hasLength(1));
-      // 取数固定 sm=0（接口原序 = 相关度基线）；排序一律客户端重排，切档不再发请求。
-      expect(Uri.splitQueryString(adapter.bodies.single)['sm'], '0');
-
-      expect(find.widgetWithText(CountChip, '相关度'), findsOneWidget);
-      expect(find.widgetWithText(CountChip, '时间'), findsOneWidget);
-      expect(tester.widget<CountChip>(find.widgetWithText(CountChip, '相关度')).selected, isTrue);
-      expect(tester.widget<CountChip>(find.widgetWithText(CountChip, '时间')).selected, isFalse);
-      expect(titleOrder(tester, titles), titles, reason: '相关度 = 接口返回原序');
+      Map<String, String> form = Uri.splitQueryString(adapter.bodies[0]);
+      expect(form['sm'], '2');
+      expect(form['kw'], 'yy小说吧');
+      expect(form['only_thread'], '1');
+      expect(
+        titleOrder(tester, <String>['相关度第一', '相关度第二', '相关度第三']),
+        <String>['相关度第一', '相关度第二', '相关度第三'],
+        reason: '默认相关度 = 服务端 sm=2 原序',
+      );
 
       await tester.tap(find.widgetWithText(CountChip, '时间'));
       await tester.pumpAndSettle();
-      expect(tester.widget<CountChip>(find.widgetWithText(CountChip, '时间')).selected, isTrue);
-      expect(tester.widget<CountChip>(find.widgetWithText(CountChip, '相关度')).selected, isFalse);
-      expect(titleOrder(tester, titles), <String>['较新帖', '中间帖', '较旧帖'], reason: '客户端按时间倒序');
-      expect(adapter.requests, hasLength(1), reason: '切档纯客户端重排，不重新发请求');
+      expect(adapter.requests, hasLength(2), reason: '切时间必须重新发请求');
+      form = Uri.splitQueryString(adapter.bodies[1]);
+      expect(form['sm'], '1');
+      expect(form['pn'], '1', reason: '切档重取第一页');
+      expect(form['kw'], 'yy小说吧');
+      expect(
+        titleOrder(tester, <String>['时间最新', '时间居中', '时间最旧']),
+        <String>['时间最新', '时间居中', '时间最旧'],
+        reason: '显示服务端时间排序结果',
+      );
+      expect(find.text('相关度第一'), findsNothing, reason: '旧排序结果被替换');
 
       await tester.tap(find.widgetWithText(CountChip, '相关度'));
       await tester.pumpAndSettle();
-      expect(titleOrder(tester, titles), titles, reason: '切回相关度 = 还原接口原序');
-      expect(adapter.requests, hasLength(1));
+      expect(adapter.requests, hasLength(3), reason: '切回相关度同样重发请求');
+      form = Uri.splitQueryString(adapter.bodies[2]);
+      expect(form['sm'], '2');
+      expect(find.text('相关度第一'), findsOneWidget);
+      expect(find.text('时间最新'), findsNothing);
     });
 
-    testWidgets('跨页：加载更多后切「时间」→ 已加载两页一并倒序（仍只有 2 个请求）',
-        (WidgetTester tester) async {
+    testWidgets('加载更多沿用当前 sm；切档后旧分页不再拼接', (WidgetTester tester) async {
       final ScriptedAdapter adapter = ScriptedAdapter(<ResponseBody>[
         jsonBody(searchJson(
           posts: <Map<String, dynamic>>[
-            postItem(tid: 1, title: '第一页旧帖', time: 1700000000),
-            postItem(tid: 2, title: '第一页新帖', time: 1750000000),
+            postItem(tid: 1, title: '相关度第一页', time: 1700000000),
           ],
           page: pageInfo(hasMore: 1, currentPage: 1, totalPage: 2),
         )),
         jsonBody(searchJson(
-          posts: <Map<String, dynamic>>[postItem(tid: 3, title: '第二页最新帖', time: 1760000000)],
+          posts: <Map<String, dynamic>>[
+            postItem(tid: 2, title: '相关度第二页', time: 1710000000),
+          ],
           page: pageInfo(hasMore: 0, currentPage: 2, totalPage: 2),
+        )),
+        jsonBody(searchJson(
+          posts: <Map<String, dynamic>>[
+            postItem(tid: 9, title: '时间第一页', time: 1760000000),
+          ],
+          page: pageInfo(hasMore: 0, currentPage: 1, totalPage: 1),
         )),
       ]);
       useSurface(tester);
@@ -153,27 +140,22 @@ void main() {
       await tester.pumpAndSettle();
       await gotoOnlineAndSearch(tester);
 
-      const List<String> titles = <String>['第一页旧帖', '第一页新帖', '第二页最新帖'];
-      expect(
-        titleOrder(tester, titles.sublist(0, 2)),
-        titles.sublist(0, 2),
-        reason: '默认相关度 = 接口返回原序',
-      );
-      expect(find.text(titles[2]), findsNothing, reason: '第二页尚未加载');
-
       await tester.tap(find.text('加载更多'));
       await tester.pumpAndSettle();
-      expect(adapter.requests, hasLength(2));
-      expect(find.text('3 条'), findsOneWidget);
+      Map<String, String> form = Uri.splitQueryString(adapter.bodies[1]);
+      expect(form['pn'], '2');
+      expect(form['sm'], '2', reason: '翻页沿用当前排序');
+      expect(find.text('相关度第二页'), findsOneWidget);
 
       await tester.tap(find.widgetWithText(CountChip, '时间'));
       await tester.pumpAndSettle();
-      expect(
-        titleOrder(tester, titles),
-        <String>['第二页最新帖', '第一页新帖', '第一页旧帖'],
-        reason: '重排覆盖全部已加载行（含追加页）',
-      );
-      expect(adapter.requests, hasLength(2), reason: '切档不重新发请求');
+      form = Uri.splitQueryString(adapter.bodies[2]);
+      expect(form['sm'], '1');
+      expect(form['pn'], '1');
+      expect(form['kw'], 'yy小说吧');
+      expect(find.text('时间第一页'), findsOneWidget);
+      expect(find.text('相关度第一页'), findsNothing);
+      expect(find.text('相关度第二页'), findsNothing);
     });
   });
 }

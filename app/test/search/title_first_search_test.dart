@@ -5,8 +5,9 @@
 // 根因：book_entries.comment 存的是**整层帖子正文**——一个扫书楼里的所有书共用同一段
 // comment，FTS/LIKE 匹配 comment 就把同楼所有书一并命中；FTS 的 snippet(comment)
 // 又给这些名字没命中的书配上同一段楼层文字。
-// 修复：searchBooks 改两级——第一级只匹配 name/name_norm/author/author_norm
-// （FTS 用列过滤 {name author} : "词"），有命中即收口；零命中才放开到第二级
+// 修复：searchBooks 分级——第一级只匹配 name/name_norm/author/author_norm
+// （FTS 用列过滤 {name author} : "词"），有命中即收口；零命中再走「推荐人兜底」
+// （只匹配 book_entries.recommender，语义见下组注释），最后才放开到第二级
 // （现状全列匹配，含 recommender/comment），保住「按推荐语/正文找书」的召回。
 // 另（用户口径）：第二级 LIKE 再放开到所属楼层正文（floors.text）——角色名等关键词
 // 常只出现在楼层里、条目评语为空，不查楼层会零召回。
@@ -152,6 +153,133 @@ void main() {
     });
   });
 
+  group('扫书贴作者语义 = book_entries.recommender（条目级）', () {
+    // 用户口径纠偏：按「扫书贴作者」搜，以条目级 recommender 为准，posts.author 不参与召回。
+    // 真机反例：posts.author='火舞涅槃星星' 的帖子里 335 条条目 recommender='黄颢晨123'
+    // ——按帖子作者召回整帖，等于把「别人扫的书」算到他头上；只有 recommender 确实是
+    // 「火舞涅槃星星」的条目才该命中。
+    Future<int> addPost({required String author, String? authorName}) =>
+        db.into(db.posts).insert(PostsCompanion.insert(
+              title: const Value<String?>('扫书楼：本月合集'),
+              author: Value<String?>(author),
+              authorName: Value<String?>(authorName),
+              channel: 'yy小说吧',
+              date: const Value<String?>('2025-04-20'),
+            ));
+
+    Future<int> addBook({
+      required String name,
+      required String nameNorm,
+      required String hash,
+      required int postRef,
+      String? recommender,
+      String? comment,
+    }) =>
+        db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
+              name: name,
+              nameNorm: nameNorm,
+              channel: 'yy小说吧',
+              contentHash: hash,
+              recommender: Value<String?>(recommender),
+              comment: Value<String?>(comment),
+              date: const Value<String?>('2025-04-20'),
+              postRef: Value<int?>(postRef),
+            ));
+
+    test('posts.author 不参与召回：楼主名 ≠ recommender → 零结果', () async {
+      final int postId = await addPost(author: '火舞涅槃星星');
+      await addBook(
+        name: '《无人生还》',
+        nameNorm: '无人生还',
+        hash: 'ra1',
+        postRef: postId,
+        recommender: '黄颢晨123',
+      );
+
+      final SearchOutcome out = await queries.searchBooks(filter('火舞涅槃星星'));
+      expect(out.page.total, 0, reason: '帖子作者命中不再提前返回整帖的条目');
+    });
+
+    test('recommender 命中即收口：只返回该条目，同帖 comment 提到该名不带出邻条', () async {
+      final int postId = await addPost(author: '某位楼主');
+      await addBook(
+        name: '《他的书》',
+        nameNorm: '他的书',
+        hash: 'ra2',
+        postRef: postId,
+        recommender: '火舞涅槃星星',
+      );
+      await addBook(
+        name: '《邻条》',
+        nameNorm: '邻条',
+        hash: 'ra3',
+        postRef: postId,
+        recommender: '黄颢晨123',
+        comment: '这一楼另提了「火舞涅槃星星」早年推过的书，仅正文提及。',
+      );
+
+      final SearchOutcome out = await queries.searchBooks(filter('火舞涅槃星星'));
+      expect(
+        out.page.items.map((GroupHit g) => g.nameNorm).toSet(),
+        <String>{'他的书'},
+        reason: 'recommender 级命中收口，不放开到 comment/floor',
+      );
+    });
+
+    test('同一帖多 recommender 各归各（搜 A 只回 A 条）', () async {
+      final int postId = await addPost(author: '某位楼主');
+      await addBook(
+        name: '《甲条》',
+        nameNorm: '甲条',
+        hash: 'ra4',
+        postRef: postId,
+        recommender: '火舞涅槃星星',
+      );
+      await addBook(
+        name: '《乙条》',
+        nameNorm: '乙条',
+        hash: 'ra5',
+        postRef: postId,
+        recommender: '黄颢晨123',
+      );
+
+      final SearchOutcome out = await queries.searchBooks(filter('黄颢晨123'));
+      expect(out.page.total, 1);
+      expect(out.page.items.single.nameNorm, '乙条');
+    });
+
+    test('2 字词同样走 recommender 兜底（LIKE）', () async {
+      final int postId = await addPost(author: '某位楼主');
+      await addBook(
+        name: '《丙条》',
+        nameNorm: '丙条',
+        hash: 'ra6',
+        postRef: postId,
+        recommender: '阿星',
+      );
+      await addBook(
+        name: '《丁条》',
+        nameNorm: '丁条',
+        hash: 'ra7',
+        postRef: postId,
+        recommender: '黄颢晨123',
+        comment: '正文里才提到阿星。',
+      );
+
+      final SearchOutcome out = await queries.searchBooks(filter('阿星'));
+      expect(out.page.items.single.nameNorm, '丙条');
+      expect(out.usedFts, isFalse, reason: '2 字词走 LIKE 路径');
+    });
+
+    test('posts.author_name（唯一标识）同样不参与召回', () async {
+      final int postId = await addPost(author: '昵称不可搜', authorName: 'saoshuren_uid9');
+      await addBook(name: '《边城浪子》', nameNorm: '边城浪子', hash: 'ra8', postRef: postId);
+
+      final SearchOutcome out = await queries.searchBooks(filter('saoshuren_uid9'));
+      expect(out.page.total, 0);
+    });
+  });
+
   group('第二级：第一级零命中时维持现状全列召回', () {
     setUp(() async {
       await insertEntry(
@@ -189,7 +317,7 @@ void main() {
       expect(out.page.items.first.snippet, contains('[扫书楼]'));
     });
 
-    test('只出现在 recommender 的词走第二级命中', () async {
+    test('只出现在 recommender 的词 → 推荐人兜底命中（不再落到第二级）', () async {
       final SearchOutcome out = await queries.searchBooks(filter('护林员爱好者'));
       expect(out.page.total, 1);
       expect(out.page.items.single.nameNorm, '雪原往事');

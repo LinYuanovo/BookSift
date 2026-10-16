@@ -37,6 +37,13 @@ abstract final class SettingsKeys {
   /// 恢复上次搜索词 + 六维筛选 + 排序 + 是否已提交（可见结果区），浏览位置记忆据此恢复。
   /// 值 = JSON map（SearchFilter.toUriParams 的内容 + submitted）。
   static const String searchDraft = 'search_draft';
+
+  /// 三栏「功能区」布局记忆（app_shell.dart 的 ShellLayoutStore，expanded 档）：
+  /// 导航栏当前宽 / 收起前展开宽（逻辑 px）+ 右侧详情槽占「中间 + 详情」的比例。
+  /// 用户口径：拖定的占比与收起状态要跨重启记住（否则重开一次就要重调一遍）。
+  static const String railWidth = 'rail_width';
+  static const String railWidthExpanded = 'rail_width_expanded';
+  static const String detailFraction = 'detail_fraction';
 }
 
 /// origin 徽标取值（§7.2 origin 字段 / 设计系统 §4：内置灰 / 自采绿 / 导入蓝）。

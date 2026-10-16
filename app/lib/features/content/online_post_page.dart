@@ -28,10 +28,13 @@ final onlinePostProvider = FutureProvider.autoDispose
     );
 
 class OnlinePostPage extends ConsumerStatefulWidget {
-  const OnlinePostPage({super.key, required this.tid});
+  const OnlinePostPage({super.key, required this.tid, this.onClose});
 
   /// 贴吧主题 id（/online/:id 路径参数）。
   final int tid;
+
+  /// 右槽内嵌形态的关闭回调；null = 走路由返回（窄屏 / 路由页）。
+  final VoidCallback? onClose;
 
   @override
   ConsumerState<OnlinePostPage> createState() => _OnlinePostPageState();
@@ -63,6 +66,17 @@ class _OnlinePostPageState extends ConsumerState<OnlinePostPage> {
     final String title = async.valueOrNull?.title ?? '';
     return Scaffold(
       appBar: AppBar(
+        leading: widget.onClose == null
+            ? null
+            : IconButton(
+                tooltip: '关闭',
+                icon: AppIcon(
+                  'close',
+                  size: 20,
+                  color: AppColors.of(context).textSecondary,
+                ),
+                onPressed: widget.onClose,
+              ),
         title: Text(
           title.isNotEmpty ? title : '贴吧在线',
           maxLines: 1,

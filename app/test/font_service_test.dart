@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,7 @@ import 'package:booksift/core/fonts/font_ports.dart';
 import 'package:booksift/core/fonts/font_registry.dart';
 import 'package:booksift/core/fonts/font_service.dart';
 import 'package:booksift/core/fonts/font_tokens.dart';
+import 'package:booksift/core/fonts/system_font_catalog.dart';
 
 // ── 手写 fake（端口依赖倒置：不触 drift / file_picker / dart:ui / 文件系统）──
 
@@ -73,19 +75,65 @@ class FakePicker implements FontFilePicker {
   }
 }
 
+class FakeSystemCatalog implements SystemFontCatalog {
+  List<SystemFontEntry> fonts = <SystemFontEntry>[];
+  final Map<String, Uint8List> bytes = <String, Uint8List>{};
+  String? listError;
+  bool crashList = false;
+  bool failReads = false;
+  int listCalls = 0;
+
+  @override
+  Future<List<SystemFontEntry>> listFonts() async {
+    listCalls++;
+    if (crashList) throw StateError('registry probe crashed');
+    final String? message = listError;
+    if (message != null) throw SystemFontCatalogException(message);
+    return fonts;
+  }
+
+  @override
+  Future<Uint8List> readFontBytes(SystemFontEntry entry) async {
+    if (failReads) throw const FileSystemException('font file unreadable');
+    final Uint8List? data = bytes[entry.filePath];
+    if (data == null) throw FileSystemException('missing', entry.filePath);
+    return data;
+  }
+}
+
+SystemFontEntry systemEntry({
+  String familyName = 'Arial',
+  String fileName = 'arial.ttf',
+  String filePath = r'C:\Windows\Fonts\arial.ttf',
+}) => SystemFontEntry(familyName: familyName, fileName: fileName, filePath: filePath);
+
 Uint8List fakeBytes() => Uint8List.fromList(List<int>.filled(16, 7));
 
 ImportedFont sampleFont({String fontId = 'f1', String familyName = 'MySerif', String fileName = 'MySerif.ttf'}) =>
     ImportedFont(fontId: fontId, familyName: familyName, fileName: fileName, importedAt: DateTime.utc(2026, 10, 13));
 
-({FontService service, FakeSettingsStore store, FakeFileStore files, FakeRegistrar registrar, FakePicker picker})
+({
+  FontService service,
+  FakeSettingsStore store,
+  FakeFileStore files,
+  FakeRegistrar registrar,
+  FakePicker picker,
+  FakeSystemCatalog catalog,
+})
 buildService() {
   final FakeSettingsStore store = FakeSettingsStore();
   final FakeFileStore files = FakeFileStore();
   final FakeRegistrar registrar = FakeRegistrar();
   final FakePicker picker = FakePicker();
-  final FontService service = FontService(settings: store, picker: picker, registrar: registrar, files: files);
-  return (service: service, store: store, files: files, registrar: registrar, picker: picker);
+  final FakeSystemCatalog catalog = FakeSystemCatalog();
+  final FontService service = FontService(
+    settings: store,
+    picker: picker,
+    registrar: registrar,
+    files: files,
+    systemFonts: catalog,
+  );
+  return (service: service, store: store, files: files, registrar: registrar, picker: picker, catalog: catalog);
 }
 
 /// 预置一个已导入字体（注册表 + 落盘文件）。
@@ -276,6 +324,113 @@ void main() {
       expect(b.registrar.loaded, isEmpty);
       expect(b.service.registry, isEmpty);
       b.service.dispose();
+    });
+  });
+
+  group('系统字体导入（mock 系统字体目录端口）', () {
+    test('scanSystemFonts：返回枚举结果（扩展名过滤在端口层完成）', () async {
+      final b = buildService();
+      b.catalog.fonts = <SystemFontEntry>[systemEntry()];
+      final ({List<SystemFontEntry> fonts, String? error}) scan = await b.service.scanSystemFonts();
+      expect(scan.error, isNull);
+      expect(scan.fonts.single.familyName, 'Arial');
+      expect(scan.fonts.single.displayName, 'Arial');
+      expect(b.catalog.listCalls, 1);
+      b.service.dispose();
+    });
+
+    test('scanSystemFonts：端口失败（如非 Windows）→ 空列表 + 可展示提示，不抛异常', () async {
+      final b = buildService();
+      b.catalog.listError = '当前系统不支持读取系统字体，请使用「导入字体」选择文件';
+      final ({List<SystemFontEntry> fonts, String? error}) scan = await b.service.scanSystemFonts();
+      expect(scan.fonts, isEmpty);
+      expect(scan.error, '当前系统不支持读取系统字体，请使用「导入字体」选择文件');
+      b.service.dispose();
+    });
+
+    test('scanSystemFonts：端口抛非预期异常 → 通用提示兜底', () async {
+      final b = buildService();
+      b.catalog.crashList = true;
+      final ({List<SystemFontEntry> fonts, String? error}) scan = await b.service.scanSystemFonts();
+      expect(scan.fonts, isEmpty);
+      expect(scan.error, '读取系统字体失败，请使用「导入字体」选择文件');
+      b.service.dispose();
+    });
+
+    test('importSystemFont：读取字节 → 走既有校验/落盘/注册/持久化链路', () async {
+      final b = buildService();
+      await b.service.bootstrap();
+      final SystemFontEntry entry = systemEntry();
+      b.catalog.bytes[entry.filePath] = fakeBytes();
+      expect(await b.service.importSystemFont(entry), isNull);
+      final ImportedFont font = b.service.registry.single;
+      expect(font.familyName, 'Arial');
+      expect(font.fileName, 'arial.ttf');
+      expect(b.files.files.keys, <String>[font.storedName]);
+      expect(b.registrar.loaded, <String>['Arial']);
+      expect(FontRegistryCodec.decode(b.store.data[FontSettingsKeys.registry]), b.service.registry);
+      // 加入后立即可被角色槽引用
+      expect(await b.service.setRoleSlot(FontRole.body, FontSlot.imported(font.fontId)), isNull);
+      expect(b.service.families.body, 'Arial');
+      b.service.dispose();
+    });
+
+    test('importSystemFont：ttc 合集走同一链路（系统字体才放行）', () async {
+      final b = buildService();
+      await b.service.bootstrap();
+      final SystemFontEntry entry = systemEntry(familyName: '华文宋体', fileName: 'STSONG.TTC');
+      b.catalog.bytes[entry.filePath] = fakeBytes();
+      expect(await b.service.importSystemFont(entry), isNull);
+      expect(b.service.registry.single.familyName, '华文宋体');
+      expect(b.service.registry.single.fileName, 'STSONG.TTC');
+      expect(b.registrar.loaded, <String>['华文宋体']);
+      b.service.dispose();
+    });
+
+    test('importSystemFont：与已导入字体同名 → 复用既有查重提示', () async {
+      final b = buildService();
+      await b.service.bootstrap();
+      final SystemFontEntry entry = systemEntry();
+      b.catalog.bytes[entry.filePath] = fakeBytes();
+      expect(await b.service.importFontBytes('arial.ttf', fakeBytes()), isNull);
+      final String? error = await b.service.importSystemFont(entry);
+      expect(error, contains('Arial'));
+      expect(b.service.registry.length, 1);
+      b.service.dispose();
+    });
+
+    test('importSystemFont：读取系统文件失败 → 错误消息且不落盘', () async {
+      final b = buildService();
+      await b.service.bootstrap();
+      b.catalog.failReads = true;
+      expect(await b.service.importSystemFont(systemEntry()), '读取系统字体文件失败：arial.ttf');
+      expect(b.service.registry, isEmpty);
+      expect(b.files.files, isEmpty);
+      b.service.dispose();
+    });
+  });
+
+  group('系统字体真实枚举（真机 IO，plain test）', () {
+    test('PlatformSystemFontCatalog 能枚举本机字体、解析家族名且文件可读', () async {
+      if (Platform.isIOS) return;
+      const PlatformSystemFontCatalog catalog = PlatformSystemFontCatalog();
+      final List<SystemFontEntry> fonts = await catalog.listFonts();
+      expect(fonts, isNotEmpty, reason: '本机应至少枚举到一款 ttf/otf/ttc 字体');
+      for (final SystemFontEntry font in fonts) {
+        expect(font.familyName, isNotEmpty);
+        expect(font.displayName, isNotEmpty);
+        expect(
+          font.fileName.toLowerCase(),
+          anyOf(endsWith('.ttf'), endsWith('.otf'), endsWith('.ttc')),
+          reason: '只收录 ttf/otf/ttc',
+        );
+        expect(File(font.filePath).existsSync(), isTrue);
+      }
+      // 抽查第一条：字节确实可读且带 SFNT 签名（真实字体文件）
+      final Uint8List bytes = await catalog.readFontBytes(fonts.first);
+      expect(bytes.length, greaterThan(1000));
+      final int signature = ByteData.sublistView(bytes, 0, 4).getUint32(0, Endian.big);
+      expect(<int>[0x00010000, 0x4F54544F, 0x74727565], contains(signature), reason: 'SFNT 签名');
     });
   });
 

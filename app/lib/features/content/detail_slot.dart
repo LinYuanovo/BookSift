@@ -72,6 +72,11 @@ class BookNavArgs {
 final StateProvider<PostSelection?> detailSelectionProvider =
     StateProvider<PostSelection?>((Ref ref) => null);
 
+/// expanded 右槽当前选中的贴吧在线帖（tid；null = 未选）。
+/// 与 [detailSelectionProvider] 互斥：打开一类详情会清空另一类。
+final StateProvider<int?> onlinePostDetailProvider =
+    StateProvider<int?>((Ref ref) => null);
+
 /// 打开帖子详情：expanded（三栏）→ 右槽原位切换；否则 push（§9.7）。
 ///
 /// 判据用「中间功能区在场」而不是老的 `!context.canPop()`：中间栈压着页面（如在线帖）
@@ -82,10 +87,22 @@ void openPostDetail(
   PostSelection selection,
 ) {
   if (centerSlotMounted()) {
+    ref.read(onlinePostDetailProvider.notifier).state = null;
     ref.read(detailSelectionProvider.notifier).state = selection;
     return;
   }
   context.push('/post/${selection.postId}', extra: selection);
+}
+
+/// 打开贴吧在线帖：expanded（三栏）→ 最右侧详情槽原位显示；否则 push /online/:tid。
+void openOnlinePostDetail(BuildContext context, int tid) {
+  if (centerSlotMounted()) {
+    final ProviderContainer container = ProviderScope.containerOf(context, listen: false);
+    container.read(detailSelectionProvider.notifier).state = null;
+    container.read(onlinePostDetailProvider.notifier).state = tid;
+    return;
+  }
+  context.push('/online/$tid');
 }
 
 /// 打开书聚合页（§5.5：书卡进入走 horizontal 共享轴）。

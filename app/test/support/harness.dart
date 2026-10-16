@@ -19,7 +19,7 @@ import 'fake_book_repository.dart';
 //  1. queriesProvider 一律注入 FakeBookRepository（纯内存，只有微任务）；
 //  2. appDatabaseProvider 被替换成「一读就抛」的哨兵 —— 任何组件路径漏走真库都会
 //     立刻炸成显式错误，而不是在 FakeAsync 假时钟区里静默挂死；
-//  3. fontServiceProvider 注入四端口全 fake 的 FontService（不触 drift / file_picker /
+//  3. fontServiceProvider 注入全端口 fake 的 FontService（不触 drift / file_picker / 注册表 /
 //     dart:ui FontLoader / 文件系统）。
 
 /// 造一个零 IO 的 FontService（端口 fake 复用 font_service_test.dart 的定义，单一出处）。
@@ -29,6 +29,7 @@ FontService fakeFontService() {
     picker: fontfakes.FakePicker(),
     registrar: fontfakes.FakeRegistrar(),
     files: fontfakes.FakeFileStore(),
+    systemFonts: fontfakes.FakeSystemCatalog(),
   );
 }
 

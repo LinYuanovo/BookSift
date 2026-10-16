@@ -15,8 +15,10 @@ library;
 import 'dart:convert';
 
 import 'package:booksift/collector/scheduler.dart' show CollectFailureKind, CollectRequestException;
+import 'package:booksift/collector/post_refresh.dart' show OnlinePostData;
 import 'package:booksift/collector/tieba_search.dart';
 import 'package:booksift/core/icons.dart';
+import 'package:booksift/features/content/online_post_page.dart';
 import 'package:booksift/features/search/search_page.dart';
 import 'package:booksift/features/search/search_state.dart';
 import 'package:dio/dio.dart';
@@ -120,12 +122,16 @@ Map<String, dynamic> postItem({
       'title': title,
       'content': '正文片段：《十日终焉》强烈推荐',
       'fname': fname,
+      'forum_name': fname,
       'is_floor': 0,
       'pid': 9001,
       'cid': 0,
       'time': time,
+      'create_time': time,
       'reply_num': replyNum,
+      'post_num': '$replyNum',
       'author': <String, dynamic>{'name_show': author, 'name': 'u_$author'},
+      'user': <String, dynamic>{'show_nickname': author, 'user_name': 'u_$author'},
     };
 
 /// Page_fsch（_classdef.py：has_more 等为 int 0/1）。
@@ -257,6 +263,7 @@ void main() {
       });
       expect(a, b);
     });
+
   });
 
   // ── 请求装配（aiotieba search_in_forum/_api.py + pack_form_request 口径） ──
@@ -299,6 +306,7 @@ void main() {
       expect(client.minIntervalMs, 1500);
       expect(client.maxIntervalMs, 3000);
     });
+
   });
 
   // ── 响应解析 / 错误 / 风控（RiskMonitor 口径） ─────────────────────────
@@ -530,11 +538,17 @@ void main() {
       await gotoOnlineAndSearch(tester);
 
       expect(adapter.requests, hasLength(1));
-      // UI 口径 only_thread=1（仅主题帖，行=帖子粒度）。
-      expect(Uri.splitQueryString(adapter.bodies.single)['only_thread'], '1');
+      // UI 口径 = 吧内 searchpost：kw=默认第一个吧、only_thread=1、相关度 sm=2。
+      expect(adapter.requests.single.method, 'POST');
+      expect(adapter.requests.single.uri.toString(), 'http://tiebac.baidu.com/c/s/searchpost');
+      final Map<String, String> form = Uri.splitQueryString(adapter.bodies.single);
+      expect(form['kw'], 'yy小说吧');
+      expect(form['only_thread'], '1');
+      expect(form['sm'], '2', reason: '相关度档 sm=RELATION');
+      expect(form['word'], kQuery);
       expect(find.text('【扫书】十日终焉 超好看'), findsOneWidget);
       expect(find.text('十日终焉 求书'), findsOneWidget);
-      // 吧名 MetaChip 限定在结果区内找：Tab 行的吧切换分段控件也带同样的吧名文本。
+      // 吧名 MetaChip 来自结果条目（与筛选栏当前吧一致）。
       expect(
         find.descendant(
           of: find.byKey(const ValueKey<String>('online-results-view')),
@@ -593,7 +607,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(adapter.requests, hasLength(2));
-      expect(Uri.splitQueryString(adapter.bodies[1])['pn'], '2');
+      final Map<String, String> page2 = Uri.splitQueryString(adapter.bodies[1]);
+      expect(page2['pn'], '2');
+      expect(page2['sm'], '2');
+      expect(page2['kw'], 'yy小说吧', reason: '翻页沿用当前吧');
       expect(find.text('第一页帖'), findsOneWidget, reason: '跨页重复 tid 去重');
       expect(find.text('第二页帖'), findsOneWidget);
       expect(find.text('加载更多'), findsNothing, reason: 'hasMore=0 收口');
@@ -699,8 +716,7 @@ void main() {
       expect(find.text('键盘触发帖'), findsOneWidget);
     });
 
-    testWidgets('吧切换：切到「哀伤雪刃」→ 旧结果作废、再触发时 kw 换吧（用户口径：加哀伤雪刃吧）',
-        (WidgetTester tester) async {
+    testWidgets('吧切换：切「哀伤雪刃」→ 旧结果作废，再触发 kw 换吧', (WidgetTester tester) async {
       final ScriptedAdapter adapter = ScriptedAdapter(<ResponseBody>[
         jsonBody(searchJson(
           posts: <Map<String, dynamic>>[postItem(tid: 1, title: 'yy 结果帖')],
@@ -717,21 +733,57 @@ void main() {
       await gotoOnlineAndSearch(tester);
 
       expect(find.text('yy 结果帖'), findsOneWidget);
-      expect(Uri.splitQueryString(adapter.bodies.single)['kw'], 'yy小说吧', reason: '默认第一个关注吧');
+      expect(Uri.splitQueryString(adapter.bodies.single)['kw'], 'yy小说吧');
 
-      // 切吧 = 旧吧结果作废回手动入口（不发请求），提示文案跟着换吧名。
       await tester.tap(find.text('哀伤雪刃'));
       await tester.pumpAndSettle();
-      expect(find.text('yy 结果帖'), findsNothing, reason: '跨吧结果不作数');
-      expect(adapter.requests, hasLength(1), reason: '切吧本身不发请求（单请求手动触发口径）');
-      expect(find.textContaining('在「哀伤雪刃」内实时搜索'), findsOneWidget);
+      expect(find.text('yy 结果帖'), findsNothing, reason: '切吧旧结果作废');
+      expect(adapter.requests, hasLength(1), reason: '切吧本身不发请求');
 
-      // 再手动触发：请求体 kw = 新吧。
       await tester.tap(find.text('搜索贴吧'));
       await tester.pumpAndSettle();
       expect(adapter.requests, hasLength(2));
-      expect(Uri.splitQueryString(adapter.bodies[1])['kw'], '哀伤雪刃');
+      final Map<String, String> second = Uri.splitQueryString(adapter.bodies[1]);
+      expect(second['kw'], '哀伤雪刃');
+      expect(second['only_thread'], '1');
+      expect(second['sm'], '2');
       expect(find.text('雪刃结果帖'), findsOneWidget);
+    });
+
+    testWidgets('expanded：点击在线结果帖 → 最右详情槽原位显示，不压中间功能区', (WidgetTester tester) async {
+      final ScriptedAdapter adapter = ScriptedAdapter(<ResponseBody>[
+        jsonBody(searchJson(
+          posts: <Map<String, dynamic>>[postItem(tid: 101, title: '右槽在线帖')],
+          page: pageInfo(),
+        )),
+      ]);
+      useSurface(tester, width: 1440, height: 900);
+      await tester.pumpWidget(testApp(
+        repo,
+        initial: searchRoute(kQuery),
+        extraOverrides: <Override>[
+          tiebaSearchClientProvider.overrideWithValue(scriptedClient(adapter)),
+          onlinePostProvider.overrideWith(
+            (Ref ref, int tid) async => OnlinePostData(tid: tid, title: '在线帖正文', floors: const []),
+          ),
+        ],
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('贴吧在线'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('搜索贴吧'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('选择左侧内容查看详情'), findsOneWidget);
+      await tester.tap(find.text('右槽在线帖'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(OnlinePostPage), findsOneWidget);
+      expect(find.text('在线帖正文'), findsOneWidget);
+      expect(find.text('选择左侧内容查看详情'), findsNothing);
+      // 右槽：页面中心应落在窗口右半区（1440 宽下 > 720）。
+      expect(tester.getCenter(find.byType(OnlinePostPage)).dx, greaterThan(720));
+      expect(find.text('贴吧在线'), findsOneWidget, reason: '中间功能区仍在，未被全窗详情压掉');
     });
   });
 }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/fonts/font_registry.dart';
 import '../../core/fonts/font_service.dart';
 import '../../core/fonts/font_tokens.dart';
+import '../../core/fonts/system_font_catalog.dart';
 import '../../core/icons.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../theme/app_colors.dart';
@@ -12,7 +13,7 @@ import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
 
 /// 字体管理页（设计系统 v1.4 §2.2）：十角色字体槽下拉 + Aa 样张预览行 +
-/// 导入字体（ttf/otf）/ 删除（引用角色自动回退 system）/ 恢复默认。
+/// 导入字体（ttf/otf）/ 读取系统字体 / 删除（引用角色自动回退 system）/ 恢复默认。
 class FontManagePage extends ConsumerStatefulWidget {
   const FontManagePage({super.key});
 
@@ -63,6 +64,34 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
     } else if (service.registry.isNotEmpty) {
       _snack('已导入「${service.registry.last.familyName}」，可在上方为角色选用');
     }
+  }
+
+  /// 读取系统已安装字体 → 选择 → 加入「我的字体」（复用 importSystemFont 链路）。
+  Future<void> _pickSystemFont(FontService service) async {
+    setState(() => _busy = true);
+    final ({List<SystemFontEntry> fonts, String? error}) scan = await service.scanSystemFonts();
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (scan.error != null) {
+      _snack(scan.error!);
+      return;
+    }
+    if (scan.fonts.isEmpty) {
+      _snack('未找到可加入的系统字体（支持 ttf / otf / ttc）');
+      return;
+    }
+    final SystemFontEntry? picked = await showDialog<SystemFontEntry>(
+      context: context,
+      builder: (BuildContext context) => _SystemFontPickerDialog(fonts: scan.fonts),
+    );
+    if (picked == null || !mounted) return;
+    final String? error = await service.importSystemFont(picked);
+    if (!mounted) return;
+    if (error != null) {
+      _snack(error);
+      return;
+    }
+    _snack('已加入「${service.registry.last.familyName}」，可在上方为角色选用');
   }
 
   Future<void> _confirmDelete(FontService service, ImportedFont font) async {
@@ -155,15 +184,33 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
             ),
           ),
           SizedBox(height: space.space6),
-          FilledButton.icon(
-            onPressed: _busy ? null : () => _import(service),
-            // 设计稿 i-plus（index.html:1047）；color 缺省 → 继承按钮前景（含 _busy 禁用态）。
-            icon: const AppIcon('plus', size: 20),
-            label: Text(_busy ? '导入中…' : '导入字体'),
-            style: FilledButton.styleFrom(
-              minimumSize: Size.fromHeight(AppMetrics.buttonHeight),
-              shape: const RoundedRectangleBorder(borderRadius: AppRadius.mdBorder),
-            ),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _busy ? null : () => _import(service),
+                  // 设计稿 i-plus（index.html:1047）；color 缺省 → 继承按钮前景（含 _busy 禁用态）。
+                  icon: const AppIcon('plus', size: 20),
+                  label: Text(_busy ? '导入中…' : '导入字体'),
+                  style: FilledButton.styleFrom(
+                    minimumSize: Size.fromHeight(AppMetrics.buttonHeight),
+                    shape: const RoundedRectangleBorder(borderRadius: AppRadius.mdBorder),
+                  ),
+                ),
+              ),
+              SizedBox(width: space.space3),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: _busy ? null : () => _pickSystemFont(service),
+                  icon: const AppIcon('search', size: 20),
+                  label: const Text('读取系统字体'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: Size.fromHeight(AppMetrics.buttonHeight),
+                    shape: const RoundedRectangleBorder(borderRadius: AppRadius.mdBorder),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -302,6 +349,93 @@ class _SlotDropdown extends StatelessWidget {
           }
         },
       ),
+    );
+  }
+}
+
+/// 系统字体选择弹层：搜索过滤 + 单选列表 + 确认加入「我的字体」。
+class _SystemFontPickerDialog extends StatefulWidget {
+  const _SystemFontPickerDialog({required this.fonts});
+
+  final List<SystemFontEntry> fonts;
+
+  @override
+  State<_SystemFontPickerDialog> createState() => _SystemFontPickerDialogState();
+}
+
+class _SystemFontPickerDialogState extends State<_SystemFontPickerDialog> {
+  final TextEditingController _query = TextEditingController();
+  SystemFontEntry? _selected;
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  List<SystemFontEntry> _filtered() {
+    final String keyword = _query.text.trim().toLowerCase();
+    if (keyword.isEmpty) return widget.fonts;
+    return widget.fonts
+        .where(
+          (SystemFontEntry f) =>
+              f.displayName.toLowerCase().contains(keyword) || f.fileName.toLowerCase().contains(keyword),
+        )
+        .toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final AppTypography t = AppTypography.of(context);
+    final AppColors colors = AppColors.of(context);
+    final AppSpacing space = AppSpacing.of(context);
+    final List<SystemFontEntry> fonts = _filtered();
+
+    return AlertDialog(
+      title: const Text('读取系统字体'),
+      content: SizedBox(
+        width: 420,
+        height: 380,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            TextField(
+              controller: _query,
+              decoration: const InputDecoration(hintText: '搜索字体名', isDense: true),
+              onChanged: (String value) => setState(() {}),
+            ),
+            SizedBox(height: space.space2),
+            Expanded(
+              child: fonts.isEmpty
+                  ? Center(child: Text('没有匹配的字体', style: t.caption.copyWith(color: colors.textMuted)))
+                  : ListView.builder(
+                      itemCount: fonts.length,
+                      itemBuilder: (BuildContext context, int index) {
+                        final SystemFontEntry font = fonts[index];
+                        final bool selected = identical(font, _selected);
+                        return ListTile(
+                          dense: true,
+                          selected: selected,
+                          title: Text(font.displayName, style: t.body.copyWith(color: colors.text)),
+                          subtitle: Text(font.fileName, style: t.caption.copyWith(color: colors.textMuted)),
+                          trailing: selected ? const AppIcon('check', size: 16) : null,
+                          onTap: () => setState(() => _selected = font),
+                        );
+                      },
+                    ),
+            ),
+            SizedBox(height: space.space1),
+            Text('仅列出可加载的 ttf / otf / ttc 字体', style: t.caption.copyWith(color: colors.textMuted)),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('取消')),
+        FilledButton(
+          onPressed: _selected == null ? null : () => Navigator.of(context).pop(_selected),
+          child: const Text('加入我的字体'),
+        ),
+      ],
     );
   }
 }

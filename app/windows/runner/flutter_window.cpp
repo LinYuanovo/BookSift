@@ -4,7 +4,9 @@
 #include <flutter_windows.h>
 #include <windowsx.h>
 
+#include <cstdlib>
 #include <optional>
+#include <string>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -39,6 +41,99 @@ int ScaleForWindow(HWND window, int logical) {
   return static_cast<int>(logical * scale + 0.5);
 }
 
+// ── 窗口位置/尺寸/最大化态记忆（用户口径：关闭时记住，下次启动恢复） ──────────
+// 存放 `%LOCALAPPDATA%\BooksSift\window.ini`（机器本地状态，不随漫游同步；ASCII 路径，
+// 无编码坑）。用 Win32 Profile API 读写纯数字键值：零依赖、无解析歧义。
+constexpr const wchar_t kPlacementDirName[] = L"BooksSift";
+constexpr const wchar_t kPlacementFileName[] = L"window.ini";
+constexpr const wchar_t kPlacementSection[] = L"window";
+
+std::wstring PlacementFilePath() {
+  wchar_t base[MAX_PATH * 2]{};
+  const DWORD len =
+      GetEnvironmentVariableW(L"LOCALAPPDATA", base, ARRAYSIZE(base));
+  if (len == 0 || len >= ARRAYSIZE(base)) {
+    return L"";
+  }
+  std::wstring dir = base;
+  dir += L"\\";
+  dir += kPlacementDirName;
+  CreateDirectoryW(dir.c_str(), nullptr);  // 已存在时返回 false，忽略
+  return dir + L"\\" + kPlacementFileName;
+}
+
+bool ReadPlacementInt(const std::wstring& file, const wchar_t* key,
+                      long* out) {
+  wchar_t buf[32]{};
+  if (GetPrivateProfileStringW(kPlacementSection, key, L"", buf,
+                               ARRAYSIZE(buf), file.c_str()) == 0) {
+    return false;
+  }
+  wchar_t* end = nullptr;
+  const long value = wcstol(buf, &end, 10);
+  if (end == buf) {
+    return false;
+  }
+  *out = value;
+  return true;
+}
+
+// 读取上次关闭时的普通态矩形与最大化标记。返回 false = 无记录/记录非法
+// （调用方保持默认启动位置）。尺寸只做粗校验，是否仍落在可见显示器内由调用方判。
+bool LoadWindowPlacement(RECT* rect, bool* maximized) {
+  *maximized = false;
+  const std::wstring file = PlacementFilePath();
+  if (file.empty()) {
+    return false;
+  }
+  long x = 0, y = 0, w = 0, h = 0;
+  if (!ReadPlacementInt(file, L"x", &x) ||
+      !ReadPlacementInt(file, L"y", &y) ||
+      !ReadPlacementInt(file, L"w", &w) ||
+      !ReadPlacementInt(file, L"h", &h)) {
+    return false;
+  }
+  if (w < 400 || h < 400 || w > 20000 || h > 20000) {
+    return false;
+  }
+  rect->left = static_cast<LONG>(x);
+  rect->top = static_cast<LONG>(y);
+  rect->right = static_cast<LONG>(x + w);
+  rect->bottom = static_cast<LONG>(y + h);
+  *maximized =
+      GetPrivateProfileIntW(kPlacementSection, L"maximized", 0, file.c_str()) !=
+      0;
+  return true;
+}
+
+void SaveWindowPlacement(HWND window) {
+  if (window == nullptr) {
+    return;
+  }
+  const std::wstring file = PlacementFilePath();
+  if (file.empty()) {
+    return;
+  }
+  WINDOWPLACEMENT wp{};
+  wp.length = sizeof(wp);
+  if (!GetWindowPlacement(window, &wp)) {
+    return;
+  }
+  // rcNormalPosition = 普通态（非最大化）窗口矩形；窗口当前最小化时它仍是还原矩形。
+  const RECT& r = wp.rcNormalPosition;
+  const auto write = [&file](const wchar_t* key, long value) {
+    WritePrivateProfileStringW(kPlacementSection, key,
+                               std::to_wstring(value).c_str(), file.c_str());
+  };
+  write(L"x", r.left);
+  write(L"y", r.top);
+  write(L"w", r.right - r.left);
+  write(L"h", r.bottom - r.top);
+  WritePrivateProfileStringW(kPlacementSection, L"maximized",
+                             wp.showCmd == SW_SHOWMAXIMIZED ? L"1" : L"0",
+                             file.c_str());
+}
+
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -65,7 +160,12 @@ bool FlutterWindow::OnCreate() {
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+    if (start_maximized_) {
+      // 上次关闭时是最大化：首帧直接以最大化示人，避免 普通态 → 最大化 的闪跳。
+      ::ShowWindow(GetHandle(), SW_SHOWMAXIMIZED);
+    } else {
+      this->Show();
+    }
   });
 
   SetupWindowChannel();
@@ -74,6 +174,9 @@ bool FlutterWindow::OnCreate() {
   const int corner_preference = DWMWCP_ROUND;
   DwmSetWindowAttribute(GetHandle(), DWMWA_WINDOW_CORNER_PREFERENCE,
                         &corner_preference, sizeof(corner_preference));
+
+  // 恢复上次关闭时的位置/尺寸/最大化态（窗口尚未显示，先摆位再首帧亮相，无跳变）。
+  ApplySavedPlacement();
 
   // Flutter can complete the first frame before the "show window" callback is
   // registered. The following call ensures a frame is pending to ensure the
@@ -131,6 +234,24 @@ void FlutterWindow::NotifyMaximizedChanged() {
       "maximizedChanged",
       std::make_unique<flutter::EncodableValue>(IsZoomed(GetHandle()) != 0));
 }
+
+void FlutterWindow::ApplySavedPlacement() {
+  RECT rect{};
+  bool maximized = false;
+  if (!LoadWindowPlacement(&rect, &maximized)) {
+    return;
+  }
+  // 显示器布局变化（拔掉外接屏/改分辨率）后旧位置可能整窗落在屏幕外：
+  // 与任何显示器都不相交则丢弃记录，保持默认启动位置。
+  if (MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) == nullptr) {
+    return;
+  }
+  SetWindowPos(GetHandle(), nullptr, rect.left, rect.top, rect.right - rect.left,
+               rect.bottom - rect.top, SWP_NOZORDER | SWP_NOACTIVATE);
+  start_maximized_ = maximized;
+}
+
+void FlutterWindow::SavePlacement() { SaveWindowPlacement(GetHandle()); }
 
 LRESULT FlutterWindow::HitTestNcArea(HWND window, LPARAM lparam) const {
   // WM_NCHITTEST 的坐标是**屏幕坐标**。
@@ -197,14 +318,19 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   // 这两条必须抢在 Flutter 引擎之前处理（引擎不认这套 NC 规则）。
   switch (message) {
     case WM_NCCALCSIZE: {
-      // 客户区 = 整窗：**必须显式把矩形写回去**——只 `return 0` 不改 rect 在本机仍会落到
-      // 系统默认帧（实测窗口顶部残留一条原生标题栏，客户端原点 (17,40)）。
-      // wParam==TRUE 时 lParam 是 NCCALCSIZE_PARAMS（rgrc[0]），FALSE 时就是 RECT*，
-      // 两者同一块内存布局，都按屏幕坐标处理。
+      // 客户区 = 整窗。wParam==TRUE 时 lParam 是 NCCALCSIZE_PARAMS（rgrc[0]），
+      // FALSE 时就是 RECT*，两者同一块内存布局，都按屏幕坐标处理。
+      //
+      // ⚠ 入参矩形就是系统**提议的新窗口矩形**：返回 0 且不修改它 = 客户区铺满整窗。
+      // 绝不能改用 GetWindowRect() 自己算——NC 重算发生在窗口真正移动/缩放**之前**，
+      // 那时取到的是旧矩形。实测（tools/verify_window_behavior.ps1 基线）三个症状同源：
+      //   最大化还原后客户区停在最大化尺寸（win 1280x720 / client 1721x926，顶部错位）；
+      //   最小化还原后停在窗口图标尺寸（client 158x26，界面没法点）；
+      //   拖拽改大小时客户区永远滞后一拍。
       RECT* client_rect = (wparam == TRUE)
                               ? &reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam)->rgrc[0]
                               : reinterpret_cast<RECT*>(lparam);
-      if (IsZoomed(hwnd)) {
+      if (IsZoomed(hwnd) && !IsIconic(hwnd)) {
         // 最大化时窗口矩形盖住整块显示器（含任务栏），按显示器工作区裁回。
         MONITORINFO monitor_info{};
         monitor_info.cbSize = sizeof(monitor_info);
@@ -212,16 +338,15 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                            &monitor_info)) {
           *client_rect = monitor_info.rcWork;
         }
-      } else {
-        RECT window_rect{};
-        if (GetWindowRect(hwnd, &window_rect)) {
-          *client_rect = window_rect;
-        }
       }
       return 0;
     }
     case WM_NCHITTEST:
       return HitTestNcArea(hwnd, lparam);
+    case WM_CLOSE:
+      // 关闭前落盘窗口位置/尺寸/最大化态（用户口径：下次启动恢复）。
+      SavePlacement();
+      break;
     case WM_SIZE:
       NotifyMaximizedChanged();
       break;

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:animations/animations.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,7 +10,6 @@ import '../../collector/tieba_search.dart';
 import '../../core/external_launch.dart';
 import '../../core/icons.dart';
 import '../../core/widgets/app_toast.dart';
-import '../../core/nav/center_slot.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/collect_repository.dart' show kDefaultForums;
@@ -23,7 +21,6 @@ import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
 import '../content/detail_slot.dart';
-import '../content/online_post_page.dart';
 import '../export/booklist_export.dart';
 import '../export/export_sheet.dart';
 import '../home/cards.dart';
@@ -40,7 +37,7 @@ import 'search_state.dart';
 // Tab 行动作组 = 清除 close / 确认 check / 目录 list（用户口径：动作组图标化并居右对齐）。
 // P2-4：结果区「导出书单」→ 当前搜索结果构造 BooklistDoc，复用 export 库弹层（只 import 不改）。
 // P2-5：Tab 行右端「目录」= 已加载结果行弹层 → 精确跳转对应结果卡（_ResultsTocJump）；
-//       在线结果排序（相关度/时间）纯客户端重排，口径见 search_state.onlineSortProvider。
+//       在线结果排序（相关度/时间）由 searchpost sm 服务端取数，切档重发请求。
 
 /// Unix 秒 → 'YYYY-MM-DD'（在线结果行时间列）。
 String formatOnlineDate(int unixSeconds) {
@@ -1602,7 +1599,7 @@ void openThreadLink(BuildContext context, OnlineThread thread) =>
 /// 加载/空/错误三态齐备，错误含 §8.12「贴吧接口似乎已变更」降级文案。
 /// ListView 接 ScrollChrome（常驻细滚动条 + 悬浮跳顶/跳底）。
 /// 本子树零 Material Icon（结构图标一律 AppIcon SVG，测试守卫见 test/search）。
-/// P2-5：排序行（相关度/时间，客户端重排已加载结果）+ 目录跳转（[_ResultsTocJump]）。
+/// P2-5：排序行（相关度/时间，服务端 sm 重发）+ 目录跳转（[_ResultsTocJump]）。
 class _OnlineResultsView extends ConsumerStatefulWidget {
   const _OnlineResultsView({super.key, required this.toc});
 
@@ -1637,11 +1634,10 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
     // 当前选中的吧（结果里记的是产出时的吧名，两者不一致 = 该结果已作废）。
     final String forum = ref.watch(onlineForumProvider);
     final OnlineSearchNotifier notifier = ref.read(onlineSearchProvider.notifier);
-    // 输入词已变（结果过期）→ 回手动触发入口，不拿旧词结果冒充新词。
-    final bool stale = online.query != query || online.forum != forum;
-    // 排序 = 客户端重排**已加载**结果（切换不重新发请求；口径见 onlineSortProvider 注释）。
-    final List<OnlineThread> rows =
-        sortOnlineThreads(online.threads, ref.watch(onlineSortProvider));
+    final OnlineSort sort = ref.watch(onlineSortProvider);
+    // 输入词/吧/排序已变而结果尚未跟上 → 回手动触发入口，不拿旧条件结果冒充新条件。
+    final bool stale = online.query != query || online.forum != forum || online.sort != sort;
+    final List<OnlineThread> rows = online.threads;
 
     // 目录登记（P2-5）：只列已加载帖子行，顺序与列表一致（随排序档变化）。
     // 在线 Tab 不登记 hasMore/loadMore：在线是「单请求手动触发」口径（§8.11 匿名通道频控），
@@ -1697,7 +1693,7 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
               SizedBox(height: s.space3),
               StaggerPanel(
                 spacing: s.cardGap,
-                switchKey: ValueKey<String>('${online.query}#${online.page}'),
+                switchKey: ValueKey<String>('${online.query}#${online.sort.name}#${online.page}'),
                 children: <Widget>[
                   for (int i = 0; i < rows.length; i++)
                     _OnlineThreadCard(key: tocKeyAt(i), thread: rows[i]),
@@ -1726,9 +1722,8 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
   }
 }
 
-/// 在线结果排序行（P2-5）：相关度 = 接口返回原序 / 时间 = 客户端按 createTime 倒序稳定重排。
-/// 样式复用本地筛选 chip 令牌（[CountChip] 选中态 accent），切换**不重新发请求**
-/// ——取数固定 sm=0，口径见 search_state.dart 的 onlineSortProvider 段注释。
+/// 在线结果排序行（P2-5）：相关度 / 时间均由吧内 searchpost 服务端返回；切档重发请求。
+/// 样式复用本地筛选 chip 令牌（[CountChip] 选中态 accent）。
 class _OnlineSortRow extends ConsumerWidget {
   const _OnlineSortRow();
 
@@ -1736,7 +1731,14 @@ class _OnlineSortRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppSpacing s = AppSpacing.of(context);
     final OnlineSort sort = ref.watch(onlineSortProvider);
-    void pick(OnlineSort v) => ref.read(onlineSortProvider.notifier).state = v;
+    void pick(OnlineSort v) {
+      if (v == sort) return;
+      ref.read(onlineSortProvider.notifier).state = v;
+      final OnlineSearchState online = ref.read(onlineSearchProvider);
+      if (online.query.isNotEmpty) {
+        ref.read(onlineSearchProvider.notifier).search(online.query, sort: v);
+      }
+    }
     return Row(
       children: <Widget>[
         CountChip(
@@ -1842,13 +1844,8 @@ class _OnlineThreadCard extends StatelessWidget {
     final String title = thread.title.isEmpty ? '（无标题）' : thread.title;
     return AccentCard(
       tone: SemanticTone.neutral,
-      onTap: () => openCenterPage(
-        context,
-        OnlinePostPage(tid: thread.tid),
-        type: SharedAxisTransitionType.horizontal,
-        // 窄屏保持原路由（/online/:tid）语义。
-        fullScreen: () => context.push('/online/${thread.tid}'),
-      ),
+      // 横屏（expanded）在**最右侧详情功能区**原位显示；窄屏保持 /online/:tid。
+      onTap: () => openOnlinePostDetail(context, thread.tid),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[

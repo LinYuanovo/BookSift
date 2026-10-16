@@ -21,7 +21,13 @@ void main() {
     () async {
       final TiebaSearchClient client = TiebaSearchClient(); // 生产节流 1.5~3.0s
       try {
-        final OnlineSearchPage page = await client.search('yy小说吧', '十日终焉', rn: 10);
+        final OnlineSearchPage page = await client.search(
+          'yy小说吧',
+          '十日终焉',
+          rn: 10,
+          sm: ForumSearchSort.relation,
+          onlyThread: true,
+        );
         // ignore: avoid_print
         print('smoke: threads=${page.threads.length} hasMore=${page.hasMore} '
             'currentPage=${page.currentPage} totalPage=${page.totalPage} '

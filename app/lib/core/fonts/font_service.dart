@@ -5,6 +5,7 @@ import '../../data/repo/database_provider.dart';
 import 'font_ports.dart';
 import 'font_registry.dart';
 import 'font_tokens.dart';
+import 'system_font_catalog.dart';
 
 /// 字体服务：导入注册表 + 角色槽配置 + 运行时家族加载（ChangeNotifier → Riverpod）。
 ///
@@ -18,15 +19,18 @@ class FontService extends ChangeNotifier {
     FontFilePicker picker = const PlatformFontFilePicker(),
     FontRegistrar registrar = const RuntimeFontRegistrar(),
     FontFileStore files = const AppSupportFontFileStore(),
+    SystemFontCatalog systemFonts = const PlatformSystemFontCatalog(),
   }) : _settings = settings,
        _picker = picker,
        _registrar = registrar,
-       _files = files;
+       _files = files,
+       _systemFonts = systemFonts;
 
   final FontSettingsStore _settings;
   final FontFilePicker _picker;
   final FontRegistrar _registrar;
   final FontFileStore _files;
+  final SystemFontCatalog _systemFonts;
 
   List<ImportedFont> _registry = const <ImportedFont>[];
 
@@ -78,25 +82,66 @@ class FontService extends ChangeNotifier {
     return importFontBytes(picked.fileName, picked.bytes);
   }
 
+  /// 枚举系统已安装字体（ttf / otf / ttc）供选择界面展示。
+  /// 失败降级为「空列表 + 可展示的错误消息」，不抛异常、不影响现有导入。
+  Future<({List<SystemFontEntry> fonts, String? error})> scanSystemFonts() async {
+    try {
+      return (fonts: await _systemFonts.listFonts(), error: null);
+    } on SystemFontCatalogException catch (e) {
+      return (fonts: const <SystemFontEntry>[], error: e.message);
+    } catch (_) {
+      return (fonts: const <SystemFontEntry>[], error: '读取系统字体失败，请使用「导入字体」选择文件');
+    }
+  }
+
+  /// 读取所选系统字体字节，走 [importFontBytes] 现有校验 / 落盘 / 注册 / 持久化链路。
+  /// 返回 null = 成功，非 null = 可展示的错误消息。
+  Future<String?> importSystemFont(SystemFontEntry entry) async {
+    final Uint8List bytes;
+    try {
+      bytes = await _systemFonts.readFontBytes(entry);
+    } catch (_) {
+      return '读取系统字体文件失败：${entry.fileName}';
+    }
+    return _importFontBytes(
+      entry.fileName,
+      bytes,
+      familyName: entry.familyName,
+      allowCollections: true,
+    );
+  }
+
   /// 导入字节流：校验 → 落盘 → 注册引擎 → 持久化。失败自动回滚，不抛异常。
-  Future<String?> importFontBytes(String fileName, Uint8List bytes) async {
+  Future<String?> importFontBytes(String fileName, Uint8List bytes) =>
+      _importFontBytes(fileName, bytes);
+
+  Future<String?> _importFontBytes(
+    String fileName,
+    Uint8List bytes, {
+    String? familyName,
+    bool allowCollections = false,
+  }) async {
     final String ext = _extensionOf(fileName);
-    if (ext != 'ttf' && ext != 'otf') {
-      return '仅支持 ttf / otf 字体文件';
+    final bool supported = ext == 'ttf' || ext == 'otf' || (allowCollections && ext == 'ttc');
+    if (!supported) {
+      return allowCollections ? '仅支持 ttf / otf / ttc 字体文件' : '仅支持 ttf / otf 字体文件';
     }
     if (bytes.isEmpty) {
       return '字体文件为空';
     }
-    final String familyName = fileName.substring(0, fileName.length - ext.length - 1);
-    if (familyName.isEmpty) {
-      return '无法从文件名解析字体名';
+    final String resolvedFamily =
+        (familyName ?? fileName.substring(0, fileName.length - ext.length - 1)).trim();
+    if (resolvedFamily.isEmpty) {
+      return '无法解析字体名称';
     }
-    if (_registry.any((ImportedFont f) => f.familyName == familyName)) {
-      return '已导入同名字体「$familyName」';
+    if (_registry.any(
+      (ImportedFont f) => f.familyName.toLowerCase() == resolvedFamily.toLowerCase(),
+    )) {
+      return '已导入同名字体「$resolvedFamily」';
     }
     final ImportedFont font = ImportedFont(
       fontId: _newFontId(),
-      familyName: familyName,
+      familyName: resolvedFamily,
       fileName: fileName,
       importedAt: DateTime.now(),
     );
