@@ -213,7 +213,8 @@ void main() {
       expect(find.text(preview), findsOneWidget);
     });
 
-    testWidgets('不足 100 字不截断、不给「展开全文」；未开 expandableComment 时全文照登', (WidgetTester tester) async {
+    testWidgets('不足 100 字不截断、不给「展开全文」；未开 expandableComment 也按 100 字截断',
+        (WidgetTester tester) async {
       const String short = '稳更的长篇，节奏不错。';
       await tester.pumpWidget(_atom(BookEntryCard(entry: entry(comment: short), expandableComment: true)));
       await tester.pumpAndSettle();
@@ -223,8 +224,11 @@ void main() {
       final String long = "长${'字' * 130}";
       await tester.pumpWidget(_atom(BookEntryCard(entry: entry(comment: long))));
       await tester.pumpAndSettle();
-      expect(find.text(long), findsOneWidget, reason: '分类预览/随机书荒不做折叠');
-      expect(find.text('展开全文'), findsNothing);
+      // 用户口径：所有正文预览统一 100 字截断（无展开入口的卡也不再全文照登）。
+      final String clipped = '${String.fromCharCodes(long.runes.take(100))}…';
+      expect(find.text(clipped), findsOneWidget);
+      expect(find.text(long), findsNothing, reason: '超 100 字不再全文照登');
+      expect(find.text('展开全文'), findsNothing, reason: '未开 expandableComment 不给展开入口');
     });
 
     testWidgets('hideBookName：首行不渲染书名，日期仍在（书聚合页整页同书）', (WidgetTester tester) async {

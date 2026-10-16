@@ -714,24 +714,33 @@ class _GridEntry extends StatelessWidget {
   }
 }
 
+/// 随机书荒面板 key（固定高度断言用；面板高度不随内容/滑动变化）。
+const ValueKey<String> kRandomBooksSheetKey = ValueKey<String>('random-books-sheet');
+
 void _showRandomSheet(BuildContext context, WidgetRef ref) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    showDragHandle: true,
-    builder: (BuildContext sheetContext) => DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.75,
-      builder: (BuildContext context, ScrollController controller) => _RandomBooksSheet(controller: controller),
-    ),
+    // 固定高度面板（用户口径：70% 高、不随滑动改变）：不要拖拽手柄、禁用拖动，
+    // 点遮罩 / 系统返回仍可关闭；无手柄时面板总高 = SizedBox 高度（有手柄会再叠加 48dp）。
+    showDragHandle: false,
+    enableDrag: false,
+    builder: (BuildContext sheetContext) {
+      final MediaQueryData mq = MediaQuery.of(sheetContext);
+      final double height =
+          (mq.size.height - mq.viewPadding.top - mq.viewPadding.bottom) * AppMetrics.randomSheetHeightFactor;
+      return SizedBox(
+        key: kRandomBooksSheetKey,
+        height: height,
+        child: const _RandomBooksSheet(),
+      );
+    },
   );
 }
 
 /// 随机书荒面板（P1-3：换一批 = invalidate 重抽）。
 class _RandomBooksSheet extends ConsumerWidget {
-  const _RandomBooksSheet({required this.controller});
-
-  final ScrollController controller;
+  const _RandomBooksSheet();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -739,7 +748,6 @@ class _RandomBooksSheet extends ConsumerWidget {
     final AsyncValue<List<EntryRow>> async = ref.watch(randomBooksProvider);
     final List<EntryRow> books = async.value ?? const <EntryRow>[];
     return ListView(
-      controller: controller,
       padding: EdgeInsets.fromLTRB(s.pagePadding, 0, s.pagePadding, s.space8),
       children: <Widget>[
         SectionTitle(

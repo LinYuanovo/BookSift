@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../classify/src/engine.dart' show kRecommendKind;
 import '../../core/constants.dart';
 import '../../core/icons.dart';
 import '../../data/repo/queries.dart';
@@ -43,6 +44,14 @@ SemanticTone toneOf({required int flag, String? category}) {
   }
   return SemanticTone.neutral;
 }
+
+/// 条目三分类型 → 语义色调（推书档走推荐绿「推荐」徽标；与计数同源，见 EntryRow.kindLabel）。
+SemanticTone toneOfEntry(EntryRow e) => switch (e.kindLabel) {
+  kRecommendKind => SemanticTone.recommend,
+  CategoryKind.avoid => SemanticTone.avoid,
+  CategoryKind.ask => SemanticTone.ask,
+  _ => SemanticTone.scan,
+};
 
 /// 帖子级语义色调（post_kind 单判，不看 posts.recommend_flag）。
 ///
@@ -345,8 +354,6 @@ class PostCard extends StatelessWidget {
             SizedBox(height: s.space2),
             Text(
               data.summary!,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
               style: t.secondary.copyWith(color: c.textSecondary),
             ),
           ],
@@ -454,7 +461,7 @@ class _BookEntryCardState extends State<BookEntryCard> {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
     final EntryRow e = widget.entry;
-    final SemanticTone tone = toneOf(flag: e.recommendFlag, category: e.category);
+    final SemanticTone tone = toneOfEntry(e);
     // 预览原文 = 条目评语，空则回退楼层正文（种子库 4169 条 comment 为空但楼层正文在场；
     // 不回退会让书聚合/分类预览卡片正文整块空白）。截断在 UI 侧按字符做（可展开全文）。
     final String comment = e.previewSource ?? '';
@@ -462,7 +469,8 @@ class _BookEntryCardState extends State<BookEntryCard> {
     // 而这里要的是稳定的「开头 N 字」；按 runes 切才不会把代理对（emoji）劈成半个。
     final List<int> runes = comment.runes.toList();
     final bool collapsible = widget.expandableComment && runes.length > widget.commentMaxCollapsed;
-    final String shown = (collapsible && !_expanded)
+    final bool clip = !widget.expandableComment && runes.length > widget.commentMaxCollapsed;
+    final String shown = (collapsible && !_expanded) || clip
         ? '${String.fromCharCodes(runes.take(widget.commentMaxCollapsed))}…'
         : comment;
 
@@ -473,8 +481,9 @@ class _BookEntryCardState extends State<BookEntryCard> {
         children: <Widget>[
           Text(
             shown,
+            maxLines: null,
             style: t.secondary.copyWith(
-              color: tone == SemanticTone.avoid ? c.danger : c.textSecondary, // 排雷摘要砖红（设计系统 §3 #04）
+              color: tone == SemanticTone.avoid ? c.danger : c.textSecondary,
             ),
           ),
           if (collapsible)
@@ -574,6 +583,83 @@ class _BookEntryCardState extends State<BookEntryCard> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 计数对比胶囊「扫书 n ｜ 推荐 n ｜ 排雷 m」（书聚合页头；三档皆可点 = 语义筛选）。
+class CountTrio extends StatelessWidget {
+  const CountTrio({
+    super.key,
+    required this.scan,
+    required this.recommend,
+    required this.avoid,
+    this.onScanTap,
+    this.onRecommendTap,
+    this.onAvoidTap,
+  });
+
+  final int scan;
+  final int recommend;
+  final int avoid;
+  final VoidCallback? onScanTap;
+  final VoidCallback? onRecommendTap;
+  final VoidCallback? onAvoidTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppColors c = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    final AppSpacing s = AppSpacing.of(context);
+    Widget half(String label, int n, Color fg, VoidCallback? onTap) {
+      return Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          onTap: onTap,
+          // 墨渍贴合 pill 圆角：无 borderRadius 时按压高亮/涟漪是直角矩形，会外溢到
+          // chip 圆角之外（CountDuo 的同类修法是容器 Clip.antiAlias，此处就近加在墨渍层）。
+          borderRadius: AppRadius.pillBorder,
+          hoverColor: c.surfaceSunken,
+          highlightColor: c.surfaceSunken,
+          splashColor: c.surfaceSunken,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: AppMetrics.minTouchTarget),
+            padding: EdgeInsets.symmetric(horizontal: s.space4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  '$n',
+                  style: AppTypography.tabular(
+                    t.headline.copyWith(fontSize: 17, fontWeight: FontWeight.w700, height: 1, color: fg),
+                  ),
+                ),
+                SizedBox(width: s.space1),
+                Text(label, style: t.bodyStrong.copyWith(color: c.text)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget chip(String label, int n, Color fg, VoidCallback? onTap) => Container(
+          decoration: BoxDecoration(
+            color: c.surfaceRaised,
+            borderRadius: AppRadius.pillBorder,
+            border: Border.all(color: c.borderStrong, width: AppMetrics.hairline),
+          ),
+          child: half(label, n, fg, onTap),
+        );
+    // 窄屏放不下三档时换行，宽屏同一行；不把三档硬塞进一条胶囊（1440 宽下会溢出）。
+    return Wrap(
+      spacing: s.space2,
+      runSpacing: s.space2,
+      children: <Widget>[
+        chip('扫书', scan, c.textSecondary, onScanTap),
+        chip('推荐', recommend, c.recommend, onRecommendTap),
+        chip('排雷', avoid, c.danger, onAvoidTap),
+      ],
     );
   }
 }

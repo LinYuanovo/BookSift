@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:drift/drift.dart';
 
+import '../../classify/src/engine.dart' show entryKindLabel, kRecommendKind;
+import '../../core/constants.dart';
 import '../db/app_database.dart';
 
 // 数据访问层（M1-④）：首页时间线/热门榜、分类五维计数与浏览、六维搜索（FTS+LIKE 兜底）、
@@ -90,8 +92,8 @@ abstract final class CategoryKind {
 /// 热门榜时间范围（原型 §5.13，锚定设备当天）。
 enum RankWindow { allTime, thisYear, thisMonth, last30 }
 
-/// 书聚合页语义筛选（原型 §5.5：全部/仅推荐/仅排雷）。
-enum SemanticFilter { all, recommend, avoid }
+/// 书聚合页语义筛选（原型 §5.5：全部/仅扫书/仅推荐/仅排雷）。
+enum SemanticFilter { all, scan, recommend, avoid }
 
 /// 书聚合页评价排序（原型 §5.5：质量↓默认 / 时间↓ / 时间↑ / 字数↓）。
 enum EntrySort { qualityDesc, timeDesc, timeAsc, wordDesc }
@@ -426,6 +428,7 @@ class EntryRow {
     this.floorText,
     this.bookGroupId,
     this.srcUrl,
+    this.postTitle,
     this.snippet,
   });
 
@@ -452,6 +455,7 @@ class EntryRow {
       floorText: d['floor_text'] as String?,
       bookGroupId: d['book_group_id'] as int?,
       srcUrl: d['src_url'] as String?,
+      postTitle: d['post_title'] as String?,
       snippet: snippet,
     );
   }
@@ -481,6 +485,9 @@ class EntryRow {
   final int? bookGroupId;
   final String? srcUrl;
 
+  /// 所属帖标题（LEFT JOIN posts；null = 散条目/无帖溯源）——[kindLabel] 的判定输入。
+  final String? postTitle;
+
   /// 搜索命中摘要（`[词]` 标记；FTS snippet 或 LIKE 兜底自拼）。
   final String? snippet;
 
@@ -491,6 +498,11 @@ class EntryRow {
   /// 推荐语义（§8.9）：+1 推荐 / −1 排雷 / 0 中性。
   int get recommendFlag =>
       entryFlagOf(category: category, bookGrade: bookGrade);
+
+  /// 三分类型（扫书 / 推书 / 排雷）：书卡计数、页头 CountTrio 与「仅推荐/仅排雷」筛选同源，
+  /// 判定见 [entryKindLabel]（标记优先，其次标题，再类别）。
+  String get kindLabel =>
+      entryKindLabel(category: category, flag: recommendFlag, title: postTitle);
 }
 
 /// 首页卡片书名 chip。
@@ -554,6 +566,7 @@ class GroupHit {
     required this.nameNorm,
     this.author,
     required this.hitCount,
+    required this.scanCount,
     required this.recommendCount,
     required this.avoidCount,
     this.latestDate,
@@ -570,6 +583,10 @@ class GroupHit {
   final String nameNorm;
   final String? author;
   final int hitCount;
+
+  /// 三分计数（扫书 / 推书 / 排雷）：按该书**全部条目**计，判定见 [entryKindLabel]。
+  /// 书卡「x扫书 x推荐 x排雷」与书聚合页头同源；「仅推荐/仅排雷」筛选也走这三分。
+  final int scanCount;
   final int recommendCount;
   final int avoidCount;
   final String? latestDate;
@@ -662,11 +679,16 @@ class PostDetailData {
 class BookDetailData {
   const BookDetailData({
     required this.group,
+    required this.scanCount,
     required this.recommendCount,
     required this.avoidCount,
   });
 
   final BookGroup group;
+
+  /// 三分计数（扫书 / 推书 / 排雷）：页头 CountTrio 与「仅推荐/仅排雷」筛选同源，
+  /// 判定见 [entryKindLabel]。
+  final int scanCount;
   final int recommendCount;
   final int avoidCount;
 
@@ -740,7 +762,7 @@ class HotBook {
 /// 压平成单空格，超过 [maxChars] 中文字符截断加「…」。上限定为 100（用户口径）。
 /// 与 export 层 summarizeComment 同族但**不复用**（Queries 须保持纯 Dart、不 import
 /// features/ 的 Flutter 依赖）。
-const int kCardSummaryMaxChars = 100;
+const int kCardSummaryMaxChars = AppConstants.previewMaxChars;
 
 String? summarizeCardText(String? text, {int maxChars = kCardSummaryMaxChars}) {
   final String flat = (text ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -977,11 +999,13 @@ class Queries implements BookRepository, SearchSettingsKv {
       'b.id, b.name, b.name_norm, b.author, b.recommender, b.comment, b.date, b.channel, '
       'b.sub_channel, b.category, b.book_grade, b.origin, b.quality, b.word_count, '
       'b.post_ref, b.floor_ref, b.book_group_id, b.src_url, fl.seq AS floor_seq, '
-      'fl.text AS floor_text';
+      'fl.text AS floor_text, p.title AS post_title';
 
-  /// [EntryRow] 投影的 FROM 段：LEFT JOIN floors 取楼层号（书聚合页点卡片直达楼层）。
+  /// [EntryRow] 投影的 FROM 段：LEFT JOIN floors 取楼层号（书聚合页点卡片直达楼层）、
+  /// LEFT JOIN posts 取帖标题（三分类型 [EntryRow.kindLabel] 的判定输入）。
   static const String _entryFrom =
-      ' FROM book_entries b LEFT JOIN floors fl ON fl.id = b.floor_ref';
+      ' FROM book_entries b LEFT JOIN floors fl ON fl.id = b.floor_ref '
+      'LEFT JOIN posts p ON p.id = b.post_ref';
 
   // ── 首页：时间线（§5.2）──
 
@@ -1391,7 +1415,7 @@ class Queries implements BookRepository, SearchSettingsKv {
       if (titleLevel.page.total > 0) {
         return titleLevel;
       }
-      // ── 第二级：现状全列匹配 ──
+      // ── 第二级：评语 / 楼层正文（角色名、楼内提及都走这里）──
       final String match = words
           .map((String w) => '"${w.replaceAll('"', '""')}"')
           .join(' AND ');
@@ -1413,7 +1437,7 @@ class Queries implements BookRepository, SearchSettingsKv {
       if (fts.page.total > 0) {
         return fts;
       }
-      // FTS 零命中 → LIKE 兜底重试（含 *_norm 列）：trigram 索引建在原文上，
+      // FTS 零命中 → LIKE 兜底重试（含 *_norm 列 + 楼层正文）：trigram 索引建在原文上，
       // 归一化书名查询（无标点）会因标点差异零召回——含标点书名占 20.6%，
       // norm 词采样零命中 86%（实测见 docs/质量预算复核.md F-2）。
       // 置于 try 外：重试自身的异常按未预期错误传播，不误用「FTS 降级」语义。
@@ -1675,9 +1699,9 @@ class Queries implements BookRepository, SearchSettingsKv {
 
   /// LIKE 检索路径（2 字词兜底 / FTS 零命中重试 / FTS 异常降级 / 第一级列过滤不可用）。
   ///
-  /// [titleOnly] = 第一级：只匹配 name/name_norm/author/author_norm 四列，不含
-  /// recommender/comment —— comment 是整层帖子正文，同楼所有书共用一段文本，
-  /// 匹配它会把同楼其它书一并召回（真机反馈的检索质量 bug）。
+  /// [titleOnly] = 第一级：只匹配 name/name_norm/author/author_norm 四列。
+  /// 第二级放开到 recommender/comment，并 OR 进所属楼层正文（floor_fts）：
+  /// 角色名经常只出现在楼层正文、不在条目评语里。
   Future<Paged<GroupHit>> _likeGroups(
     List<String> words,
     SearchFilter f, {
@@ -1699,11 +1723,18 @@ class Queries implements BookRepository, SearchSettingsKv {
           ];
     for (final String w in words) {
       final String arg = _likeArg(w);
-      conds.add(
-        '(${cols.map((String c) => "$c LIKE ? ESCAPE '\\'").join(' OR ')})',
-      );
-      for (int i = 0; i < cols.length; i++) {
-        vars.add(Variable<String>(arg));
+      final String colExpr = cols.map((String c) => "$c LIKE ? ESCAPE '\\'").join(' OR ');
+      if (titleOnly) {
+        conds.add('($colExpr)');
+        for (int i = 0; i < cols.length; i++) {
+          vars.add(Variable<String>(arg));
+        }
+      } else {
+        // 楼层正文：角色名常只出现在 floors.text，条目评语是空的。
+        conds.add('($colExpr OR EXISTS (SELECT 1 FROM floors fl WHERE fl.id = b.floor_ref AND fl.text LIKE ? ESCAPE \'\\\'))');
+        for (int i = 0; i < cols.length + 1; i++) {
+          vars.add(Variable<String>(arg));
+        }
       }
     }
     final String dims = _dimClauses(f, vars);
@@ -1768,17 +1799,19 @@ class Queries implements BookRepository, SearchSettingsKv {
     final List<QueryRow> aggRows = await db
         .customSelect(
           '$matchedCte '
-          'SELECT $gidExpr AS gid, COUNT(*) AS hits, SUM(m.flag = 1) AS rec, SUM(m.flag = -1) AS avoid, '
+          'SELECT $gidExpr AS gid, COUNT(*) AS hits, '
           'MAX(m.date) AS latest, MAX(g.name_display) AS gname, MAX(g.author_display) AS gauthor, '
-          'GROUP_CONCAT(DISTINCT m.channel) AS chans '
+          'GROUP_CONCAT(DISTINCT m.channel) AS chans, '
+          '${_kindPayload('m')} AS kinds '
           'FROM matched m LEFT JOIN book_groups g ON g.id = m.book_group_id '
+          'LEFT JOIN posts p ON p.id = m.post_ref '
           'GROUP BY gid ORDER BY $order LIMIT ? OFFSET ?',
           variables: <Variable<Object>>[
             ...cteVars,
             Variable<int>(filter.limit),
             Variable<int>(filter.offset),
           ],
-          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.bookGroups},
+          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.bookGroups, db.posts},
         )
         .get();
     if (aggRows.isEmpty) {
@@ -1813,14 +1846,15 @@ class Queries implements BookRepository, SearchSettingsKv {
     for (final QueryRow r in bestRows) {
       best.putIfAbsent((r.data['gid']! as num).toInt(), () => r);
     }
-    // 推荐/排雷计数口径（用户拍板）：按**该书全部条目**真实计数，而非本次命中的条目数
+    // 三分计数口径（用户拍板）：按**该书全部条目**计，而非本次命中的条目数
     // ——搜索词通常只命中该书的部分条目（如只命中书名的那几条），命中集计数会把一本
-    // 实际有 N 条推荐的书显示成 1。散条目（gid < 0，无聚合组）不存在「该书全部」，用命中数。
+    // 实际有 N 条推荐的书记成 1。散条目（gid < 0，无聚合组）不存在「该书全部」，用命中集。
     final List<int> groupGids = <int>[
       for (final int g in gids)
         if (g > 0) g,
     ];
-    final Map<int, (int rec, int avoid)> totals = <int, (int, int)>{};
+    final Map<int, (int scan, int recommend, int avoid)> totals =
+        <int, (int, int, int)>{};
     if (groupGids.isNotEmpty) {
       final String placeholders = List<String>.filled(
         groupGids.length,
@@ -1828,22 +1862,19 @@ class Queries implements BookRepository, SearchSettingsKv {
       ).join(', ');
       final List<QueryRow> totalRows = await db
           .customSelect(
-            'SELECT b.book_group_id AS gid, '
-            'COALESCE(SUM(${_flagSql()} = 1), 0) AS rec, '
-            'COALESCE(SUM(${_flagSql()} = -1), 0) AS avoid '
-            'FROM book_entries b WHERE b.book_group_id IN ($placeholders) '
+            'SELECT b.book_group_id AS gid, ${_kindPayload('b')} AS kinds '
+            'FROM book_entries b LEFT JOIN posts p ON p.id = b.post_ref '
+            'WHERE b.book_group_id IN ($placeholders) '
             'GROUP BY b.book_group_id',
             variables: <Variable<Object>>[
               for (final int g in groupGids) Variable<int>(g),
             ],
-            readsFrom: <TableInfo<Table, Object?>>{db.bookEntries},
+            readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.posts},
           )
           .get();
       for (final QueryRow r in totalRows) {
-        totals[(r.data['gid']! as num).toInt()] = (
-          (r.data['rec']! as num).toInt(),
-          (r.data['avoid']! as num).toInt(),
-        );
+        totals[(r.data['gid']! as num).toInt()] =
+            kindCountsOf(r.data['kinds'] as String?);
       }
     }
     final List<GroupHit> items = <GroupHit>[];
@@ -1853,12 +1884,9 @@ class Queries implements BookRepository, SearchSettingsKv {
       final String? snip = b?.data['snip'] as String?;
       final String? groupName = r.data['gname'] as String?;
       final String? entryName = b?.data['name'] as String?;
-      final (int rec, int avoid) total =
-          totals[gid] ??
-          (
-            (r.data['rec']! as num).toInt(),
-            (r.data['avoid']! as num).toInt(),
-          );
+      final (int scanK, int recK, int avoidK) = kindCountsOf(r.data['kinds'] as String?);
+      final (int scan, int rec, int avoid) total =
+          totals[gid] ?? (scanK, recK, avoidK);
       final String? snippet = (snip == null || snip.isEmpty)
           ? buildExcerpt(
               b?.data['comment'] as String?,
@@ -1890,8 +1918,9 @@ class Queries implements BookRepository, SearchSettingsKv {
           nameNorm: (b?.data['name_norm'] as String?) ?? '',
           author: r.data['gauthor'] as String? ?? b?.data['author'] as String?,
           hitCount: (r.data['hits']! as num).toInt(),
-          recommendCount: total.$1,
-          avoidCount: total.$2,
+          scanCount: total.$1,
+          recommendCount: total.$2,
+          avoidCount: total.$3,
           latestDate: r.data['latest'] as String?,
           snippet: snippet,
           preview: preview,
@@ -1910,6 +1939,39 @@ class Queries implements BookRepository, SearchSettingsKv {
       limit: filter.limit,
       offset: filter.offset,
     );
+  }
+
+  /// 三分计数载荷（[kindCountsOf] 的输入）：每条目 `category\u001f flag\u001f title`，
+  /// 多条以 `\u001e` 连接（SQLite char(31)/char(30)）。**必须**与 [entryKindLabel] 对账
+  /// （test/data/entry_kind_test.dart 表驱动守卫）。
+  static String _kindPayload(String alias) =>
+      "GROUP_CONCAT(COALESCE($alias.category, '') || char(31) || (${_flagSql(alias)}) || char(31) || COALESCE(p.title, ''), char(30))";
+
+  /// `category\u001f flag\u001f title` 串（`\u001e` 分隔）→ (扫书, 推书, 排雷) 条数。
+  /// 同一帖的多条条目各算一次：书卡要的是「被扫到 / 被推 / 被排雷」的**条目**次数，不是帖数。
+  static (int scan, int recommend, int avoid) kindCountsOf(String? packed) {
+    if (packed == null || packed.isEmpty) {
+      return (0, 0, 0);
+    }
+    int scan = 0;
+    int recommend = 0;
+    int avoid = 0;
+    for (final String piece in packed.split('\u001e')) {
+      final List<String> fields = piece.split('\u001f');
+      switch (entryKindLabel(
+        category: fields.isEmpty ? '' : fields.first,
+        flag: fields.length > 1 ? (int.tryParse(fields[1]) ?? 0) : 0,
+        title: fields.length > 2 ? fields.sublist(2).join('\u001f') : null,
+      )) {
+        case kRecommendKind:
+          recommend++;
+        case CategoryKind.avoid:
+          avoid++;
+        default:
+          scan++;
+      }
+    }
+    return (scan, recommend, avoid);
   }
 
   // ── 帖子详情（§5.6）──
@@ -1990,31 +2052,35 @@ class Queries implements BookRepository, SearchSettingsKv {
     }
     final QueryRow counts = await db
         .customSelect(
-          'SELECT COALESCE(SUM(${_flagSql()} = 1), 0) AS rec, COALESCE(SUM(${_flagSql()} = -1), 0) AS avoid '
-          'FROM book_entries b WHERE b.book_group_id = ?',
+          'SELECT ${_kindPayload('b')} AS kinds '
+          'FROM book_entries b LEFT JOIN posts p ON p.id = b.post_ref '
+          'WHERE b.book_group_id = ?',
           variables: <Variable<Object>>[Variable<int>(groupId)],
-          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries},
+          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.posts},
         )
         .getSingle();
+    final (int scan, int recommend, int avoid) =
+        kindCountsOf(counts.data['kinds'] as String?);
     return BookDetailData(
       group: group,
-      recommendCount: (counts.data['rec']! as num).toInt(),
-      avoidCount: (counts.data['avoid']! as num).toInt(),
+      scanCount: scan,
+      recommendCount: recommend,
+      avoidCount: avoid,
     );
   }
 
-  /// 评价列表：语义筛选 + 排序（质量↓默认）。
+  /// 评价列表：三分筛选 + 排序（质量↓默认）。
+  ///
+  /// 三档皆按**三分类型**过滤（与页头计数同源，见 [EntryRow.kindLabel]）：
+  /// 数字与点开的列表同口径，不再出现「计数 13、点开只有 4」。
+  /// 「仅扫书」= 非推荐且非排雷（求书档也算扫书）——逐字对齐 [kindCountsOf] 的
+  /// default 分支（本文件 1952-1975 行），保证「点 N 扫书 → 列表正好 N 条」。
   @override
   Future<List<EntryRow>> bookEntries(
     int groupId,
     SemanticFilter filter, {
     EntrySort sort = EntrySort.qualityDesc,
-  }) {
-    final String semantic = switch (filter) {
-      SemanticFilter.all => '',
-      SemanticFilter.recommend => ' AND (${_flagSql()}) = 1',
-      SemanticFilter.avoid => ' AND (${_flagSql()}) = -1',
-    };
+  }) async {
     final String order = switch (sort) {
       EntrySort.qualityDesc =>
         "b.quality DESC, length(COALESCE(b.comment, '')) DESC, b.date DESC, b.id DESC",
@@ -2023,14 +2089,25 @@ class Queries implements BookRepository, SearchSettingsKv {
       EntrySort.wordDesc =>
         'b.word_count IS NULL, b.word_count DESC, b.id DESC',
     };
-    return db
+    final List<EntryRow> rows = await db
         .customSelect(
-          'SELECT $_entryCols$_entryFrom WHERE b.book_group_id = ?$semantic ORDER BY $order',
+          'SELECT $_entryCols$_entryFrom WHERE b.book_group_id = ? ORDER BY $order',
           variables: <Variable<Object>>[Variable<int>(groupId)],
-          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.floors},
+          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.floors, db.posts},
         )
         .map((QueryRow r) => EntryRow.fromRow(r))
         .get();
+    return switch (filter) {
+      SemanticFilter.all => rows,
+      // 「扫书」桶 = [kindCountsOf] 的 default 分支（本文件 1970-1971 行）：
+      // 非推书且非排雷（含求书档）——页头数字与点开的列表同源。
+      SemanticFilter.scan =>
+        rows.where((EntryRow e) => e.kindLabel != kRecommendKind && e.kindLabel != CategoryKind.avoid).toList(),
+      SemanticFilter.recommend =>
+        rows.where((EntryRow e) => e.kindLabel == kRecommendKind).toList(),
+      SemanticFilter.avoid =>
+        rows.where((EntryRow e) => e.kindLabel == CategoryKind.avoid).toList(),
+    };
   }
 
   // ── 搜索台：联想与热门书名（§5.3）──

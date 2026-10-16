@@ -287,6 +287,9 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
               },
             ),
           PopupMenuButton<String>(
+            // 菜单容器 = r14 圆角（popupMenuTheme），条目墨渍默认直角会外溢：
+            // PopupMenuButton.clipBehavior 默认 Clip.none，须显式裁到菜单形状。
+            clipBehavior: Clip.antiAlias,
             tooltip: '更多',
             icon: AppIcon('more', size: 20, color: c.textSecondary),
             itemBuilder: (BuildContext context) => const <PopupMenuEntry<String>>[
@@ -403,27 +406,38 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
             // Align 让胶囊裹内容靠左（设计 count-duo = inline-flex）；ListView 直通全宽约束下需要。
             Align(
               alignment: Alignment.centerLeft,
-              child: CountDuo(
+              child: CountTrio(
+                scan: data.scanCount,
                 recommend: data.recommendCount,
                 avoid: data.avoidCount,
+                onScanTap: () => setState(() => _filter = SemanticFilter.scan),
                 onRecommendTap: () => setState(() => _filter = SemanticFilter.recommend),
                 onAvoidTap: () => setState(() => _filter = SemanticFilter.avoid),
               ),
             ),
             SizedBox(height: s.space4),
-            Row(
+            // 四档语义筛选 + 右侧排序触发器：390dp 下合计宽度贴临界（Ahem 测试字宽 ≈1em/字，
+            // 静态推定 344~352 vs 可用 350），Row+Spacer 溢出一像素即抛 RenderFlex overflow。
+            // 改 Wrap（spacing 0 = 不预设槽距）：ListView 十字轴紧约束 → 放得下时 spaceBetween
+            // 与 Spacer 视效逐像素一致（贴两端）；放不下才换行，不截断档位标签、不报溢出。
+            Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              runSpacing: s.space2,
               children: <Widget>[
                 SegmentedPill<SemanticFilter>(
                   options: const <(SemanticFilter, String)>[
                     (SemanticFilter.all, '全部'),
+                    (SemanticFilter.scan, '仅扫书'),
                     (SemanticFilter.recommend, '仅推荐'),
                     (SemanticFilter.avoid, '仅排雷'),
                   ],
                   selected: _filter,
                   onChanged: (SemanticFilter v) => setState(() => _filter = v),
                 ),
-                const Spacer(),
                 PopupMenuButton<EntrySort>(
+                  // 同上：选中项 accent-soft 染底/悬停墨渍是直角，须裁进 r14 菜单。
+                  clipBehavior: Clip.antiAlias,
                   tooltip: '排序',
                   onSelected: (EntrySort v) => setState(() => _sort = v),
                   // 菜单容器样式走主题 popupMenuTheme（raised 底/发丝描边/r14）；

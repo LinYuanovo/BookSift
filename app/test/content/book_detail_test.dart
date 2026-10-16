@@ -328,7 +328,12 @@ void main() {
       await tester.pumpAndSettle();
 
       // 语料 2008：postRef=7 / floorSeq=2。卡内不重复书名（hideBookName）→ 入口走「查看」。
-      await tester.tap(find.descendant(of: cardOf(2008), matching: find.text('查看')));
+      // 390dp 档：四档语义筛选行 + 排序触发器贴临界会折到第二行（book_detail 页 Wrap 布局），
+      // 第 3 张卡落在首屏之外 → 先滚到可见再点（真机小屏同样需要滚动）。
+      final Finder src088 = find.descendant(of: cardOf(2008), matching: find.text('查看'));
+      await tester.ensureVisible(src088);
+      await tester.pumpAndSettle();
+      await tester.tap(src088);
       await tester.pumpAndSettle();
 
       final ContentDetailPage detail = tester.widget(find.byType(ContentDetailPage));

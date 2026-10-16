@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/icons.dart';
 import '../../data/repo/queries.dart';
 import '../../theme/app_colors.dart';
-import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
 import '../home/cards.dart';
@@ -12,7 +10,8 @@ import 'dimension_chips.dart';
 import 'search_state.dart';
 
 // 搜索页六维筛选 chips（§5.3）：**多行换行**排布（年 月 旬 / 来源 类别 …），
-// 点某维 chip → 值域浮层选值（带联动命中计数）；尾部「确认筛选」图标钮收起面板。
+// 点某维 chip → 值域浮层选值（带联动命中计数）。
+// 「清除 / 确认」在 Tab 行（与目录同排，见搜索页 _SearchTabs），本面板只管维度。
 //
 // 与旧形态的唯一差异是布局：由「单行横向滚动」改为 Wrap 多行（窄屏不再需要左右滑）；
 // 值仍在浮层里选（不是把候选值内联铺开）。
@@ -50,9 +49,7 @@ class SearchFilterPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final AppSpacing s = AppSpacing.of(context);
     final SearchDraftNotifier notifier = ref.read(searchDraftProvider.notifier);
-    // 固定两行布局（用户口径）：
-    //   年 月 旬        [清空筛选（纯图标）]
-    //   来源 类别 时间   [确认筛选（纯图标）]
+    // 两行只放维度 chips；清除 / 确认在 Tab 行（与目录同排），见 SearchPage。
     return Padding(
       padding: EdgeInsets.fromLTRB(s.pagePadding, s.space3, s.pagePadding, s.space2),
       child: Column(
@@ -63,12 +60,6 @@ class SearchFilterPanel extends ConsumerWidget {
             ref,
             notifier,
             dims: const <CategoryDim>[CategoryDim.year, CategoryDim.month, CategoryDim.tenDay],
-            trailing: _IconActionButton(
-              tooltip: '清空筛选',
-              svgIcon: 'refresh',
-              filled: false,
-              onTap: filter.isDefault ? null : notifier.clearDimensions,
-            ),
           ),
           SizedBox(height: s.space2),
           _panelRow(
@@ -76,12 +67,6 @@ class SearchFilterPanel extends ConsumerWidget {
             ref,
             notifier,
             dims: const <CategoryDim>[CategoryDim.channel, CategoryDim.category],
-            trailing: _IconActionButton(
-              tooltip: '确认筛选',
-              svgIcon: 'check',
-              filled: true,
-              onTap: onConfirm,
-            ),
           ),
         ],
       ),
@@ -94,7 +79,6 @@ class SearchFilterPanel extends ConsumerWidget {
     WidgetRef ref,
     SearchDraftNotifier notifier, {
     required List<CategoryDim> dims,
-    required Widget trailing,
   }) {
     final AppSpacing s = AppSpacing.of(context);
     final List<Widget> chips = <Widget>[
@@ -115,8 +99,6 @@ class SearchFilterPanel extends ConsumerWidget {
             children: chips,
           ),
         ),
-        SizedBox(width: s.chipGap),
-        trailing,
       ],
     );
   }
@@ -150,49 +132,6 @@ class SearchFilterPanel extends ConsumerWidget {
       dangerTint: dim == CategoryDim.category && value == CategoryKind.avoid,
       showChev: true, // 下拉触发器（点开值域浮层）才带 chev
       onTap: () => _pickDimension(context, ref, dim, notifier, value),
-    );
-  }
-}
-
-/// 行尾图标动作钮（纯图标，无文本）：36dp 圆形；[filled]=true 用 accent 实底（确认），
-/// false 用 sunken 底（清空/次要动作）；[onTap]=null 时降透明度（不可用态）。
-class _IconActionButton extends StatelessWidget {
-  const _IconActionButton({
-    required this.tooltip,
-    required this.svgIcon,
-    required this.filled,
-    required this.onTap,
-  });
-
-  final String tooltip;
-  final String svgIcon;
-  final bool filled;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final AppColors c = AppColors.of(context);
-    final bool enabled = onTap != null;
-    final Color bg = filled ? c.accent : c.surfaceSunken;
-    final Color fg = filled ? c.onAccent : c.textSecondary;
-    return Opacity(
-      opacity: enabled ? 1 : 0.4,
-      child: Material(
-        color: bg,
-        borderRadius: AppRadius.pillBorder,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: AppRadius.pillBorder,
-          child: Tooltip(
-            message: tooltip,
-            child: SizedBox(
-              width: AppMetrics.chipHeightCompact,
-              height: AppMetrics.chipHeightCompact,
-              child: Center(child: AppIcon(svgIcon, size: 18, color: fg)),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

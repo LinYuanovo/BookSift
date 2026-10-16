@@ -32,7 +32,8 @@ import 'search_state.dart';
 // 单请求手动触发；整卡点击进在线帖子页（/online/{tid}），卡片右上角按钮直接打开原帖外链。
 // 全页零 Material Icon（本地 + 在线 + 历史/联想，结构图标一律 AppIcon SVG；守卫见 test/search）。
 // 图标语义对齐设计 02 搜索台屏（index.html id=scr-search:1268–1352）：
-// 字段/联想行 = search·16（.ic sm，:1281/:1289）、历史行 = clock·16（:1311）、清除 = close。
+// 字段/联想行 = search·16（.ic sm，:1281/:1289）、历史行 = clock·16（:1311）、
+// Tab 行动作组 = 清除 close / 确认 check / 目录 list（用户口径：动作组图标化并居右对齐）。
 // P2-4：结果区「导出书单」→ 当前搜索结果构造 BooklistDoc，复用 export 库弹层（只 import 不改）。
 // P2-5：Tab 行右端「目录」= 已加载结果行弹层 → 精确跳转对应结果卡（_ResultsTocJump）；
 //       在线结果排序（相关度/时间）纯客户端重排，口径见 search_state.onlineSortProvider。
@@ -46,6 +47,53 @@ String formatOnlineDate(int unixSeconds) {
 /// `[高亮]` 标记剥离（Queries snippet 的 `[词]` 标记约定，queries.dart:394；导出取纯文本）。
 String stripHighlightMarkers(String text) =>
     text.replaceAllMapped(RegExp(r'\[([^\[\]]*)\]'), (Match m) => m.group(1)!);
+
+/// 搜索结果卡正文预览的字数上限（用户口径：显示 50 字，超出补「…」）。
+const int kSearchCardPreviewChars = 50;
+
+/// `[高亮]` 标记文本按**可见字数**截断（标记括号不计入；截断补「…」）。
+/// 标记始终保持完整闭合（截断点落在标记内时只保留限内片段），渲染交
+/// [HighlightText]（`[词]` → 琥珀底高亮，与首页卡同管线）。
+String truncateHighlightMarked(String text, {int maxChars = kSearchCardPreviewChars}) {
+  final RegExp marker = RegExp(r'\[([^\[\]]*)\]');
+  final List<(String, bool)> segments = <(String, bool)>[];
+  int cursor = 0;
+  for (final RegExpMatch m in marker.allMatches(text)) {
+    if (m.start > cursor) {
+      segments.add((text.substring(cursor, m.start), false));
+    }
+    segments.add((m.group(1)!, true));
+    cursor = m.end;
+  }
+  if (cursor < text.length) {
+    segments.add((text.substring(cursor), false));
+  }
+  final StringBuffer out = StringBuffer();
+  int visible = 0;
+  bool truncated = false;
+  for (final (String seg, bool marked) in segments) {
+    final int room = maxChars - visible;
+    final List<int> runes = seg.runes.toList();
+    if (runes.length <= room) {
+      if (marked) {
+        out.write('[');
+      }
+      out.write(seg);
+      if (marked) {
+        out.write(']');
+      }
+      visible += runes.length;
+      continue;
+    }
+    final String head = String.fromCharCodes(runes.take(room));
+    if (head.isNotEmpty) {
+      out.write(marked ? '[$head]' : head);
+    }
+    truncated = true;
+    break;
+  }
+  return truncated ? '$out…' : out.toString();
+}
 
 /// 当前搜索结果 → 导出文档（P2-4；复用 export 库模型 [BooklistDoc]/[ExportBook]）。
 ///
@@ -423,27 +471,31 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
       ),
       body: Column(
         children: <Widget>[
-          if (draft.submitted)
-            _SearchTabs(
-              tab: tab,
-              onChanged: (SearchTab v) {
-                ref.read(searchTabProvider.notifier).state = v;
-                setState(_resetFilterCollapse);
-              },
-              // 目录只列**当前 Tab 已加载**的结果行（未加载页不进目录）；
-              // 跳转经 _runTocJump 挂起滚动方向启发式，保证落点精确不抖动。
-              onToc: () {
-                final _ResultsToc toc = tab == SearchTab.online ? _onlineToc : _localToc;
-                // 目录位置持久化：本地 Tab 按当前条件签名存取（在线 Tab 无签名 → 仅内存句柄）。
-                _showResultsToc(
-                  context,
-                  toc,
-                  (int index) => _runTocJump(toc, index),
-                  store: tab == SearchTab.online ? null : _tocPositionStore,
-                  signature: tab == SearchTab.online ? null : _positionSignature,
-                );
-              },
-            ),
+          _SearchTabs(
+            tab: tab,
+            // 筛选动作只在本地库 Tab 显示（在线无六维条件）。
+            showFilters: tab == SearchTab.local,
+            canClear: !draft.filter.isDefault,
+            onClear: () => ref.read(searchDraftProvider.notifier).clearDimensions(),
+            onConfirm: _collapseFilters,
+            onChanged: (SearchTab v) {
+              ref.read(searchTabProvider.notifier).state = v;
+              setState(_resetFilterCollapse);
+            },
+            // 目录只列**当前 Tab 已加载**的结果行（未加载页不进目录）；
+            // 跳转经 _runTocJump 挂起滚动方向启发式，保证落点精确不抖动。
+            onToc: () {
+              final _ResultsToc toc = tab == SearchTab.online ? _onlineToc : _localToc;
+              // 目录位置持久化：本地 Tab 按当前条件签名存取（在线 Tab 无签名 → 仅内存句柄）。
+              _showResultsToc(
+                context,
+                toc,
+                (int index) => _runTocJump(toc, index),
+                store: tab == SearchTab.online ? null : _tocPositionStore,
+                signature: tab == SearchTab.online ? null : _positionSignature,
+              );
+            },
+          ),
           // 六维筛选只对本地库有意义；在线 Tab 隐藏（口径见 _OnlineResultsView 头部徽标）。
           // 已提交且展示本地结果时，结果列表下滑超阈值 → 收起（高度 0 + 透明）；上滑/回顶展开。
           // 时长/曲线全走 motion token：收起 = exit、展开 = enter（exit-faster-than-enter，§6.2）。
@@ -998,8 +1050,16 @@ mixin _ResultsTocJump<W extends ConsumerStatefulWidget> on ConsumerState<W> {
 /// 头行/Tab 行的图标钮槽：固定 44dp 方形（触控下限 [AppMetrics.minTouchTarget]）+
 /// IconButton 去内边距、图标光学居中 —— 与同行 caption 文本共用 Row 的 center 对齐时，
 /// 20dp 图标与文本落在同一中线上（IconButton 默认 8dp 内边距会把图标压到文本中线之下）。
+/// Tab 行动作组「清除（close）/ 确认（check）/ 目录（list）」同走本槽（用户口径：
+/// 清除/确认用设计令牌图标而非纯文字）；[enabled]=false 整钮 0.4 透明度（旧文字钮同口径）。
 class _IconSlotButton extends StatelessWidget {
-  const _IconSlotButton({required this.tooltip, required this.svgIcon, required this.onPressed});
+  const _IconSlotButton({
+    required this.tooltip,
+    required this.svgIcon,
+    required this.onPressed,
+    this.color,
+    this.enabled = true,
+  });
 
   final String tooltip;
 
@@ -1007,9 +1067,15 @@ class _IconSlotButton extends StatelessWidget {
   final String svgIcon;
   final VoidCallback? onPressed;
 
+  /// 图标色（null = textSecondary）。
+  final Color? color;
+
+  /// 可用态（false = 置灰且不可点）。
+  final bool enabled;
+
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
+    final Widget button = SizedBox(
       width: AppMetrics.minTouchTarget,
       height: AppMetrics.minTouchTarget,
       child: IconButton(
@@ -1020,10 +1086,11 @@ class _IconSlotButton extends StatelessWidget {
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-        icon: AppIcon(svgIcon, size: 20, color: AppColors.of(context).textSecondary),
-        onPressed: onPressed,
+        icon: AppIcon(svgIcon, size: 20, color: color ?? AppColors.of(context).textSecondary),
+        onPressed: enabled ? onPressed : null,
       ),
     );
+    return enabled ? button : Opacity(opacity: 0.4, child: button);
   }
 }
 
@@ -1236,6 +1303,28 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
   }
 }
 
+/// 书卡计数一档（x 扫书 / x 推荐 / x 排雷）：圆点 + 数字，颜色走语义令牌。
+class _KindCount extends StatelessWidget {
+  const _KindCount({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppSpacing s = AppSpacing.of(context);
+    final AppTypography t = AppTypography.of(context);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        _CountDot(color: color),
+        SizedBox(width: s.space1),
+        Text(label, style: AppTypography.tabular(t.caption.copyWith(color: color, fontWeight: FontWeight.w600))),
+      ],
+    );
+  }
+}
+
 /// 计数列彩色圆点（设计 dot-sep 的 CSS 圆点语汇，index.html:669；装饰色块非结构图标，
 /// 不走 SVG 资产——线稿 stroke 图标染不出实心 8px 点）。
 class _CountDot extends StatelessWidget {
@@ -1298,57 +1387,49 @@ class _GroupHitCard extends StatelessWidget {
             ],
           ),
           SizedBox(height: s.space2),
+          // 计数三档靠左（扫书 / 推荐 / 排雷）、最近日期贴右 —— 用户口径：不再显示
+          // 「N 条」冗余总数、日期居右对齐。
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
-              _CountDot(color: c.recommend),
-              SizedBox(width: s.space1),
-              Text('${hit.recommendCount} 推荐',
-                  style: AppTypography.tabular(t.caption.copyWith(color: c.recommend))),
-              if (hit.avoidCount > 0) ...<Widget>[
-                SizedBox(width: s.space3),
-                _CountDot(color: c.danger),
-                SizedBox(width: s.space1),
-                // 点排雷计数 = 进书聚合页并置「仅排雷」（§5.4，P0-13）。
-                GestureDetector(
-                  onTap: hit.groupId == null
-                      ? null
-                      : () => openBookDetail(
-                            context,
-                            hit.groupId!,
-                            snapshot: draft.filter,
-                            highlight: draft.filter.query,
-                            initialFilter: SemanticFilter.avoid,
-                          ),
-                  child: Text('${hit.avoidCount} 排雷',
-                      style: AppTypography.tabular(
-                          t.caption.copyWith(color: c.danger, fontWeight: FontWeight.w600))),
+              Expanded(
+                child: Wrap(
+                  spacing: s.space3,
+                  runSpacing: s.space1,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: <Widget>[
+                    _KindCount(color: c.textSecondary, label: '${hit.scanCount} 扫书'),
+                    _KindCount(color: c.recommend, label: '${hit.recommendCount} 推荐'),
+                    GestureDetector(
+                      onTap: hit.groupId == null
+                          ? null
+                          : () => openBookDetail(
+                                context,
+                                hit.groupId!,
+                                snapshot: draft.filter,
+                                highlight: draft.filter.query,
+                                initialFilter: SemanticFilter.avoid,
+                              ),
+                      child: _KindCount(color: c.danger, label: '${hit.avoidCount} 排雷'),
+                    ),
+                  ],
                 ),
-              ],
-              if (hit.hitCount > 1) ...<Widget>[
-                SizedBox(width: s.space3),
-                Text('${hit.hitCount}条', style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted))),
-              ],
-              const Spacer(),
-              if (hit.latestDate != null)
+              ),
+              if (hit.latestDate != null) ...<Widget>[
+                SizedBox(width: s.space2),
                 Text(hit.latestDate!, style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted))),
+              ],
             ],
           ),
-          if ((hit.snippet ?? '').isNotEmpty) ...<Widget>[
+          // 命中正文预览（用户口径：显示关键词命中的正文 50 字）：snippet 自带 `[词]`
+          // 标记 → HighlightText 琥珀底高亮；仅按分类/维度筛选（无关键词）时无标记，
+          // 纯文本展示不做高亮（[truncateHighlightMarked] 同口径）。
+          if ((hit.preview ?? '').isNotEmpty) ...<Widget>[
             SizedBox(height: s.space2),
-            // 命中高亮摘要（snippet 带 `[词]` 标记）。
             HighlightText(
-              text: hit.snippet!,
-              maxLines: 3,
+              text: truncateHighlightMarked(hit.preview!),
               style: t.secondary.copyWith(color: c.textSecondary),
-            ),
-          ] else if ((hit.preview ?? '').isNotEmpty) ...<Widget>[
-            SizedBox(height: s.space2),
-            // 无命中高亮（书名级命中/条件浏览）→ 展示正文预览（100 字截断，用户口径）。
-            Text(
-              hit.preview!,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: t.secondary.copyWith(color: c.textSecondary),
+              maxLines: 2,
             ),
           ],
           if (hit.channels.isNotEmpty) ...<Widget>[
@@ -1365,33 +1446,77 @@ class _GroupHitCard extends StatelessWidget {
   }
 }
 
-/// 本地/在线双 Tab（提交后出现；SegmentedPill 复用分段控件规格 §4）。
-/// 同一行最右端为「目录」图标钮（P2-5，list·20 = 帖子详情底部操作条目录同款语义）。
+/// 本地/在线双 Tab：本地库 / 贴吧在线 / 目录（常驻行，紧贴搜索框下沿）；
+/// 本地库时其左再加「清除 / 确认」筛选动作（用户口径：与目录同排）。
 class _SearchTabs extends StatelessWidget {
-  const _SearchTabs({required this.tab, required this.onChanged, required this.onToc});
+  const _SearchTabs({
+    required this.tab,
+    required this.onChanged,
+    required this.onToc,
+    this.showFilters = false,
+    this.canClear = false,
+    this.onClear,
+    this.onConfirm,
+  });
 
   final SearchTab tab;
   final ValueChanged<SearchTab> onChanged;
+
+  /// 本地库才有筛选动作（清除 / 确认）；在线 Tab 不显示。
+  final bool showFilters;
+  final bool canClear;
+  final VoidCallback? onClear;
+  final VoidCallback? onConfirm;
 
   /// 「目录」钮点击（弹已加载结果行目录）。
   final VoidCallback onToc;
 
   @override
   Widget build(BuildContext context) {
+    final AppColors c = AppColors.of(context);
     final AppSpacing s = AppSpacing.of(context);
+    // 动作组（清除 / 确认 / 目录）**贴右对齐**：分段控件与 Spacer 按 8:1 分余量，
+    // Expanded(tight) 吃满整份弹性槽 —— 旧写法 Flexible(loose) 用不满时余量会落在
+    // 行尾（动作组右侧），动作组看起来不贴右（用户口径：改成居右对齐）。
+    // 分段控件在 Align(centerLeft) 内仍取固有宽（411dp 档不出现「本…/贴…」截断）；
+    // 极窄屏/大字阶先压缩自身（段内省略），动作组保持完整。
     return Padding(
-      padding: EdgeInsets.fromLTRB(s.pagePadding, s.space3, s.pagePadding, 0),
+      padding: EdgeInsets.fromLTRB(s.pagePadding, s.space2, s.pagePadding, 0),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          SegmentedPill<SearchTab>(
-            options: const <(SearchTab, String)>[
-              (SearchTab.local, '本地库'),
-              (SearchTab.online, '贴吧在线'),
-            ],
-            selected: tab,
-            onChanged: onChanged,
+          Expanded(
+            flex: 8,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: SegmentedPill<SearchTab>(
+                options: const <(SearchTab, String)>[
+                  (SearchTab.local, '本地库'),
+                  (SearchTab.online, '贴吧在线'),
+                ],
+                selected: tab,
+                onChanged: onChanged,
+              ),
+            ),
           ),
           const Spacer(),
+          if (showFilters) ...<Widget>[
+            // 清除 = close / 确认 = check（设计令牌 SVG，AppIcon 单一出口）。
+            _IconSlotButton(
+              tooltip: '清除筛选',
+              svgIcon: 'close',
+              enabled: canClear,
+              onPressed: onClear,
+            ),
+            SizedBox(width: s.space2),
+            _IconSlotButton(
+              tooltip: '确认筛选',
+              svgIcon: 'check',
+              color: c.accentStrong,
+              onPressed: onConfirm,
+            ),
+            SizedBox(width: s.space1),
+          ],
           _IconSlotButton(tooltip: '目录', svgIcon: 'list', onPressed: onToc),
         ],
       ),
@@ -1695,6 +1820,10 @@ class _OnlineThreadCard extends StatelessWidget {
               ),
             ],
           ),
+          if (thread.excerpt.isNotEmpty) ...<Widget>[
+            SizedBox(height: s.space2),
+            Text(thread.excerpt, style: t.secondary.copyWith(color: c.textSecondary)),
+          ],
           SizedBox(height: s.space2),
           Row(
             children: <Widget>[

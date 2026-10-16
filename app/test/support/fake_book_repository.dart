@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:booksift/classify/src/engine.dart' show kRecommendKind;
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/data/repo/queries.dart';
 
@@ -673,17 +674,19 @@ class FakeBookRepository implements BookRepository {
       }
       channels.add(e.channel);
     }
-    // 推荐/排雷 = 该书**全部**条目真实计数（生产口径见 Queries._groupedPage），
+    // 推荐/排雷/扫书 = 该书**全部**条目的三分计数（生产口径见 Queries._groupedPage），
     // 而非本次命中的条目数（否则一本书实际有 N 条推荐会被显示成 1）。
-    int rec = 0, avoid = 0;
+    int scan = 0, rec = 0, avoid = 0;
     for (final EntryRow e in lib.entries.where(
       (EntryRow e) => e.nameNorm == nameNorm,
     )) {
-      final int flag = e.recommendFlag;
-      if (flag > 0) {
-        rec++;
-      } else if (flag < 0) {
-        avoid++;
+      switch (e.kindLabel) {
+        case kRecommendKind:
+          rec++;
+        case CategoryKind.avoid:
+          avoid++;
+        default:
+          scan++;
       }
     }
     final EntryRow best = rows.firstWhere(
@@ -708,6 +711,7 @@ class FakeBookRepository implements BookRepository {
       nameNorm: nameNorm,
       author: g?.authorDisplay ?? best.author,
       hitCount: rows.length,
+      scanCount: scan,
       recommendCount: rec,
       avoidCount: avoid,
       latestDate: latest,
@@ -807,10 +811,22 @@ class FakeBookRepository implements BookRepository {
     final List<EntryRow> own = lib.entries
         .where((EntryRow e) => e.bookGroupId == groupId)
         .toList();
+    int scan = 0, rec = 0, avoid = 0;
+    for (final EntryRow e in own) {
+      switch (e.kindLabel) {
+        case kRecommendKind:
+          rec++;
+        case CategoryKind.avoid:
+          avoid++;
+        default:
+          scan++;
+      }
+    }
     return BookDetailData(
       group: group,
-      recommendCount: own.where((EntryRow e) => e.recommendFlag > 0).length,
-      avoidCount: own.where((EntryRow e) => e.recommendFlag < 0).length,
+      scanCount: scan,
+      recommendCount: rec,
+      avoidCount: avoid,
     );
   }
 
@@ -825,10 +841,13 @@ class FakeBookRepository implements BookRepository {
         .where((EntryRow e) => e.bookGroupId == groupId)
         .toList();
     final List<EntryRow> out = switch (filter) {
+      // 口径同 Queries.bookEntries：非推荐且非排雷（含求书桶）= 页头计数的 default 分支。
+      SemanticFilter.scan =>
+        rows.where((EntryRow e) => e.kindLabel != kRecommendKind && e.kindLabel != CategoryKind.avoid).toList(),
       SemanticFilter.recommend =>
-        rows.where((EntryRow e) => e.recommendFlag > 0).toList(),
+        rows.where((EntryRow e) => e.kindLabel == kRecommendKind).toList(),
       SemanticFilter.avoid =>
-        rows.where((EntryRow e) => e.recommendFlag < 0).toList(),
+        rows.where((EntryRow e) => e.kindLabel == CategoryKind.avoid).toList(),
       SemanticFilter.all => rows,
     };
     out.sort(switch (sort) {

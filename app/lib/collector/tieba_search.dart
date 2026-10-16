@@ -30,6 +30,7 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 
+import '../core/constants.dart' show AppConstants;
 import 'scheduler.dart' show CollectRequestException;
 import 'tieba/tieba_client.dart'
     show
@@ -85,6 +86,7 @@ class OnlineThread {
     required this.author,
     required this.replyNum,
     required this.createTime,
+    this.excerpt = '',
   });
 
   final int tid;
@@ -97,6 +99,9 @@ class OnlineThread {
 
   /// Unix 秒（0 = 未携带）。
   final int createTime;
+
+  /// 帖内命中摘要（searchpost 的 content/abstract；空 = 接口未带）。展示前已剥标签、截 100 字。
+  final String excerpt;
 
   /// 原帖链接（行点击复制口径；原型附录 B 外链端点清单 `/p/{tid}`）。
   String get url => 'https://tieba.baidu.com/p/$tid';
@@ -322,6 +327,7 @@ class TiebaSearchClient {
         author: '${authorMap?['name_show'] ?? authorMap?['name'] ?? ''}',
         replyNum: _intOf(item['reply_num']),
         createTime: _intOf(item['time']),
+        excerpt: _excerptOf(item),
       ));
     }
     // Page_fsch（_classdef.py）；缺失宽松处理为无后继页。
@@ -351,6 +357,21 @@ class TiebaSearchClient {
   static final RegExp _tagRe = RegExp(r'<[^>]*>');
 
   static String _stripTags(String s) => s.replaceAll(_tagRe, '').trim();
+
+  /// 帖内摘要：接口字段名不稳定（content / abstract / content_abstract），取第一个非空，
+  /// 与本地卡预览同口径（100 字截断 + 「…」，[AppConstants.previewMaxChars]）。
+  static String _excerptOf(Map<dynamic, dynamic> item) {
+    for (final String key in const <String>['content', 'abstract', 'content_abstract']) {
+      final String raw = _stripTags('${item[key] ?? ''}');
+      if (raw.isNotEmpty) {
+        final List<int> runes = raw.runes.toList();
+        return runes.length > AppConstants.previewMaxChars
+            ? '${String.fromCharCodes(runes.take(AppConstants.previewMaxChars))}…'
+            : raw;
+      }
+    }
+    return '';
+  }
 
   void close() => _dio.close(force: true);
 }

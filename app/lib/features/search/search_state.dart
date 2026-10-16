@@ -113,7 +113,8 @@ class SearchDraftNotifier extends StateNotifier<SearchDraft> {
       CategoryDim.channel => f.copyWith(channel: Value<String?>(value)),
       CategoryDim.category => f.copyWith(category: Value<String?>(value)),
     };
-    state = SearchDraft(filter: next, submitted: state.submitted);
+    // 选了维度就出结果：分类筛选不该被「没输关键词」卡住。
+    state = SearchDraft(filter: next, submitted: true);
     _persist();
   }
 

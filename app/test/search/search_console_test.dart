@@ -48,6 +48,23 @@ void main() {
       expect(stripHighlightMarkers('无标记'), '无标记');
     });
 
+    test('预览截断：可见 50 字（标记不计入）、标记完整闭合、截断补「…」', () {
+      expect(truncateHighlightMarked('无标记文本'), '无标记文本');
+      expect(truncateHighlightMarked('短[词]句'), '短[词]句', reason: '限内不动');
+      final String cut = truncateHighlightMarked('${'甲' * 30}[关键词]${'乙' * 30}');
+      expect(cut, '${'甲' * 30}[关键词]${'乙' * 17}…');
+      expect(
+        cut.replaceAll('[', '').replaceAll(']', '').replaceAll('…', '').runes.length,
+        kSearchCardPreviewChars,
+        reason: '标记括号不计入可见字数',
+      );
+      expect(
+        truncateHighlightMarked('${'丙' * 48}[关键词]'),
+        '${'丙' * 48}[关键]…',
+        reason: '截断点落在标记内 → 只保留限内片段并闭合',
+      );
+    });
+
     test('GroupHit → ExportBook：字段诚实映射，投影外字段留空不造假', () {
       const GroupHit hit = GroupHit(
         groupId: 901,
@@ -55,6 +72,7 @@ void main() {
         nameNorm: '十日终焉',
         author: '杀虫队队员',
         hitCount: 2,
+        scanCount: 0,
         recommendCount: 1,
         avoidCount: 1,
         latestDate: '2025-04-28',
@@ -98,6 +116,7 @@ void main() {
         name: '散条目书',
         nameNorm: '散条目书',
         hitCount: 1,
+        scanCount: 0,
         recommendCount: 1,
         avoidCount: 0,
         channels: <String>[],

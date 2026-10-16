@@ -36,3 +36,8 @@ app/android/app/*.jks
 # make_release.ps1 组装的发布目录
 dist_release/
 
+
+# ---- 文档站（VitePress）----
+website/node_modules/
+website/.vitepress/dist/
+website/.vitepress/cache/

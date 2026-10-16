@@ -202,6 +202,7 @@ void main() {
         name: '诡秘之主',
         nameNorm: '诡秘之主',
         hitCount: 3,
+        scanCount: 0,
         recommendCount: 2,
         avoidCount: 1,
         channels: <String>['yy小说吧'],

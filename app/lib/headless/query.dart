@@ -213,6 +213,7 @@ Map<String, Object?> groupHitJson(GroupHit g) => <String, Object?>{
       'nameNorm': g.nameNorm,
       'author': g.author,
       'hitCount': g.hitCount,
+      'scanCount': g.scanCount,
       'recommendCount': g.recommendCount,
       'avoidCount': g.avoidCount,
       'latestDate': g.latestDate,

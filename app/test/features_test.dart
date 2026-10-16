@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:booksift/classify/src/engine.dart' show kRecommendKind;
 import 'package:booksift/core/constants.dart';
 import 'package:booksift/core/icons.dart';
 import 'package:booksift/core/widgets/scroll_chrome.dart';
@@ -19,6 +20,7 @@ import 'package:booksift/features/home/home_page.dart';
 import 'package:booksift/features/search/search_page.dart';
 import 'package:booksift/features/search/search_state.dart';
 import 'package:booksift/theme/app_colors.dart';
+import 'package:booksift/theme/app_spacing.dart';
 
 import 'support/demo_data.dart';
 import 'support/fake_book_repository.dart';
@@ -257,6 +259,20 @@ void main() {
         rec.map((EntryRow e) => e.id).toSet(),
         all
             .where((EntryRow e) => e.recommendFlag == 1)
+            .map((EntryRow e) => e.id)
+            .toSet(),
+      );
+      // 仅扫书 = 非推荐且非排雷（含求书桶）：3 条里只剩「扫书无标」那条，条数 = 页头 scanCount。
+      final List<EntryRow> scan = await q.bookEntries(gid, SemanticFilter.scan);
+      expect(scan, hasLength(d.scanCount));
+      expect(
+        scan.map((EntryRow e) => e.id).toSet(),
+        all
+            .where(
+              (EntryRow e) =>
+                  e.kindLabel != kRecommendKind &&
+                  e.kindLabel != CategoryKind.avoid,
+            )
             .map((EntryRow e) => e.id)
             .toSet(),
       );
@@ -644,14 +660,14 @@ void main() {
       );
       expect(find.textContaining('2 条独立评价'), findsOneWidget);
       // 计数对比：1 推荐（2013 绿标）/ 1 排雷（2014 红标）。
-      final CountDuo duo = tester.widget<CountDuo>(find.byType(CountDuo));
-      expect(duo.recommend, 1);
-      expect(duo.avoid, 1);
+      final CountTrio trio = tester.widget<CountTrio>(find.byType(CountTrio));
+      expect(trio.recommend, 1);
+      expect(trio.avoid, 1);
 
       // 点计数对比里的「排雷」= 直接置「仅排雷」筛选（§5.5，P0-13）。
       // 注意 '排雷' 文案在页面上有多处（计数对比 label + 排雷条目的 SemanticBadge），须限定到 CountDuo 内。
       await tester.tap(
-        find.descendant(of: find.byType(CountDuo), matching: find.text('排雷')),
+        find.descendant(of: find.byType(CountTrio), matching: find.text('排雷')),
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('全部评价 1'), findsOneWidget);
@@ -670,6 +686,56 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.textContaining('全部评价 2'), findsOneWidget);
+    });
+
+    testWidgets('书聚合页：计数对比「扫书」可点 → 仅扫书筛选（390dp 四档不溢出）', (WidgetTester tester) async {
+      useSurface(tester); // 390×844：四档语义筛选 + 排序触发器的最窄常规手机档
+      await tester.pumpWidget(
+        testApp(repo, home: const BookDetailPage(bookGroupId: 900)),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '「全部/仅扫书/仅推荐/仅排雷」四档 + 右侧排序 PopupMenuButton 在 390dp 不得溢出',
+      );
+
+      // 语料 900：3 条均无颜色标记 → 全部落扫书桶（3 扫书 / 0 推荐 / 0 排雷）。
+      final CountTrio trio = tester.widget<CountTrio>(find.byType(CountTrio));
+      expect(trio.scan, 3);
+      expect(trio.onScanTap, isNotNull, reason: '扫书档可点（原为不可交互）');
+
+      // 语义 chips 第二档 = 仅扫书。
+      final SegmentedPill<SemanticFilter> pill = tester.widget<SegmentedPill<SemanticFilter>>(
+        find.byType(SegmentedPill<SemanticFilter>),
+      );
+      expect(
+        pill.options.map((o) => o.$2),
+        <String>['全部', '仅扫书', '仅推荐', '仅排雷'],
+      );
+
+      // 点计数「3 扫书」→ 直落「仅扫书」：列表 3 条 = 页头计数（数字与点开的列表同源）。
+      await tester.tap(
+        find.descendant(of: find.byType(CountTrio), matching: find.text('扫书')),
+      );
+      await tester.pumpAndSettle();
+      final SegmentedPill<SemanticFilter> after = tester.widget<SegmentedPill<SemanticFilter>>(
+        find.byType(SegmentedPill<SemanticFilter>),
+      );
+      expect(after.selected, SemanticFilter.scan, reason: '点「扫书」= 落「仅扫书」档');
+      expect(find.textContaining('全部评价 3'), findsOneWidget);
+      expect(find.byType(BookEntryCard), findsNWidgets(3));
+
+      // 切「仅排雷」（该组 0 条）→ 空态兜底。
+      await tester.tap(
+        find.descendant(
+          of: find.byType(SegmentedPill<SemanticFilter>),
+          matching: find.text('仅排雷'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('全部评价 0'), findsOneWidget);
+      expect(find.text('该筛选下暂无条目'), findsOneWidget);
     });
 
     testWidgets(
@@ -906,6 +972,22 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('换一批'), findsOneWidget);
+
+      // 固定高度 = 可用高 × AppMetrics.randomSheetHeightFactor（用户口径：70%，
+      // 不随内容/滑动变化；列表在面板内部滚动）。
+      final double expectedH = 1400 * AppMetrics.randomSheetHeightFactor;
+      expect(
+        tester.getSize(find.byKey(kRandomBooksSheetKey)).height,
+        closeTo(expectedH, 0.5),
+      );
+      await tester.drag(find.byKey(kRandomBooksSheetKey), const Offset(0, -160));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getSize(find.byKey(kRandomBooksSheetKey)).height,
+        closeTo(expectedH, 0.5),
+        reason: '拖动列表不改面板高度',
+      );
+
       // 只抽有推荐语（≥20 字）的扫书条目：语料里 4 条命中（2001/2006/2009/2013）。
       final Iterable<BookEntryCard> cards = tester.widgetList<BookEntryCard>(
         find.byType(BookEntryCard),

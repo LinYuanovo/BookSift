@@ -31,7 +31,7 @@ void main() {
       expect(tester.takeException(), isNull, reason: '竖屏零 overflow');
       expect(find.text('年·全部'), findsOneWidget);
       expect(find.text('类别·全部'), findsOneWidget);
-      expect(find.byTooltip('确认筛选'), findsOneWidget);
+      expect(find.byTooltip('确认筛选'), findsOneWidget, reason: '确认动作在 Tab 行（与目录同排，设计令牌图标）');
       expect(find.text('条件浏览'), findsOneWidget);
     });
 

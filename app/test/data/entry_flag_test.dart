@@ -149,6 +149,10 @@ void main() {
         probeGroup,
         SemanticFilter.avoid,
       );
+      final List<EntryRow> scan = await q.bookEntries(
+        probeGroup,
+        SemanticFilter.scan,
+      );
 
       // ① SQL 筛选结果 = Dart 侧逐条判定（两侧不许各漂一半）。
       expect(
@@ -167,6 +171,15 @@ void main() {
             .toSet(),
         reason: 'SemanticFilter.avoid 的 SQL 与 entryFlagOf 口径不一致',
       );
+      // 仅扫书 = 非推荐且非排雷（含求书桶）：探针集里即 recommendFlag == 0 的补集桶。
+      expect(
+        scan.map((EntryRow e) => e.id).toSet(),
+        all
+            .where((EntryRow e) => e.recommendFlag == 0)
+            .map((EntryRow e) => e.id)
+            .toSet(),
+        reason: 'SemanticFilter.scan 的 SQL 与 entryFlagOf 口径不一致',
+      );
 
       // ② 聚合计数直接钉在表驱动期望上（防 Dart 与 SQL 一起漂移到错口径）。
       int wantCount(int flag) {
@@ -183,6 +196,8 @@ void main() {
       expect(d, isNotNull);
       expect(d!.recommendCount, wantCount(1));
       expect(d.avoidCount, wantCount(-1));
+      // 扫书计数 = default 桶（非推荐且非排雷）：点 N 扫书 → 列表 N 条的依据。
+      expect(d.scanCount, wantCount(0));
       expect(
         d.recommendCount,
         all.where((EntryRow e) => e.recommendFlag == 1).length,
@@ -190,6 +205,11 @@ void main() {
       expect(
         d.avoidCount,
         all.where((EntryRow e) => e.recommendFlag == -1).length,
+      );
+      expect(
+        scan.length,
+        d.scanCount,
+        reason: '仅扫书筛选条数须等于页头扫书计数（数字与点开的列表同源）',
       );
     });
   });

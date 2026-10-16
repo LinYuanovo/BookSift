@@ -425,6 +425,52 @@ ClassifyResult _classifyCore(
       null, <String>['闲聊:无命中(书名数=${booknames.length})'], booknames, dictAnchor);
 }
 
+/// 条目三分类型（扫书 / 推书 / 排雷）：书卡「x扫书 x推荐 x排雷」计数与条目徽标共用。
+///
+/// 存量库没有 hit_rules，帖级 post_kind 又把推书并进扫书（分类链有 Python parity 夹具，
+/// 推书并进扫书是冻结口径）——这里只用「颜色标记 + 帖标题 + 类别」还原三档：
+///   ① 绿标(+1)   → 推书档（排雷帖里的绿标条目仍算推荐，标记优先，口径同 entryFlagOf）；
+///   ② 红标(−1)   → 排雷档；
+///   ③ 标题排雷词 → 排雷档（无标记的排雷帖条目靠这条归位）；
+///   ④ 标题推书词 → 推书档（「推荐/推书/安利…」，修复「明确是推书仍显示为扫书」）；
+///   ⑤ 类别=求书  → 求书（保留灰徽标语义）；⑥ 其余 → 扫书。
+String entryKindLabel({
+  required String category,
+  required int flag,
+  String? title,
+}) {
+  if (flag == 1) {
+    return kRecommendKind;
+  }
+  if (flag == -1) {
+    return PostKind.mine;
+  }
+  final String ft = foldText(title ?? '');
+  if (ft.isNotEmpty) {
+    final String titleClean = _stripDefensive(ft);
+    if (v2MineTitlePrefix.hasMatch(titleClean)) {
+      return PostKind.mine;
+    }
+    for (final Rule rule in v2MineTitleAny) {
+      if (rule.hasMatch(titleClean)) {
+        return PostKind.mine;
+      }
+    }
+    for (final Rule rule in recommendTitlePatterns) {
+      if (rule.hasMatch(ft)) {
+        return kRecommendKind;
+      }
+    }
+  }
+  if (category == PostKind.seek) {
+    return PostKind.seek;
+  }
+  return PostKind.scan;
+}
+
+/// 三分「推书」档的展示值（不是入库枚举：posts.post_kind 仍写扫书）。
+const String kRecommendKind = '推书';
+
 // ============================================================================
 // 生产入口（= classify_v3，行 1163–1175）
 // ============================================================================

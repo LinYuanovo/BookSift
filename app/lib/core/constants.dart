@@ -4,6 +4,10 @@ abstract final class AppConstants {
 
   /// drift 单库名（原型 §7.1：内容表与用户表同库 app.db；drift_flutter 落盘为 `<name>`.sqlite）。
   static const String databaseName = 'app';
+
+  /// 正文预览统一截断字数（用户口径：所有正文预览 100 字截断，超出补「…」）。
+  /// 消费方：queries.summarizeCardText（首页帖卡/书卡摘要）与 collector/tieba_search（在线结果行）。
+  static const int previewMaxChars = 100;
 }
 
 /// settings 表（KV）键名（原型 §7.2 Settings.key 注释 / §7.5 版本闸门 / §9.2）。

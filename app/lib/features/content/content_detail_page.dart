@@ -319,6 +319,8 @@ class _ContentDetailPageState extends ConsumerState<ContentDetailPage> {
               onPressed: () => _setSelectMode(!_selectMode),
             ),
             PopupMenuButton<String>(
+              // r14 菜单形状裁切：条目墨渍/高亮默认直角，会外溢到菜单圆角之外。
+              clipBehavior: Clip.antiAlias,
               tooltip: '更多',
               icon: AppIcon(
                 'more',

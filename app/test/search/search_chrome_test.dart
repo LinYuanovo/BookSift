@@ -13,8 +13,11 @@
 library;
 
 import 'package:booksift/core/widgets/scroll_chrome.dart';
+import 'package:booksift/features/home/cards.dart';
 import 'package:booksift/features/search/search_page.dart';
 import 'package:booksift/features/search/search_state.dart';
+import 'package:booksift/theme/app_colors.dart';
+import 'package:booksift/theme/app_spacing.dart';
 import 'package:booksift/theme/book_theme.dart';
 import 'package:dio/dio.dart' show ResponseBody;
 import 'package:flutter/material.dart';
@@ -63,8 +66,8 @@ void main() {
   late FakeBookRepository repo;
   setUp(() => repo = FakeBookRepository(library: demoLibrary()));
 
-  group('筛选面板（固定两行 + 图标动作钮）', () {
-    testWidgets('第一行 年/月/旬 + 清空钮；第二行 来源/类别/时间 + 确认钮；compact 零溢出',
+  group('筛选面板（固定两行 + Tab 行动作组）', () {
+    testWidgets('两行维度 chips；清除/确认/目录在 Tab 行同排；compact 零溢出',
         (WidgetTester tester) async {
       useSurface(tester); // 390×844 compact
       await tester.pumpWidget(testApp(repo, initial: searchRoute(kQuery)));
@@ -78,10 +81,17 @@ void main() {
       expect(find.text('来源·全部'), findsOneWidget);
       expect(find.text('类别·全部'), findsOneWidget);
       expect(find.text('时间↓'), findsOneWidget);
-      // 两个行尾动作钮均为纯图标（无文本）。
-      expect(find.byTooltip('清空筛选'), findsOneWidget);
+      // 清除 / 确认在 Tab 行，与目录同排（设计令牌图标 close / check，非纯文字）。
+      expect(find.byTooltip('清除筛选'), findsOneWidget);
       expect(find.byTooltip('确认筛选'), findsOneWidget);
-      expect(find.text('清空筛选'), findsNothing, reason: '清空钮为纯图标');
+      expect(find.byTooltip('目录'), findsOneWidget);
+      // 分段控件优先占宽：默认字阶下「本地库 / 贴吧在线」固有宽 ≈150；
+      // 旧布局（与 Spacer 1:1 平分余量）会被压到 ≈121 → 标签出「本…/贴…」。
+      expect(
+        tester.getSize(find.byType(SegmentedPill<SearchTab>)).width,
+        greaterThan(140),
+        reason: '411dp 档也不出「本…/贴…」截断',
+      );
 
       // 两行布局：年/月/旬 与 来源/类别 的 y 不同（第一行 vs 第二行）。
       final double yYear = tester.getTopLeft(find.text('年·全部')).dy;
@@ -96,9 +106,104 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('年·2025'), findsOneWidget, reason: '选值回写 chip 摘要');
       // 非默认筛选后清空钮可用 → 点击清空回全部。
-      await tester.tap(find.byTooltip('清空筛选'));
+      await tester.tap(find.byTooltip('清除筛选'));
       await tester.pumpAndSettle();
       expect(find.text('年·全部'), findsOneWidget, reason: '清空筛选回「全部」');
+    });
+
+    testWidgets('宽屏（1024×768）：清除/确认/目录贴右、与 Tab 同一中线、零溢出', (WidgetTester tester) async {
+      useSurface(tester, width: 1024, height: 768);
+      await tester.pumpWidget(testApp(repo, initial: searchRoute(kQuery)));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '宽屏零溢出');
+
+      // 顺序：本地库/贴吧在线 → 清除 → 确认 → 目录（全部同一排）。
+      final double xTabs = tester.getTopRight(find.text('贴吧在线')).dx;
+      final Finder clear = find.byTooltip('清除筛选');
+      final Finder confirm = find.byTooltip('确认筛选');
+      final Finder toc = find.byTooltip('目录');
+      expect(tester.getTopLeft(clear).dx, greaterThan(xTabs), reason: '动作组在分段控件右侧');
+      expect(tester.getTopLeft(confirm).dx, greaterThan(tester.getTopLeft(clear).dx), reason: '确认在清除右侧');
+      expect(tester.getTopLeft(toc).dx, greaterThan(tester.getTopLeft(confirm).dx), reason: '目录在确认右侧');
+
+      // 用户口径「居右对齐」：目录钮右缘贴页面右内边距（弹性槽吃满后不存在行尾余量）。
+      final AppSpacing s = AppSpacing.of(tester.element(find.byType(SearchPage)));
+      final Rect pageRect = tester.getRect(find.byType(SearchPage));
+      expect(tester.getTopRight(toc).dx, closeTo(pageRect.right - s.pagePadding, 0.5),
+          reason: '动作组贴右（旧布局余量落在动作组右侧）');
+
+      // 上下对齐：动作图标与 Tab 标签同一中线。
+      final double yTab = tester.getCenter(find.text('本地库')).dy;
+      expect((tester.getCenter(clear).dy - yTab).abs(), lessThan(1.0));
+      expect((tester.getCenter(confirm).dy - yTab).abs(), lessThan(1.0));
+    });
+  });
+
+  group('结果卡（计数 / 日期 / 命中正文）', () {
+    testWidgets('关键词命中：无「N 条」、日期贴右、正文 50 字内 + 关键词琥珀高亮', (WidgetTester tester) async {
+      useSurface(tester);
+      // 「无限流」命中评语列（二级检索）→ snippet 自带 `[词]` 命中标记。
+      await tester.pumpWidget(testApp(repo, initial: searchRoute('无限流')));
+      await tester.pumpAndSettle();
+
+      final Finder card = find.widgetWithText(AccentCard, '《十日终焉》');
+      expect(card, findsOneWidget);
+
+      // 不再显示「N 条」冗余总数（用户口径：扫书 / 推荐 / 排雷 三档已足够）。
+      expect(
+        find.descendant(of: card, matching: find.textContaining(RegExp(r'\d+\s*条'))),
+        findsNothing,
+      );
+
+      // 最近日期贴右：右缘 = 卡片右内边距（cardPadding）。
+      final AppSpacing s = AppSpacing.of(tester.element(find.byType(SearchPage)));
+      final Finder date = find.descendant(of: card, matching: find.text('2025-04-28'));
+      expect(date, findsOneWidget);
+      expect(tester.getTopRight(date).dx, closeTo(tester.getRect(card).right - s.cardPadding, 0.5),
+          reason: '日期居右对齐');
+
+      // 命中正文预览：snippet 命中标记保留 → 琥珀底高亮（c.highlight）。
+      final Finder preview = find.descendant(of: card, matching: find.byType(HighlightText));
+      expect(preview, findsOneWidget, reason: '关键词命中的正文预览在场');
+      final HighlightText hl = tester.widget<HighlightText>(preview);
+      expect(hl.text, contains('[无限流]'), reason: 'snippet 命中标记原样交给高亮渲染');
+      expect(
+        hl.text.replaceAll('[', '').replaceAll(']', '').runes.length,
+        lessThanOrEqualTo(kSearchCardPreviewChars + 1),
+        reason: '可见 50 字上限（+「…」）',
+      );
+
+      // Paint.color getter 经 float32 往返重建 Color，直接 == 比较会假阴性 → 走 ARGB 值。
+      final int expectedHl = AppColors.of(tester.element(preview)).highlight.toARGB32();
+      bool hasHighlight = false;
+      final Text rich = tester.widget<Text>(find.descendant(of: preview, matching: find.byType(Text)).first);
+      rich.textSpan!.visitChildren((InlineSpan span) {
+        final Paint? bg = span.style?.background;
+        if (bg is Paint && bg.color.toARGB32() == expectedHl) {
+          hasHighlight = true;
+        }
+        return true;
+      });
+      expect(hasHighlight, isTrue, reason: '关键词走 c.highlight 琥珀高亮');
+    });
+
+    testWidgets('仅筛选分类/维度（无关键词）：正文预览在场但不高亮', (WidgetTester tester) async {
+      useSurface(tester);
+      await tester.pumpWidget(testApp(repo, initial: '/search?q='));
+      await tester.pumpAndSettle();
+
+      final Finder card = find.widgetWithText(AccentCard, '《十日终焉》');
+      final Finder preview = find.descendant(of: card, matching: find.byType(HighlightText));
+      expect(preview, findsOneWidget, reason: '条件浏览卡也有正文预览（评语回退）');
+      final Text rich = tester.widget<Text>(find.descendant(of: preview, matching: find.byType(Text)).first);
+      bool anyBg = false;
+      rich.textSpan!.visitChildren((InlineSpan span) {
+        if (span.style?.background != null) {
+          anyBg = true;
+        }
+        return true;
+      });
+      expect(anyBg, isFalse, reason: '无关键词 → 不做高亮');
     });
   });
 

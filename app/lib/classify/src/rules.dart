@@ -134,6 +134,18 @@ final List<Rule> v2MineTitleTerms = <Rule>[
 final PyRegex v2TitleQuestion = PyRegex(
     r'([吗么？?][\s。！!？?]*$|(算|是|叫)[^，。]{0,10}[吗么？?])');
 
+/// 标题推书意图（展示三分用，不进 v2 判定顺序——判定仍把推书并进扫书，见 v2ScanTitlePatterns）。
+/// 与 1D 的推书规则同词表，单独成表只为书卡计数能把「推书帖里的条目」和「扫书帖」分开。
+final List<Rule> recommendTitlePatterns = <Rule>[
+  Rule('推书', r'推书'),
+  Rule('推文', r'推文'),
+  Rule('推扫', r'推[＋+]?扫'),
+  Rule('推荐', r'推荐'),
+  Rule('推N本', r'推[^，。]{0,3}[本点些]'),
+  Rule('安利', r'安利'),
+  Rule('种草', r'种草'),
+];
+
 /// 1D 标题扫书意图（行 253–282；收集全部命中后一次性返回）。
 final List<Rule> v2ScanTitlePatterns = <Rule>[
   Rule('扫书', r'扫书'),

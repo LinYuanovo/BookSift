@@ -496,7 +496,7 @@ void main() {
       expect(find.text('1 结果'), findsOneWidget);
       expect(find.text('实时联网·匿名'), findsNothing);
       expect(find.text('年·全部'), findsOneWidget, reason: '六维筛选面板属本地库');
-      expect(find.byTooltip('确认筛选'), findsOneWidget, reason: '确认钮在场');
+      expect(find.byTooltip('确认筛选'), findsOneWidget, reason: '确认钮在场（本地库 Tab 行，设计令牌图标）');
 
       await tester.tap(find.text('贴吧在线'));
       await tester.pumpAndSettle();

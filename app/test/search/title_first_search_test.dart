@@ -8,6 +8,8 @@
 // 修复：searchBooks 改两级——第一级只匹配 name/name_norm/author/author_norm
 // （FTS 用列过滤 {name author} : "词"），有命中即收口；零命中才放开到第二级
 // （现状全列匹配，含 recommender/comment），保住「按推荐语/正文找书」的召回。
+// 另（用户口径）：第二级 LIKE 再放开到所属楼层正文（floors.text）——角色名等关键词
+// 常只出现在楼层里、条目评语为空，不查楼层会零召回。
 //
 // plain test()：内存 drift + NativeDatabase 同步 FFI（TESTING.md §1 允许），
 // 与 recall_norm_fallback_test.dart 同款骨架。
@@ -272,6 +274,118 @@ void main() {
       final SearchOutcome out = await queries.searchBooks(const SearchFilter());
       final GroupHit hit = out.page.items.single;
       expect(hit.preview, '条件浏览下也要展示这段正文预览。');
+    });
+  });
+
+  group('正文关键词召回（角色名等只出现在楼层正文）', () {
+    Future<int> insertPost(String title) =>
+        db.into(db.posts).insert(PostsCompanion.insert(
+              channel: 'yy小说吧',
+              title: Value<String?>(title),
+              date: const Value<String?>('2025-04-20'),
+            ));
+
+    test('≥3 字角色名只出现在楼层正文 → 经 floors 召回该书', () async {
+      final int postId = await insertPost('推书：边关月');
+      final int floorId = await db.into(db.floors).insert(FloorsCompanion.insert(
+            postId: postId,
+            seq: 1,
+            content: const Value<String>('主角林晚舟从边关一路杀到京城，角色塑造很带感。'),
+          ));
+      await db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
+            name: '《边关月》',
+            nameNorm: '边关月',
+            channel: 'yy小说吧',
+            contentHash: 'fr1',
+            date: const Value<String?>('2025-04-20'),
+            postRef: Value<int?>(postId),
+            floorRef: Value<int?>(floorId),
+          ));
+
+      final SearchOutcome out = await queries.searchBooks(filter('林晚舟'));
+      expect(out.page.total, 1, reason: '书名/作者/评语均无该词，仅楼层正文命中');
+      expect(out.page.items.single.nameNorm, '边关月');
+    });
+
+    test('2 字角色名（trigram 零命中）同样经 floors LIKE 召回', () async {
+      final int postId = await insertPost('凡人流合集');
+      final int floorId = await db.into(db.floors).insert(FloorsCompanion.insert(
+            postId: postId,
+            seq: 1,
+            content: const Value<String>('韩立一路谨慎求稳，凡人流开山之作。'),
+          ));
+      await db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
+            name: '《凡人修仙传》',
+            nameNorm: '凡人修仙传',
+            channel: 'yy小说吧',
+            contentHash: 'fr2',
+            date: const Value<String?>('2025-04-20'),
+            postRef: Value<int?>(postId),
+            floorRef: Value<int?>(floorId),
+          ));
+
+      final SearchOutcome out = await queries.searchBooks(filter('韩立'));
+      expect(out.page.total, 1);
+      expect(out.page.items.single.nameNorm, '凡人修仙传');
+      expect(out.usedFts, isFalse, reason: '2 字词走 LIKE 兜底');
+    });
+  });
+
+  group('三分计数（扫书 / 推书 / 排雷，书卡计数口径）', () {
+    test('按标记优先 + 帖标题归三档；计数与「仅推荐/仅排雷」筛选同源', () async {
+      final int gid = await db
+          .into(db.bookGroups)
+          .insert(BookGroupsCompanion.insert(nameNorm: '三档书'));
+
+      Future<int> addPost(String title) => db.into(db.posts).insert(
+            PostsCompanion.insert(
+              channel: 'yy小说吧',
+              title: Value<String?>(title),
+              date: const Value<String?>('2025-04-20'),
+            ),
+          );
+      Future<void> addEntry({
+        required int postId,
+        required String hash,
+        required String category,
+      }) =>
+          db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
+                name: '《三档书》',
+                nameNorm: '三档书',
+                channel: 'yy小说吧',
+                category: Value<String>(category),
+                contentHash: hash,
+                date: const Value<String?>('2025-04-20'),
+                postRef: Value<int?>(postId),
+                bookGroupId: Value<int?>(gid),
+              ));
+
+      // 推书帖·无标 → 标题归推书档（旧口径算 0 推荐）；排雷标题 → 排雷档；
+      // 排雷类别·无标 → 标记归排雷档；普通帖 → 扫书档。
+      await addEntry(postId: await addPost('推书：本月合集'), hash: 'k1', category: '扫书');
+      await addEntry(postId: await addPost('排雷：千万别看'), hash: 'k2', category: '扫书');
+      await addEntry(postId: await addPost('记录楼'), hash: 'k3', category: '排雷');
+      await addEntry(postId: await addPost('极简扫书记'), hash: 'k4', category: '扫书');
+
+      final SearchOutcome out = await queries.searchBooks(const SearchFilter());
+      final GroupHit hit =
+          out.page.items.singleWhere((GroupHit g) => g.nameNorm == '三档书');
+      expect(hit.scanCount, 1, reason: '普通帖条目 → 扫书档');
+      expect(hit.recommendCount, 1, reason: '推书帖条目（无标）→ 推书档');
+      expect(hit.avoidCount, 2, reason: '排雷标题 + 排雷类别各 1 → 排雷档');
+
+      final BookDetailData? d = await queries.bookDetail(gid);
+      expect(d!.scanCount, 1);
+      expect(d.recommendCount, 1);
+      expect(d.avoidCount, 2);
+
+      // 筛选与计数同源：仅推荐 1 条、仅排雷 2 条（数字与点开的列表一致）。
+      final List<EntryRow> rec =
+          await queries.bookEntries(gid, SemanticFilter.recommend);
+      final List<EntryRow> avoid =
+          await queries.bookEntries(gid, SemanticFilter.avoid);
+      expect(rec, hasLength(1));
+      expect(avoid, hasLength(2));
     });
   });
 }
