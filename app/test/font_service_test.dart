@@ -67,10 +67,12 @@ class FakeRegistrar implements FontRegistrar {
 class FakePicker implements FontFilePicker {
   PickedFontFile? next;
   int picks = 0;
+  bool crashPick = false;
 
   @override
   Future<PickedFontFile?> pickFontFile() async {
     picks++;
+    if (crashPick) throw StateError('picker dialog unavailable');
     return next;
   }
 }
@@ -271,6 +273,17 @@ void main() {
       b.picker.next = null;
       expect(await b.service.importPickedFont(), isNull);
       expect(b.picker.picks, 1);
+      expect(b.service.registry, isEmpty);
+      expect(b.files.files, isEmpty);
+      b.service.dispose();
+    });
+
+    test('选择器抛异常（Linux 对话框不可用等）：转成可展示消息，不抛给 UI', () async {
+      final b = buildService();
+      await b.service.bootstrap();
+      b.picker.crashPick = true;
+      final String? error = await b.service.importPickedFont();
+      expect(error, isNotNull);
       expect(b.service.registry, isEmpty);
       expect(b.files.files, isEmpty);
       b.service.dispose();

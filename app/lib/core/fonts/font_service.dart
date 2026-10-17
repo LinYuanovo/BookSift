@@ -77,7 +77,14 @@ class FontService extends ChangeNotifier {
 
   /// 弹文件选择器导入；返回 null = 成功或用户取消，非 null = 可展示的错误消息。
   Future<String?> importPickedFont() async {
-    final PickedFontFile? picked = await _picker.pickFontFile();
+    final PickedFontFile? picked;
+    try {
+      picked = await _picker.pickFontFile();
+    } catch (_) {
+      // 平台对话框不可用（Linux 桌面缺 zenity/portal 等）→ 与 [scanSystemFonts]
+      // 同口径：返回可展示的消息，不把异常抛给 UI（否则按钮会卡在「导入中」）。
+      return '打开文件选择器失败，请重试或改用「加入系统字体」';
+    }
     if (picked == null) return null; // 用户取消不算错误
     return importFontBytes(picked.fileName, picked.bytes);
   }

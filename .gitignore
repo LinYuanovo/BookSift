@@ -9,6 +9,7 @@ tieba-api-catalog/
 tools/*
 !tools/run_tests_safe.ps1
 !tools/make_release.ps1
+!tools/make_release_linux.sh
 
 # ---- 构建产物与缓存 ----
 app/build/

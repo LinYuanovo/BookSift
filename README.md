@@ -59,6 +59,7 @@
 - **Flutter SDK**：≥ 3.41.9
 - **Dart SDK**：≥ 3.11.5
 - **操作系统**：Windows 10 / 11（64 位）
+- **Linux 构建**：Ubuntu 22.04+（x86_64），需 GTK3 / libsecret 依赖（`libgtk-3-dev`、`libsecret-1-dev`）
 - **内存**：建议 8GB+；磁盘 2GB+（含构建缓存）
 
 </details>
@@ -96,6 +97,7 @@ flutter pub get
 flutter run -d windows            # 开发调试
 flutter build apk --release       # → build/app/outputs/flutter-apk/app-release.apk
 flutter build windows --release   # → build/windows/x64/runner/Release/
+flutter build linux --release     # → build/linux/x64/release/bundle/
 ```
 
 drift 生成代码（`*.g.dart`）已入库，clone 后无需跑 `build_runner`。
@@ -105,6 +107,24 @@ Android 发布包可让脚本一键走完「preflight → 构建 → apksigner �
 ```powershell
 pwsh tools/make_release.ps1        # 版本号取自 app/pubspec.yaml；-Publish 会执行 gh release create
 ```
+
+Linux 桌面发布包（Ubuntu）用 bash 脚本一键走完「preflight → 构建 → 产物闸门 → 组装」，产物落 `dist_release/`：
+
+```bash
+tools/make_release_linux.sh        # 版本号取自 app/pubspec.yaml；产物 booksift-linux-v<版本>-x64.tar.gz
+```
+
+Linux 构建环境（Ubuntu 22.04+/24.04 实测）：
+
+```bash
+sudo apt-get install -y clang cmake ninja-build pkg-config lld binutils \
+  libgtk-3-dev libsecret-1-dev liblzma-dev libstdc++-12-dev
+# Flutter SDK 3.41.9：flutter_linux_3.41.9-stable.tar.xz 解包到 /opt/flutter 即可（无额外安装步骤）
+```
+
+> `sqlite3` 的原生资产构建钩子会从 GitHub Releases 下载预编译 `libsqlite3.x64.linux.so`（sha256 `b1772918…`）。
+> 无 GitHub 直连的机器需预先把该文件放到
+> `app/.dart_tool/hooks_runner/shared/sqlite3/build/download-b1772918/libsqlite3.so`（口径同 `tools/make_release.ps1` 对 Windows 的预置）。
 
 测试**不要裸跑** `flutter test`（FakeAsync 假时钟下可能永久挂死），一律用墙钟看门狗：
 

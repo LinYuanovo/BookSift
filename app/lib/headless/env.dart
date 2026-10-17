@@ -67,10 +67,13 @@ class DoctorReport {
 
 /// 环境工具集（无状态）。
 abstract final class HeadlessEnv {
-  /// sqlite3 原生库缺失时的修复提示（Windows 下 anaconda 自带）。
-  static const String sqliteHint =
-      'sqlite3 原生库不可用。Windows：把含 sqlite3.dll 的目录加入 PATH，'
-      '例如 \$env:PATH = "C:\\ProgramData\\anaconda3\\Library\\bin;\$env:PATH"';
+  /// sqlite3 原生库缺失时的修复提示（按平台给可执行步骤：
+  /// Windows 下 anaconda 自带 sqlite3.dll；Linux 走系统 libsqlite3）。
+  static String get sqliteHint => Platform.isWindows
+      ? 'sqlite3 原生库不可用。Windows：把含 sqlite3.dll 的目录加入 PATH，'
+          '例如 \$env:PATH = "C:\\ProgramData\\anaconda3\\Library\\bin;\$env:PATH"'
+      : 'sqlite3 原生库不可用。Linux：安装系统 libsqlite3'
+          '（Debian/Ubuntu：sudo apt install libsqlite3-0），或改用自带 lib/ 的 dist bundle 运行';
 
   /// 打开磁盘库（不存在则创建空库；drift 会在首次访问时建表）。
   static AppDatabase openDb(String path) =>
