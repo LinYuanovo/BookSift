@@ -23,14 +23,17 @@ class CollectRepository {
   final AppDatabase db;
 
   /// 全部关注吧（按吧名序）。
-  Future<List<CollectionStateEntry>> forums() =>
-      (db.select(db.collectionState)..orderBy([(t) => OrderingTerm.asc(t.fname)]))
-          .get();
+  Future<List<CollectionStateEntry>> forums() => (db.select(
+    db.collectionState,
+  )..orderBy([(t) => OrderingTerm.asc(t.fname)])).get();
 
   /// 最近运行日志（新在前；持久层同样限 [kCollectionLogLimit]）。
   Future<List<CollectionLog>> recentLogs({int limit = 50}) =>
       (db.select(db.collectionLogs)
-            ..orderBy([(t) => OrderingTerm.desc(t.runAt), (t) => OrderingTerm.desc(t.id)])
+            ..orderBy([
+              (t) => OrderingTerm.desc(t.runAt),
+              (t) => OrderingTerm.desc(t.id),
+            ])
             ..limit(limit))
           .get();
 
@@ -50,8 +53,9 @@ class CollectRepository {
   }
 
   /// 新增关注吧（验证存在性属服务层职责，本方法只管落库；重复添加幂等）。
-  Future<void> addForum(String fname, {int? fid}) =>
-      db.into(db.collectionState).insertOnConflictUpdate(
+  Future<void> addForum(String fname, {int? fid}) => db
+      .into(db.collectionState)
+      .insertOnConflictUpdate(
         CollectionStateCompanion.insert(fname: fname, fid: Value<int?>(fid)),
       );
 
@@ -67,10 +71,14 @@ class CollectRepository {
     await db.into(db.collectionLogs).insert(entry);
     final int total = await db.collectionLogs.count().getSingle();
     if (total > kCollectionLogLimit) {
-      final List<CollectionLog> stale = await (db.select(db.collectionLogs)
-            ..orderBy([(t) => OrderingTerm.desc(t.id)])
-            ..limit(total - kCollectionLogLimit, offset: kCollectionLogLimit))
-          .get();
+      final List<CollectionLog> stale =
+          await (db.select(db.collectionLogs)
+                ..orderBy([(t) => OrderingTerm.desc(t.id)])
+                ..limit(
+                  total - kCollectionLogLimit,
+                  offset: kCollectionLogLimit,
+                ))
+              .get();
       final List<int> ids = stale.map((CollectionLog l) => l.id).toList();
       await (db.delete(db.collectionLogs)..where((t) => t.id.isIn(ids))).go();
     }
@@ -79,23 +87,22 @@ class CollectRepository {
   // ── M2-① 采集服务扩展（只增不改：既有方法签名保持不变） ──────────────
 
   /// 单吧水位行（不存在返回 null）。
-  Future<CollectionStateEntry?> forum(String fname) =>
-      (db.select(db.collectionState)..where((t) => t.fname.equals(fname)))
-          .getSingleOrNull();
+  Future<CollectionStateEntry?> forum(String fname) => (db.select(
+    db.collectionState,
+  )..where((t) => t.fname.equals(fname))).getSingleOrNull();
 
   /// 读 settings KV（不存在返回 null）。
   Future<String?> getSetting(String key) async {
-    final Setting? row =
-        await (db.select(db.settings)..where((t) => t.key.equals(key)))
-            .getSingleOrNull();
+    final Setting? row = await (db.select(
+      db.settings,
+    )..where((t) => t.key.equals(key))).getSingleOrNull();
     return row?.value;
   }
 
   /// 写 settings KV（UPSERT）。
-  Future<void> setSetting(String key, String value) =>
-      db.into(db.settings).insertOnConflictUpdate(
-            SettingsCompanion.insert(key: key, value: value),
-          );
+  Future<void> setSetting(String key, String value) => db
+      .into(db.settings)
+      .insertOnConflictUpdate(SettingsCompanion.insert(key: key, value: value));
 
   /// 一轮运行后的吧级状态落库（§8.7 步骤 6 / §8.12 状态机）。
   ///
@@ -117,32 +124,34 @@ class CollectRepository {
     int addNewSinceVisit = 0,
   }) async {
     final CollectionStateEntry? cur = await forum(fname);
-    await (db.update(db.collectionState)..where((t) => t.fname.equals(fname)))
-        .write(CollectionStateCompanion(
-      lastRunAt: Value<DateTime?>(lastRunAt),
-      lastStatus: Value<String>(lastStatus),
-      // null = 清空既有错误（成功轮次）。
-      lastError: Value<String?>(lastError),
-      consecutiveFailures: consecutiveFailures == null
-          ? const Value<int>.absent()
-          : Value<int>(consecutiveFailures),
-      // clearCooldown = 成功轮次清掉过期冷却戳。
-      cooldownUntil: clearCooldown
-          ? Value<DateTime?>(null)
-          : (cooldownUntil == null
-              ? const Value<DateTime?>.absent()
-              : Value<DateTime?>(cooldownUntil)),
-      lastThreadTime: lastThreadTime == null
-          ? const Value<int>.absent()
-          : Value<int>(lastThreadTime),
-      lastTid:
-          lastTid == null ? const Value<int>.absent() : Value<int>(lastTid),
-      fid: fid == null ? const Value<int?>.absent() : Value<int?>(fid),
-      totalThreads: Value<int>((cur?.totalThreads ?? 0) + addThreads),
-      totalFloors: Value<int>((cur?.totalFloors ?? 0) + addFloors),
-      newSinceVisit:
-          Value<int>((cur?.newSinceVisit ?? 0) + addNewSinceVisit),
-    ));
+    await (db.update(
+      db.collectionState,
+    )..where((t) => t.fname.equals(fname))).write(
+      CollectionStateCompanion(
+        lastRunAt: Value<DateTime?>(lastRunAt),
+        lastStatus: Value<String>(lastStatus),
+        // null = 清空既有错误（成功轮次）。
+        lastError: Value<String?>(lastError),
+        consecutiveFailures: consecutiveFailures == null
+            ? const Value<int>.absent()
+            : Value<int>(consecutiveFailures),
+        // clearCooldown = 成功轮次清掉过期冷却戳。
+        cooldownUntil: clearCooldown
+            ? Value<DateTime?>(null)
+            : (cooldownUntil == null
+                  ? const Value<DateTime?>.absent()
+                  : Value<DateTime?>(cooldownUntil)),
+        lastThreadTime: lastThreadTime == null
+            ? const Value<int>.absent()
+            : Value<int>(lastThreadTime),
+        lastTid: lastTid == null
+            ? const Value<int>.absent()
+            : Value<int>(lastTid),
+        fid: fid == null ? const Value<int?>.absent() : Value<int?>(fid),
+        totalThreads: Value<int>((cur?.totalThreads ?? 0) + addThreads),
+        totalFloors: Value<int>((cur?.totalFloors ?? 0) + addFloors),
+        newSinceVisit: Value<int>((cur?.newSinceVisit ?? 0) + addNewSinceVisit),
+      ),
+    );
   }
 }
-

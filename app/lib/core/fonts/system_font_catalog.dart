@@ -2,6 +2,8 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'font_metadata.dart';
 import 'system_font_permission.dart';
 
@@ -53,29 +55,43 @@ class SystemFontEntry {
 /// iOS 沙箱不允许应用直接读取系统字体文件，统一返回可展示提示。
 final class PlatformSystemFontCatalog implements SystemFontCatalog {
   const PlatformSystemFontCatalog({
-    this.permissionRequester = const MethodChannelSystemFontPermissionRequester(),
+    this.permissionRequester =
+        const MethodChannelSystemFontPermissionRequester(),
+    this.operatingSystem,
+    this.macosFontDirectories,
   });
 
   final SystemFontPermissionRequester permissionRequester;
+  @visibleForTesting
+  final String? operatingSystem;
+  @visibleForTesting
+  final List<String>? macosFontDirectories;
 
   static const Set<String> _extensions = <String>{'ttf', 'otf', 'ttc'};
 
   @override
   Future<List<SystemFontEntry>> listFonts() async {
-    if (Platform.isWindows) return _listWindows();
-    if (Platform.isMacOS) return _listMacos();
-    if (Platform.isLinux) return _listLinux();
-    if (Platform.isAndroid) return _listAndroid();
-    if (Platform.isIOS) {
-      throw const SystemFontCatalogException(
-        'iOS 不支持直接读取系统字体文件，请使用「导入字体」选择文件',
-      );
+    switch (operatingSystem ?? Platform.operatingSystem) {
+      case 'windows':
+        return _listWindows();
+      case 'macos':
+        return _listMacos();
+      case 'linux':
+        return _listLinux();
+      case 'android':
+        return _listAndroid();
+      case 'ios':
+        throw const SystemFontCatalogException(
+          'iOS 不支持直接读取系统字体文件，请使用「导入字体」选择文件',
+        );
+      default:
+        throw const SystemFontCatalogException('当前系统不支持读取系统字体，请使用「导入字体」选择文件');
     }
-    throw const SystemFontCatalogException('当前系统不支持读取系统字体，请使用「导入字体」选择文件');
   }
 
   @override
-  Future<Uint8List> readFontBytes(SystemFontEntry entry) => File(entry.filePath).readAsBytes();
+  Future<Uint8List> readFontBytes(SystemFontEntry entry) =>
+      File(entry.filePath).readAsBytes();
 
   Future<List<SystemFontEntry>> _listWindows() async {
     final Map<String, String> fallbackNames = <String, String>{};
@@ -83,11 +99,15 @@ final class PlatformSystemFontCatalog implements SystemFontCatalog {
     try {
       final _Win32Registry registry = _Win32Registry.open();
       for (final int hive in <int>[_hkeyLocalMachine, _hkeyCurrentUser]) {
-        for (final ({String name, String data}) value in registry.readFontValues(hive, _fontsSubKey)) {
+        for (final ({String name, String data}) value
+            in registry.readFontValues(hive, _fontsSubKey)) {
           final String? filePath = _resolveWindowsFile(value.data);
           if (filePath == null) continue;
           paths.add(filePath);
-          fallbackNames.putIfAbsent(filePath, () => _stripRegistrySuffix(value.name));
+          fallbackNames.putIfAbsent(
+            filePath,
+            () => _stripRegistrySuffix(value.name),
+          );
         }
       }
     } on SystemFontCatalogException {
@@ -100,23 +120,24 @@ final class PlatformSystemFontCatalog implements SystemFontCatalog {
 
   Future<List<SystemFontEntry>> _listMacos() async {
     final String home = Platform.environment['HOME'] ?? '';
-    final List<String> dirs = <String>[
-      '/System/Library/Fonts',
-      '/System/Library/Fonts/Supplemental',
-      '/Library/Fonts',
-      if (home.isNotEmpty) '$home/Library/Fonts',
-    ];
+    final List<String> dirs =
+        macosFontDirectories ??
+        <String>[
+          '/System/Library/Fonts',
+          '/System/Library/Fonts/Supplemental',
+          '/Library/Fonts',
+          if (home.isNotEmpty) '$home/Library/Fonts',
+        ];
     return _entriesFromPaths(await _filesUnder(dirs));
   }
 
   Future<List<SystemFontEntry>> _listLinux() async {
     final Set<String> paths = <String>{};
     try {
-      final ProcessResult result = await Process.run(
-        'fc-list',
-        <String>['-f', '%{file}\\n'],
-        runInShell: false,
-      );
+      final ProcessResult result = await Process.run('fc-list', <String>[
+        '-f',
+        '%{file}\\n',
+      ], runInShell: false);
       if (result.exitCode == 0) {
         for (final String line in '${result.stdout}'.split('\n')) {
           final String path = line.trim();
@@ -128,12 +149,14 @@ final class PlatformSystemFontCatalog implements SystemFontCatalog {
     }
     if (paths.isEmpty) {
       final String home = Platform.environment['HOME'] ?? '';
-      paths.addAll(await _filesUnder(<String>[
-        '/usr/share/fonts',
-        '/usr/local/share/fonts',
-        if (home.isNotEmpty) '$home/.local/share/fonts',
-        if (home.isNotEmpty) '$home/.fonts',
-      ]));
+      paths.addAll(
+        await _filesUnder(<String>[
+          '/usr/share/fonts',
+          '/usr/local/share/fonts',
+          if (home.isNotEmpty) '$home/.local/share/fonts',
+          if (home.isNotEmpty) '$home/.fonts',
+        ]),
+      );
     }
     return _entriesFromPaths(paths);
   }
@@ -148,7 +171,8 @@ final class PlatformSystemFontCatalog implements SystemFontCatalog {
     try {
       return _entriesFromPaths(await _filesUnder(dirs));
     } on FileSystemException {
-      final bool granted = await permissionRequester.requestReadFontsPermission();
+      final bool granted = await permissionRequester
+          .requestReadFontsPermission();
       if (!granted) {
         throw const SystemFontCatalogException('缺少读取系统字体的权限，请在系统设置中允许后重试');
       }
@@ -173,14 +197,17 @@ final class PlatformSystemFontCatalog implements SystemFontCatalog {
       family ??= FontMetadata.fallbackFamilyName(path);
       final String clean = family.trim();
       byPath[key] = SystemFontEntry(
-        familyName: clean.isEmpty ? FontMetadata.fallbackFamilyName(path) : clean,
+        familyName: clean.isEmpty
+            ? FontMetadata.fallbackFamilyName(path)
+            : clean,
         fileName: _fileNameOf(path),
         filePath: path,
       );
     }
-    return byPath.values.toList()
-      ..sort((SystemFontEntry a, SystemFontEntry b) =>
-          a.familyName.toLowerCase().compareTo(b.familyName.toLowerCase()));
+    return byPath.values.toList()..sort(
+      (SystemFontEntry a, SystemFontEntry b) =>
+          a.familyName.toLowerCase().compareTo(b.familyName.toLowerCase()),
+    );
   }
 
   /// 递归扫描字体目录；全部目录都不可读且没有任何命中时抛第一个 IO 异常。
@@ -191,8 +218,13 @@ final class PlatformSystemFontCatalog implements SystemFontCatalog {
       final Directory dir = Directory(path);
       try {
         if (!await dir.exists()) continue;
-        await for (final FileSystemEntity entity in dir.list(recursive: true, followLinks: false)) {
-          if (entity is File && _isFontFile(entity.path)) paths.add(entity.path);
+        await for (final FileSystemEntity entity in dir.list(
+          recursive: true,
+          followLinks: false,
+        )) {
+          if (entity is File && _isFontFile(entity.path)) {
+            paths.add(entity.path);
+          }
         }
       } on FileSystemException catch (e) {
         firstError ??= e;
@@ -206,7 +238,10 @@ final class PlatformSystemFontCatalog implements SystemFontCatalog {
   static String? _resolveWindowsFile(String data) {
     final String trimmed = data.trim();
     if (trimmed.isEmpty || !_isFontFile(trimmed)) return null;
-    final bool absolute = trimmed.contains(r'\') || trimmed.contains('/') || trimmed.contains(':');
+    final bool absolute =
+        trimmed.contains(r'\') ||
+        trimmed.contains('/') ||
+        trimmed.contains(':');
     final String windir = Platform.environment['WINDIR'] ?? r'C:\Windows';
     final String? localAppData = Platform.environment['LOCALAPPDATA'];
     final List<String> fontDirs = <String>[
@@ -223,10 +258,14 @@ final class PlatformSystemFontCatalog implements SystemFontCatalog {
   }
 
   static String _stripRegistrySuffix(String name) => name
-      .replaceFirst(RegExp(r'\s*\((TrueType|OpenType|TrueType Collection|All Res)\)\s*$'), '')
+      .replaceFirst(
+        RegExp(r'\s*\((TrueType|OpenType|TrueType Collection|All Res)\)\s*$'),
+        '',
+      )
       .trim();
 
-  static bool _isFontFile(String path) => _extensions.contains(_extensionOf(path));
+  static bool _isFontFile(String path) =>
+      _extensions.contains(_extensionOf(path));
 
   static String _fileNameOf(String path) {
     final int back = path.lastIndexOf('\\');
@@ -254,11 +293,18 @@ const int _errorNoMoreItems = 259;
 const int _regSz = 1;
 const int _nameChars = 1024;
 const int _dataBytes = 2048;
-const String _fontsSubKey = r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts';
+const String _fontsSubKey =
+    r'SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts';
 
 /// advapi32 / kernel32 直调的最小封装（避免为一次枚举引入新依赖）。
 final class _Win32Registry {
-  _Win32Registry._(this._regOpenKeyEx, this._regEnumValue, this._regCloseKey, this._localAlloc, this._localFree);
+  _Win32Registry._(
+    this._regOpenKeyEx,
+    this._regEnumValue,
+    this._regCloseKey,
+    this._localAlloc,
+    this._localFree,
+  );
 
   final _RegOpenKeyExDart _regOpenKeyEx;
   final _RegEnumValueDart _regEnumValue;
@@ -274,9 +320,15 @@ final class _Win32Registry {
     final DynamicLibrary advapi32 = DynamicLibrary.open('advapi32.dll');
     final DynamicLibrary kernel32 = DynamicLibrary.open('kernel32.dll');
     return _cached = _Win32Registry._(
-      advapi32.lookupFunction<_RegOpenKeyExNative, _RegOpenKeyExDart>('RegOpenKeyExW'),
-      advapi32.lookupFunction<_RegEnumValueNative, _RegEnumValueDart>('RegEnumValueW'),
-      advapi32.lookupFunction<_RegCloseKeyNative, _RegCloseKeyDart>('RegCloseKey'),
+      advapi32.lookupFunction<_RegOpenKeyExNative, _RegOpenKeyExDart>(
+        'RegOpenKeyExW',
+      ),
+      advapi32.lookupFunction<_RegEnumValueNative, _RegEnumValueDart>(
+        'RegEnumValueW',
+      ),
+      advapi32.lookupFunction<_RegCloseKeyNative, _RegCloseKeyDart>(
+        'RegCloseKey',
+      ),
       kernel32.lookupFunction<_LocalAllocNative, _LocalAllocDart>('LocalAlloc'),
       kernel32.lookupFunction<_LocalFreeNative, _LocalFreeDart>('LocalFree'),
     );
@@ -297,14 +349,27 @@ final class _Win32Registry {
       }
       units[subKey.length] = 0;
 
-      final int openCode = _regOpenKeyEx(hive, subKeyBuf, 0, _keyRead, keyMem.cast<IntPtr>());
-      if (openCode == _errorFileNotFound) return const <({String name, String data})>[];
+      final int openCode = _regOpenKeyEx(
+        hive,
+        subKeyBuf,
+        0,
+        _keyRead,
+        keyMem.cast<IntPtr>(),
+      );
+      if (openCode == _errorFileNotFound) {
+        return const <({String name, String data})>[];
+      }
       if (openCode != _errorSuccess) {
         throw SystemFontCatalogException('读取系统字体注册表失败（错误码 $openCode）');
       }
       final int key = keyMem.cast<IntPtr>().value;
       try {
-        return _enumerateValues(key, nameMem.cast<Uint16>(), dataMem, scratchMem.cast<Uint32>());
+        return _enumerateValues(
+          key,
+          nameMem.cast<Uint16>(),
+          dataMem,
+          scratchMem.cast<Uint32>(),
+        );
       } finally {
         _regCloseKey(key);
       }
@@ -323,8 +388,9 @@ final class _Win32Registry {
     Pointer<Uint8> dataBuf,
     Pointer<Uint32> scratch,
   ) {
-    final List<({String name, String data})> values = <({String name, String data})>[];
-    for (int index = 0;; index++) {
+    final List<({String name, String data})> values =
+        <({String name, String data})>[];
+    for (int index = 0; ; index++) {
       scratch[0] = _nameChars; // 值名缓冲容量（字符）
       scratch[1] = 0; // 输出：值类型
       scratch[2] = _dataBytes; // 数据缓冲容量（字节）
@@ -373,40 +439,44 @@ final class _Win32Registry {
 
 // FFI 函数签名（advapi32!RegOpenKeyExW / RegEnumValueW / RegCloseKey；
 // kernel32!LocalAlloc / LocalFree）。
-typedef _RegOpenKeyExNative = Int32 Function(
-  IntPtr hKey,
-  Pointer<Uint16> subKey,
-  Uint32 options,
-  Uint32 desired,
-  Pointer<IntPtr> result,
-);
-typedef _RegOpenKeyExDart = int Function(
-  int hKey,
-  Pointer<Uint16> subKey,
-  int options,
-  int desired,
-  Pointer<IntPtr> result,
-);
-typedef _RegEnumValueNative = Int32 Function(
-  IntPtr hKey,
-  Uint32 index,
-  Pointer<Uint16> name,
-  Pointer<Uint32> nameLen,
-  Pointer<Uint32> reserved,
-  Pointer<Uint32> type,
-  Pointer<Uint8> data,
-  Pointer<Uint32> dataLen,
-);
-typedef _RegEnumValueDart = int Function(
-  int hKey,
-  int index,
-  Pointer<Uint16> name,
-  Pointer<Uint32> nameLen,
-  Pointer<Uint32> reserved,
-  Pointer<Uint32> type,
-  Pointer<Uint8> data,
-  Pointer<Uint32> dataLen,
-);
+typedef _RegOpenKeyExNative =
+    Int32 Function(
+      IntPtr hKey,
+      Pointer<Uint16> subKey,
+      Uint32 options,
+      Uint32 desired,
+      Pointer<IntPtr> result,
+    );
+typedef _RegOpenKeyExDart =
+    int Function(
+      int hKey,
+      Pointer<Uint16> subKey,
+      int options,
+      int desired,
+      Pointer<IntPtr> result,
+    );
+typedef _RegEnumValueNative =
+    Int32 Function(
+      IntPtr hKey,
+      Uint32 index,
+      Pointer<Uint16> name,
+      Pointer<Uint32> nameLen,
+      Pointer<Uint32> reserved,
+      Pointer<Uint32> type,
+      Pointer<Uint8> data,
+      Pointer<Uint32> dataLen,
+    );
+typedef _RegEnumValueDart =
+    int Function(
+      int hKey,
+      int index,
+      Pointer<Uint16> name,
+      Pointer<Uint32> nameLen,
+      Pointer<Uint32> reserved,
+      Pointer<Uint32> type,
+      Pointer<Uint8> data,
+      Pointer<Uint32> dataLen,
+    );
 typedef _RegCloseKeyNative = Int32 Function(IntPtr hKey);
 typedef _RegCloseKeyDart = int Function(int hKey);
 typedef _LocalAllocNative = Pointer<Uint8> Function(Uint32 flags, IntPtr bytes);

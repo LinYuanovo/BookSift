@@ -1,7 +1,7 @@
 # 扫书汇（BookSift）· Flutter 工程
 
 应用源码、资源与测试都在这里。用法速查、功能清单与截图见[仓库根 README](../README.md)，
-在线文档站见 <https://booksift-app.github.io/booksift/>。
+在线文档站见 <https://linyuanovo.github.io/BookSift/>。
 
 工程内与代码同步维护的规范文档：
 

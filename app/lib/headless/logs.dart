@@ -25,20 +25,20 @@ enum RunLevel {
 
   /// JSON 里的稳定字面量（不要用 name，避免枚举重命名破坏日志解析）。
   String get wire => switch (this) {
-        RunLevel.info => 'info',
-        RunLevel.ok => 'ok',
-        RunLevel.warn => 'warn',
-        RunLevel.error => 'error',
-      };
+    RunLevel.info => 'info',
+    RunLevel.ok => 'ok',
+    RunLevel.warn => 'warn',
+    RunLevel.error => 'error',
+  };
 }
 
 /// UI 日志级别 → 运行日志级别。
 RunLevel runLevelOf(CollectLogLevel level) => switch (level) {
-      CollectLogLevel.info => RunLevel.info,
-      CollectLogLevel.ok => RunLevel.ok,
-      CollectLogLevel.warn => RunLevel.warn,
-      CollectLogLevel.accent => RunLevel.info,
-    };
+  CollectLogLevel.info => RunLevel.info,
+  CollectLogLevel.ok => RunLevel.ok,
+  CollectLogLevel.warn => RunLevel.warn,
+  CollectLogLevel.accent => RunLevel.info,
+};
 
 /// 一条运行事件（= JSONL 一行）。
 class RunEvent {
@@ -77,15 +77,15 @@ class RunEvent {
   final Map<String, Object?> data;
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'run': runId,
-        'seq': seq,
-        'ts': ts.toUtc().toIso8601String(),
-        'level': level.wire,
-        'scope': scope,
-        'event': event,
-        if (detail.isNotEmpty) 'detail': detail,
-        if (data.isNotEmpty) 'data': data,
-      };
+    'run': runId,
+    'seq': seq,
+    'ts': ts.toUtc().toIso8601String(),
+    'level': level.wire,
+    'scope': scope,
+    'event': event,
+    if (detail.isNotEmpty) 'detail': detail,
+    if (data.isNotEmpty) 'data': data,
+  };
 
   String toJsonLine() => jsonEncode(toJson());
 
@@ -96,7 +96,8 @@ class RunEvent {
     final String stamp =
         '${two(l.hour)}:${two(l.minute)}:${two(l.second)}.${l.millisecond.toString().padLeft(3, '0')}';
     final String tag = level.wire.toUpperCase().padRight(5);
-    final String buf = '$stamp $tag $scope $event${detail.isEmpty ? '' : '  $detail'}';
+    final String buf =
+        '$stamp $tag $scope $event${detail.isEmpty ? '' : '  $detail'}';
     return buf;
   }
 }
@@ -165,7 +166,8 @@ class MemoryRunLogSink implements RunLogSink {
   final List<RunEvent> events = <RunEvent>[];
 
   /// 全部 JSONL 行（断言用）。
-  List<String> get jsonLines => events.map((RunEvent e) => e.toJsonLine()).toList();
+  List<String> get jsonLines =>
+      events.map((RunEvent e) => e.toJsonLine()).toList();
 
   @override
   void write(RunEvent event) => events.add(event);
@@ -183,11 +185,8 @@ class MemoryRunLogSink implements RunLogSink {
 /// await log.close();
 /// ```
 class RunLog {
-  RunLog({
-    required this.runId,
-    required this.sinks,
-    DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now;
+  RunLog({required this.runId, required this.sinks, DateTime Function()? clock})
+    : _clock = clock ?? DateTime.now;
 
   /// 生成 run_id：`yyyyMMdd-HHmmss-<pid>`（同秒多进程不撞）。
   static String newRunId([DateTime? now]) {
@@ -230,12 +229,12 @@ class RunLog {
 
   /// 把采集服务的一条 UI 日志转成运行事件（scope=fname，'全局' 归一为 `global`）。
   void emitCollect(CollectLogEntry entry) => emit(
-        entry.fname == '全局' ? 'global' : entry.fname,
-        entry.event,
-        detail: entry.detail,
-        level: runLevelOf(entry.level),
-        data: <String, Object?>{'src': 'collect'},
-      );
+    entry.fname == '全局' ? 'global' : entry.fname,
+    entry.event,
+    detail: entry.detail,
+    level: runLevelOf(entry.level),
+    data: <String, Object?>{'src': 'collect'},
+  );
 
   /// 关闭全部 sink（落盘必须 await，否则尾部行可能丢）。
   Future<void> close() async {

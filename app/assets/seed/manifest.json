@@ -4,10 +4,10 @@
   "tier": "lite",
   "schema_version": 4,
   "min_app_version": "1.0.0",
-  "built_at": "2026-10-14T18:37:57+08:00",
+  "built_at": "2026-10-19T00:35:49+08:00",
   "builder": "repack_deflate.py (from _build/seed_lite.db)",
   "source": {
-    "db": "E:\\Programs\\BooksScanner\\work\\unified\\unified_v2.db",
+    "db": "work\\unified\\unified_v2.db",
     "size_bytes": 907190272,
     "sha256": "398117f7e8e8374f38d01583e8df05fd188c6c03ca16b97784fc1f3c5d9087ef",
     "unified_built_at": "2026-10-12 16:23:52"
@@ -78,7 +78,7 @@
     "cleaned_at": "2026-10-14T17:28:01.480138",
     "tier": "lite",
     "order": "先裁 comment≤300 → dedup → v3 回填 + category 镜像（与真机首启维护同序，故装机后维护为 no-op）",
-    "source_db": "E:\\Programs\\BooksScanner\\app\\../work/seed_pack/_build/seed_lite.db",
+    "source_db": "work\\seed_pack\\_build\\seed_lite.db",
     "book_entries_before": 79355,
     "book_entries_after": 53441,
     "idempotent_second_pass": {
@@ -111,9 +111,9 @@
     "method": "deflate",
     "method_choice_reason": "Dart archive 不支持 Zip-LZMA → deflate（App 端解压兼容唯一稳妥项）",
     "zip_file": "seed_pack_lite_v1.zip",
-    "zip_size_bytes": 63414636,
-    "zip_sha256": "bde2862562a58a6785d2bbc72a935e7efd9a77d384d6bef65eea2744f710590c",
-    "seconds": 4.5
+    "zip_size_bytes": 63414604,
+    "zip_sha256": "8b697e6b0253297cb04fa669a251762d162f9d6b6f7ef729862e29988ba2e342",
+    "seconds": 4.6
   },
   "lite_target_met": true,
   "repack_attempts": [
@@ -121,9 +121,9 @@
       "comment_max_chars": 300,
       "drop_trace_columns": false,
       "db_size_bytes": 173047808,
-      "zip_size_bytes": 63414636,
-      "seconds": 4.5,
-      "sha256": "bde2862562a58a6785d2bbc72a935e7efd9a77d384d6bef65eea2744f710590c",
+      "zip_size_bytes": 63414604,
+      "seconds": 4.6,
+      "sha256": "8b697e6b0253297cb04fa669a251762d162f9d6b6f7ef729862e29988ba2e342",
       "target_met": true
     }
   ]

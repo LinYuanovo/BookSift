@@ -59,11 +59,19 @@
 - 首次运行会解压种子包，请耐心等待；Windows Defender 首次扫描可能拖慢启动；
 - 数据存在用户目录下，删除程序目录不会删除你的数据。
 
+## iOS 未签名 IPA 无法安装，或 macOS 应用被拦截？
+
+- **iOS**：未签名 IPA 不能直接安装到普通 iPhone / iPad。接收者需要使用自己的 Apple Team、匹配的签名证书和 provisioning profile 完成签名，再按该签名方式安装。
+- **macOS**：未签名、未公证的 universal ZIP 可能被 Gatekeeper 阻止或警告。正式公开分发应使用 Developer ID 签名并完成 Apple notarization；universal 表示应用包含 Apple Silicon（arm64）与 Intel（x86_64）两种架构。
+- **当前发布状态**：GitHub Actions 为 Android、iOS、Windows、macOS、Linux 配置了构建任务；某版本的 Release 是否已有对应包，以该 Release 实际列出的资产为准。
+
 ## 更新检查一直失败？
 
 设置页的更新检查有主源与备源两条通道：**GitHub Releases**（主）→ **可配置静态 version.json**（备）。两条都失败时只会静默提示「检查失败」，不影响使用。
 
-如果你在国内网络下主源不可达，可以在设置页把备源填成自建静态托管上的 `version.json` 地址。也可以直接去 [Releases 页面](https://github.com/booksift-app/booksift/releases) 手动下载。
+平台下载链接字段为 `apk_url`、`ios_url`、`windows_url`、`macos_url`、`linux_url`；客户端只选择当前平台的链接，若该版本没有对应资产则提示未提供下载，不会改用其他平台安装包。
+
+如果你在国内网络下主源不可达，可以在设置页把备源填成自建静态托管上的 `version.json` 地址。也可以直接去 [Releases 页面](https://github.com/LinYuanovo/BookSift/releases) 手动下载。
 
 ## 少了原型里说的「分类」Tab？
 
@@ -71,6 +79,6 @@
 
 ## 能提需求或反馈问题吗？
 
-可以，去 [GitHub Issues](https://github.com/booksift-app/booksift/issues) 提，附上复现步骤、机型与版本号（设置页可看到当前版本）。
+可以，去 [GitHub Issues](https://github.com/LinYuanovo/BookSift/issues) 提，附上复现步骤、机型与版本号（设置页可看到当前版本）。
 
 

@@ -63,17 +63,21 @@ Future<bool> needsDedup(AppDatabase db) async =>
 
 /// v3 回填闸门：true = 需要执行 [reclassifyPostsV3]。
 Future<bool> needsReclassify(AppDatabase db) async =>
-    await _readSetting(db, SettingsKeys.classifierVersion) != '$classifierVersion';
+    await _readSetting(db, SettingsKeys.classifierVersion) !=
+    '$classifierVersion';
 
 Future<String?> _readSetting(AppDatabase db, String key) async {
   final QueryRow? row = await db
-      .customSelect('SELECT value AS v FROM settings WHERE key = ?',
-          variables: <Variable>[Variable.withString(key)])
+      .customSelect(
+        'SELECT value AS v FROM settings WHERE key = ?',
+        variables: <Variable>[Variable.withString(key)],
+      )
       .getSingleOrNull();
   return row?.read<String>('v');
 }
 
-Future<void> _writeSetting(AppDatabase db, String key, String value) => db.customStatement(
+Future<void> _writeSetting(AppDatabase db, String key, String value) =>
+    db.customStatement(
       "INSERT INTO settings(key, value) VALUES(?, ?) "
       'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       <dynamic>[key, value],
@@ -117,7 +121,8 @@ class DedupStats {
   final int elapsedMs;
 
   @override
-  String toString() => 'DedupStats(组 $groupsScanned/$totalGroups，判重 $dupGroups，'
+  String toString() =>
+      'DedupStats(组 $groupsScanned/$totalGroups，判重 $dupGroups，'
       '删除 $rowsDeleted，聚合重算 $groupsRefreshed，批 $batches，'
       'cancelled=$cancelled，${elapsedMs}ms)';
 }
@@ -180,11 +185,13 @@ Future<DedupStats> dedupBookEntries(
 }) async {
   final Stopwatch sw = Stopwatch()..start();
   // 1) 候选分组：SQL 按原始可见键粗筛（COUNT>1），Dart 侧按 normPerson 归并。
-  final List<QueryRow> candidates = await db.customSelect(
-    "SELECT name_norm AS nn, COALESCE(recommender, '') AS rec, COALESCE(date, '') AS d, "
-    'channel AS ch FROM book_entries '
-    'GROUP BY nn, rec, d, ch HAVING COUNT(*) > 1',
-  ).get();
+  final List<QueryRow> candidates = await db
+      .customSelect(
+        "SELECT name_norm AS nn, COALESCE(recommender, '') AS rec, COALESCE(date, '') AS d, "
+        'channel AS ch FROM book_entries '
+        'GROUP BY nn, rec, d, ch HAVING COUNT(*) > 1',
+      )
+      .get();
   final Map<String, _DupGroupKey> merged = <String, _DupGroupKey>{};
   for (final QueryRow row in candidates) {
     final String nn = row.read<String>('nn');
@@ -192,7 +199,10 @@ Future<DedupStats> dedupBookEntries(
     final String d = row.read<String>('d');
     final String ch = row.read<String>('ch');
     final String key = '$nn\u001f${normPerson(rec)}\u001f$d\u001f$ch';
-    merged.putIfAbsent(key, () => _DupGroupKey(nn, d, ch)).recommenders.add(rec);
+    merged
+        .putIfAbsent(key, () => _DupGroupKey(nn, d, ch))
+        .recommenders
+        .add(rec);
   }
   final List<_DupGroupKey> groups = merged.values.toList(growable: false);
 
@@ -203,15 +213,15 @@ Future<DedupStats> dedupBookEntries(
   var groupsSinceFlush = 0;
 
   DedupStats snapshot() => DedupStats(
-        totalGroups: groups.length,
-        groupsScanned: scanned,
-        dupGroups: dupGroups,
-        rowsDeleted: deleted,
-        groupsRefreshed: refreshed,
-        batches: batches,
-        cancelled: cancelled,
-        elapsedMs: sw.elapsedMilliseconds,
-      );
+    totalGroups: groups.length,
+    groupsScanned: scanned,
+    dupGroups: dupGroups,
+    rowsDeleted: deleted,
+    groupsRefreshed: refreshed,
+    batches: batches,
+    cancelled: cancelled,
+    elapsedMs: sw.elapsedMilliseconds,
+  );
 
   Future<void> flush() async {
     if (pendingDelete.isEmpty) {
@@ -225,7 +235,9 @@ Future<DedupStats> dedupBookEntries(
         final List<int> chunk = ids.sublist(i, min(i + 500, ids.length));
         await db.customUpdate(
           'DELETE FROM book_entries WHERE id IN (${List<String>.filled(chunk.length, '?').join(',')})',
-          variables: <Variable<Object>>[for (final int id in chunk) Variable.withInt(id)],
+          variables: <Variable<Object>>[
+            for (final int id in chunk) Variable.withInt(id),
+          ],
           updates: <ResultSetImplementation>{db.bookEntries},
           updateKind: UpdateKind.delete,
         );
@@ -276,20 +288,25 @@ Future<DedupStats> dedupBookEntries(
 }
 
 /// 取候选组全部成员（以原始 recommender 集合匹配；normPerson 归并已在分组键完成）。
-Future<List<_DupMember>> _fetchDupMembers(AppDatabase db, _DupGroupKey g) async {
+Future<List<_DupMember>> _fetchDupMembers(
+  AppDatabase db,
+  _DupGroupKey g,
+) async {
   final List<String> recs = g.recommenders.toList(growable: false);
   final String placeholders = List<String>.filled(recs.length, '?').join(',');
-  final List<QueryRow> rows = await db.customSelect(
-    "SELECT id, COALESCE(comment, '') AS c, quality AS q, post_ref AS pr, book_group_id AS gid "
-    'FROM book_entries WHERE name_norm = ? AND channel = ? AND COALESCE(date, \'\') = ? '
-    "AND COALESCE(recommender, '') IN ($placeholders)",
-    variables: <Variable>[
-      Variable.withString(g.nameNorm),
-      Variable.withString(g.channel),
-      Variable.withString(g.date),
-      for (final String r in recs) Variable.withString(r),
-    ],
-  ).get();
+  final List<QueryRow> rows = await db
+      .customSelect(
+        "SELECT id, COALESCE(comment, '') AS c, quality AS q, post_ref AS pr, book_group_id AS gid "
+        'FROM book_entries WHERE name_norm = ? AND channel = ? AND COALESCE(date, \'\') = ? '
+        "AND COALESCE(recommender, '') IN ($placeholders)",
+        variables: <Variable>[
+          Variable.withString(g.nameNorm),
+          Variable.withString(g.channel),
+          Variable.withString(g.date),
+          for (final String r in recs) Variable.withString(r),
+        ],
+      )
+      .get();
   return <_DupMember>[
     for (final QueryRow r in rows)
       _DupMember(
@@ -324,25 +341,30 @@ _DupVerdict? _judgeDupGroup(List<_DupMember> members) {
     }
   }
   // keeper：comment 最长者优先 → quality 高者 → post_ref 非空者 → id 最小者。
-  final _DupMember keeper = (List<_DupMember>.of(members)
-        ..sort((_DupMember a, _DupMember b) {
-          final int byComment = b.comment.length.compareTo(a.comment.length);
-          if (byComment != 0) {
-            return byComment;
-          }
-          final int byQuality = b.quality.compareTo(a.quality);
-          if (byQuality != 0) {
-            return byQuality;
-          }
-          final int byRef = (b.postRef != null ? 1 : 0).compareTo(a.postRef != null ? 1 : 0);
-          if (byRef != 0) {
-            return byRef;
-          }
-          return a.id.compareTo(b.id);
-        }))
-      .first;
+  final _DupMember keeper =
+      (List<_DupMember>.of(members)..sort((_DupMember a, _DupMember b) {
+            final int byComment = b.comment.length.compareTo(a.comment.length);
+            if (byComment != 0) {
+              return byComment;
+            }
+            final int byQuality = b.quality.compareTo(a.quality);
+            if (byQuality != 0) {
+              return byQuality;
+            }
+            final int byRef = (b.postRef != null ? 1 : 0).compareTo(
+              a.postRef != null ? 1 : 0,
+            );
+            if (byRef != 0) {
+              return byRef;
+            }
+            return a.id.compareTo(b.id);
+          }))
+          .first;
   return _DupVerdict(
-    deleteIds: <int>[for (final _DupMember m in members) if (m.id != keeper.id) m.id],
+    deleteIds: <int>[
+      for (final _DupMember m in members)
+        if (m.id != keeper.id) m.id,
+    ],
     groupIds: <int>{
       for (final _DupMember m in members)
         if (m.groupId != null) m.groupId!,
@@ -399,7 +421,8 @@ class LegacyPostDedupStats {
   final int elapsedMs;
 
   @override
-  String toString() => 'LegacyPostDedup(对 $pairsScanned，合并帖 $postsMerged，删条目 $entriesDeleted，'
+  String toString() =>
+      'LegacyPostDedup(对 $pairsScanned，合并帖 $postsMerged，删条目 $entriesDeleted，'
       '重算组 $groupsRefreshed，取消 $cancelled)';
 }
 
@@ -422,13 +445,13 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
   var cancelled = false;
 
   LegacyPostDedupStats snapshot() => LegacyPostDedupStats(
-        pairsScanned: pairsScanned,
-        postsMerged: postsMerged,
-        entriesDeleted: entriesDeleted,
-        groupsRefreshed: groupsRefreshed,
-        cancelled: cancelled,
-        elapsedMs: sw.elapsedMilliseconds,
-      );
+    pairsScanned: pairsScanned,
+    postsMerged: postsMerged,
+    entriesDeleted: entriesDeleted,
+    groupsRefreshed: groupsRefreshed,
+    cancelled: cancelled,
+    elapsedMs: sw.elapsedMilliseconds,
+  );
 
   while (true) {
     if (isCancelled?.call() ?? false) {
@@ -461,33 +484,33 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
     await db.transaction(() async {
       final Post? seed = await (db.select(
         db.posts,
-      )..where((Posts t) => t.id.equals(seedId)))
-          .getSingleOrNull();
+      )..where((Posts t) => t.id.equals(seedId))).getSingleOrNull();
       final Post? collected = await (db.select(
         db.posts,
-      )..where((Posts t) => t.id.equals(collectedId)))
-          .getSingleOrNull();
+      )..where((Posts t) => t.id.equals(collectedId))).getSingleOrNull();
       if (seed == null || collected == null) {
         return;
       }
 
-      final List<Floor> seedFloors = await (db.select(db.floors)
-            ..where((Floors t) => t.postId.equals(seedId))
-            ..orderBy(<OrderingTerm Function(Floors)>[
-              (Floors t) => OrderingTerm.asc(t.seq),
-              (Floors t) => OrderingTerm.asc(t.id),
-            ]))
-          .get();
+      final List<Floor> seedFloors =
+          await (db.select(db.floors)
+                ..where((Floors t) => t.postId.equals(seedId))
+                ..orderBy(<OrderingTerm Function(Floors)>[
+                  (Floors t) => OrderingTerm.asc(t.seq),
+                  (Floors t) => OrderingTerm.asc(t.id),
+                ]))
+              .get();
       final Map<int, Floor> seedBySeq = <int, Floor>{
         for (final Floor f in seedFloors) f.seq: f,
       };
-      final List<Floor> collectedFloors = await (db.select(db.floors)
-            ..where((Floors t) => t.postId.equals(collectedId))
-            ..orderBy(<OrderingTerm Function(Floors)>[
-              (Floors t) => OrderingTerm.asc(t.seq),
-              (Floors t) => OrderingTerm.asc(t.id),
-            ]))
-          .get();
+      final List<Floor> collectedFloors =
+          await (db.select(db.floors)
+                ..where((Floors t) => t.postId.equals(collectedId))
+                ..orderBy(<OrderingTerm Function(Floors)>[
+                  (Floors t) => OrderingTerm.asc(t.seq),
+                  (Floors t) => OrderingTerm.asc(t.id),
+                ]))
+              .get();
       for (final Floor cf in collectedFloors) {
         final Floor? sf = seedBySeq[cf.seq];
         if (sf == null) {
@@ -508,8 +531,7 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
         );
         await (db.update(
           db.floors,
-        )..where((Floors t) => t.id.equals(sf.id)))
-            .write(
+        )..where((Floors t) => t.id.equals(sf.id))).write(
           FloorsCompanion(
             pid: Value<int?>(cf.pid),
             content: Value<String>(cf.content),
@@ -521,8 +543,7 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
         );
         await (db.delete(
           db.floors,
-        )..where((Floors t) => t.id.equals(cf.id)))
-            .go();
+        )..where((Floors t) => t.id.equals(cf.id))).go();
       }
 
       await db.customUpdate(
@@ -536,12 +557,10 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
       );
       await (db.delete(
         db.posts,
-      )..where((Posts t) => t.id.equals(collectedId)))
-          .go();
+      )..where((Posts t) => t.id.equals(collectedId))).go();
       await (db.update(
         db.posts,
-      )..where((Posts t) => t.id.equals(seedId)))
-          .write(
+      )..where((Posts t) => t.id.equals(seedId))).write(
         PostsCompanion(
           tid: Value<int?>(collected.tid),
           title: Value<String?>(collected.title),
@@ -561,31 +580,39 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
         ),
       );
 
-      final List<QueryRow> dupNames = await db.customSelect(
-        'SELECT name_norm AS nn FROM book_entries WHERE post_ref = ? '
-        'GROUP BY name_norm HAVING COUNT(*) > 1',
-        variables: <Variable<Object>>[Variable.withInt(seedId)],
-      ).get();
+      final List<QueryRow> dupNames = await db
+          .customSelect(
+            'SELECT name_norm AS nn FROM book_entries WHERE post_ref = ? '
+            'GROUP BY name_norm HAVING COUNT(*) > 1',
+            variables: <Variable<Object>>[Variable.withInt(seedId)],
+          )
+          .get();
       for (final QueryRow row in dupNames) {
         final String nameNorm = row.read<String>('nn');
-        final List<QueryRow> members = await db.customSelect(
-          "SELECT id, COALESCE(comment, '') AS c, origin AS o, quality AS q, "
-          'book_group_id AS gid FROM book_entries WHERE post_ref = ? AND name_norm = ?',
-          variables: <Variable<Object>>[
-            Variable.withInt(seedId),
-            Variable.withString(nameNorm),
-          ],
-        ).get();
+        final List<QueryRow> members = await db
+            .customSelect(
+              "SELECT id, COALESCE(comment, '') AS c, origin AS o, quality AS q, "
+              'book_group_id AS gid FROM book_entries WHERE post_ref = ? AND name_norm = ?',
+              variables: <Variable<Object>>[
+                Variable.withInt(seedId),
+                Variable.withString(nameNorm),
+              ],
+            )
+            .get();
         if (members.length < 2) {
           continue;
         }
         final List<QueryRow> ranked = List<QueryRow>.of(members)
           ..sort((QueryRow a, QueryRow b) {
-            final int byLen = b.read<String>('c').length.compareTo(a.read<String>('c').length);
+            final int byLen = b
+                .read<String>('c')
+                .length
+                .compareTo(a.read<String>('c').length);
             if (byLen != 0) return byLen;
-            final int byOrigin = (b.read<String>('o') == Origin.collected ? 1 : 0).compareTo(
-              a.read<String>('o') == Origin.collected ? 1 : 0,
-            );
+            final int byOrigin =
+                (b.read<String>('o') == Origin.collected ? 1 : 0).compareTo(
+                  a.read<String>('o') == Origin.collected ? 1 : 0,
+                );
             if (byOrigin != 0) return byOrigin;
             final int byQuality = b.read<int>('q').compareTo(a.read<int>('q'));
             if (byQuality != 0) return byQuality;
@@ -603,8 +630,7 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
           }
           await (db.delete(
             db.bookEntries,
-          )..where((BookEntries t) => t.id.equals(m.read<int>('id'))))
-              .go();
+          )..where((BookEntries t) => t.id.equals(m.read<int>('id')))).go();
           entriesDeleted++;
         }
       }
@@ -671,7 +697,8 @@ class ReclassifyStats {
   final int elapsedMs;
 
   @override
-  String toString() => 'ReclassifyStats(帖 $postsScanned/$totalPosts，更新 $postsUpdated，'
+  String toString() =>
+      'ReclassifyStats(帖 $postsScanned/$totalPosts，更新 $postsUpdated，'
       '条目 $entriesUpdated，批 $batches，cancelled=$cancelled，${elapsedMs}ms)';
 }
 
@@ -698,35 +725,46 @@ Future<ReclassifyStats> reclassifyPostsV3(
 }) async {
   final Stopwatch sw = Stopwatch()..start();
   final int total =
-      (await db.customSelect('SELECT COUNT(*) AS n FROM posts').getSingle()).read<int>('n');
+      (await db.customSelect('SELECT COUNT(*) AS n FROM posts').getSingle())
+          .read<int>('n');
   var cursor = 0, scanned = 0, updated = 0, entriesSynced = 0, batches = 0;
   var cancelled = false;
 
   ReclassifyStats snapshot() => ReclassifyStats(
-        totalPosts: total,
-        postsScanned: scanned,
-        postsUpdated: updated,
-        entriesUpdated: entriesSynced,
-        batches: batches,
-        cancelled: cancelled,
-        elapsedMs: sw.elapsedMilliseconds,
-      );
+    totalPosts: total,
+    postsScanned: scanned,
+    postsUpdated: updated,
+    entriesUpdated: entriesSynced,
+    batches: batches,
+    cancelled: cancelled,
+    elapsedMs: sw.elapsedMilliseconds,
+  );
 
   while (true) {
     if (isCancelled?.call() ?? false) {
       cancelled = true;
       break;
     }
-    final List<QueryRow> posts = await db.customSelect(
-      "SELECT id, COALESCE(title, '') AS t, post_kind AS k, recommend_flag AS f "
-      'FROM posts WHERE id > ? ORDER BY id LIMIT ?',
-      variables: <Variable>[Variable.withInt(cursor), Variable.withInt(batchSize)],
-    ).get();
+    final List<QueryRow> posts = await db
+        .customSelect(
+          "SELECT id, COALESCE(title, '') AS t, post_kind AS k, recommend_flag AS f "
+          'FROM posts WHERE id > ? ORDER BY id LIMIT ?',
+          variables: <Variable>[
+            Variable.withInt(cursor),
+            Variable.withInt(batchSize),
+          ],
+        )
+        .get();
     if (posts.isEmpty) {
       break;
     }
-    final List<int> ids = <int>[for (final QueryRow p in posts) p.read<int>('id')];
-    final Map<int, List<String>> floorsByPost = await _fetchBatchFloors(db, ids);
+    final List<int> ids = <int>[
+      for (final QueryRow p in posts) p.read<int>('id'),
+    ];
+    final Map<int, List<String>> floorsByPost = await _fetchBatchFloors(
+      db,
+      ids,
+    );
     final List<_PostKindUpdate> updates = <_PostKindUpdate>[];
     for (final QueryRow p in posts) {
       final int id = p.read<int>('id');
@@ -779,7 +817,9 @@ Future<ReclassifyStats> reclassifyPostsV3(
           'WHERE post_ref IN (${List<String>.filled(chunk.length, '?').join(',')}) '
           'AND category IS NOT '
           '(SELECT post_kind FROM posts WHERE posts.id = book_entries.post_ref)',
-          variables: <Variable<Object>>[for (final int id in chunk) Variable.withInt(id)],
+          variables: <Variable<Object>>[
+            for (final int id in chunk) Variable.withInt(id),
+          ],
           updates: <ResultSetImplementation>{db.bookEntries},
           updateKind: UpdateKind.update,
         );
@@ -796,7 +836,11 @@ Future<ReclassifyStats> reclassifyPostsV3(
   }
   if (!cancelled) {
     // 全部完成才落闸门（值 = 当前分类器版本；未来版本升级后 != 即重跑）。
-    await _writeSetting(db, SettingsKeys.classifierVersion, '$classifierVersion');
+    await _writeSetting(
+      db,
+      SettingsKeys.classifierVersion,
+      '$classifierVersion',
+    );
   }
   final ReclassifyStats done = snapshot();
   onProgress?.call(done);
@@ -804,18 +848,27 @@ Future<ReclassifyStats> reclassifyPostsV3(
 }
 
 /// 取一批帖的全部楼层文本（post_id 分组、seq 升序；IN 分块 500 防变量上限）。
-Future<Map<int, List<String>>> _fetchBatchFloors(AppDatabase db, List<int> ids) async {
+Future<Map<int, List<String>>> _fetchBatchFloors(
+  AppDatabase db,
+  List<int> ids,
+) async {
   final Map<int, List<String>> out = <int, List<String>>{};
   for (var i = 0; i < ids.length; i += 500) {
     final List<int> chunk = ids.sublist(i, min(i + 500, ids.length));
-    final List<QueryRow> rows = await db.customSelect(
-      'SELECT post_id AS pid, text AS t FROM floors '
-      'WHERE post_id IN (${List<String>.filled(chunk.length, '?').join(',')}) '
-      'ORDER BY post_id, seq',
-      variables: <Variable>[for (final int id in chunk) Variable.withInt(id)],
-    ).get();
+    final List<QueryRow> rows = await db
+        .customSelect(
+          'SELECT post_id AS pid, text AS t FROM floors '
+          'WHERE post_id IN (${List<String>.filled(chunk.length, '?').join(',')}) '
+          'ORDER BY post_id, seq',
+          variables: <Variable>[
+            for (final int id in chunk) Variable.withInt(id),
+          ],
+        )
+        .get();
     for (final QueryRow r in rows) {
-      out.putIfAbsent(r.read<int>('pid'), () => <String>[]).add(r.read<String>('t'));
+      out
+          .putIfAbsent(r.read<int>('pid'), () => <String>[])
+          .add(r.read<String>('t'));
     }
   }
   return out;
@@ -860,7 +913,11 @@ class MaintenanceEvent {
 const String maintenanceCancelMessage = 'cancel';
 
 class _MaintenanceJob {
-  const _MaintenanceJob({required this.dbPath, required this.dictLines, required this.events});
+  const _MaintenanceJob({
+    required this.dbPath,
+    required this.dictLines,
+    required this.events,
+  });
 
   final String dbPath;
 
@@ -886,7 +943,11 @@ Stream<MaintenanceEvent> runMaintenance({
   try {
     await Isolate.spawn(
       _maintenanceIsolate,
-      _MaintenanceJob(dbPath: dbPath, dictLines: dictLines, events: events.sendPort),
+      _MaintenanceJob(
+        dbPath: dbPath,
+        dictLines: dictLines,
+        events: events.sendPort,
+      ),
       onError: events.sendPort,
       onExit: events.sendPort,
     );
@@ -908,10 +969,16 @@ Stream<MaintenanceEvent> runMaintenance({
             yield msg;
         }
       } else if (msg == null) {
-        yield const MaintenanceEvent(MaintenanceEventKind.failed, message: '维护 isolate 意外退出');
+        yield const MaintenanceEvent(
+          MaintenanceEventKind.failed,
+          message: '维护 isolate 意外退出',
+        );
         return;
       } else if (msg is List) {
-        yield MaintenanceEvent(MaintenanceEventKind.failed, message: '维护 isolate 错误: ${msg.first}');
+        yield MaintenanceEvent(
+          MaintenanceEventKind.failed,
+          message: '维护 isolate 错误: ${msg.first}',
+        );
         return;
       }
     }
@@ -927,7 +994,9 @@ Stream<MaintenanceEvent> runMaintenance({
 /// 各自闸门判定，全部完成才落账。
 Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
   final ReceivePort control = ReceivePort();
-  job.events.send(MaintenanceEvent(MaintenanceEventKind.ready, port: control.sendPort));
+  job.events.send(
+    MaintenanceEvent(MaintenanceEventKind.ready, port: control.sendPort),
+  );
   var cancelled = false;
   control.listen((Object? msg) {
     if (msg == maintenanceCancelMessage) {
@@ -952,15 +1021,22 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
       final LegacyPostDedupStats stats = await dedupLegacyCollectedPosts(
         db,
         isCancelled: () => cancelled,
-        onProgress: (LegacyPostDedupStats s) => job.events.send(MaintenanceEvent(
-          MaintenanceEventKind.progress,
-          phase: MaintenancePhase.dedup,
-          message: 'legacy-post $s',
-        )),
+        onProgress: (LegacyPostDedupStats s) => job.events.send(
+          MaintenanceEvent(
+            MaintenanceEventKind.progress,
+            phase: MaintenancePhase.dedup,
+            message: 'legacy-post $s',
+          ),
+        ),
       );
       if (stats.cancelled) {
-        job.events.send(const MaintenanceEvent(MaintenanceEventKind.done,
-            cancelled: true, message: '已取消（legacy-post 中断，闸门未落）'));
+        job.events.send(
+          const MaintenanceEvent(
+            MaintenanceEventKind.done,
+            cancelled: true,
+            message: '已取消（legacy-post 中断，闸门未落）',
+          ),
+        );
         return;
       }
       didWork = stats.postsMerged > 0 || stats.entriesDeleted > 0;
@@ -970,46 +1046,67 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
       final DedupStats stats = await dedupBookEntries(
         db,
         isCancelled: () => cancelled,
-        onProgress: (DedupStats s) => job.events.send(MaintenanceEvent(
-          MaintenanceEventKind.progress,
-          phase: MaintenancePhase.dedup,
-          message: 'dedup $s',
-        )),
+        onProgress: (DedupStats s) => job.events.send(
+          MaintenanceEvent(
+            MaintenanceEventKind.progress,
+            phase: MaintenancePhase.dedup,
+            message: 'dedup $s',
+          ),
+        ),
       );
       if (stats.cancelled) {
         job.events.send(
-            const MaintenanceEvent(MaintenanceEventKind.done, cancelled: true, message: '已取消（dedup 中断，闸门未落）'));
+          const MaintenanceEvent(
+            MaintenanceEventKind.done,
+            cancelled: true,
+            message: '已取消（dedup 中断，闸门未落）',
+          ),
+        );
         return;
       }
       didWork = didWork || stats.rowsDeleted > 0;
     }
     // 3) 存量帖 v3 分类回填（classifier_version 闸门；词典一次构建复用）。
     if (await needsReclassify(db)) {
-      final BookDict dict = job.dictLines.isEmpty ? BookDict.empty() : BookDict.fromLines(job.dictLines);
+      final BookDict dict = job.dictLines.isEmpty
+          ? BookDict.empty()
+          : BookDict.fromLines(job.dictLines);
       final ReclassifyStats stats = await reclassifyPostsV3(
         db,
         dict: dict,
         isCancelled: () => cancelled,
-        onProgress: (ReclassifyStats s) => job.events.send(MaintenanceEvent(
-          MaintenanceEventKind.progress,
-          phase: MaintenancePhase.reclassify,
-          message: 'reclassify $s',
-        )),
+        onProgress: (ReclassifyStats s) => job.events.send(
+          MaintenanceEvent(
+            MaintenanceEventKind.progress,
+            phase: MaintenancePhase.reclassify,
+            message: 'reclassify $s',
+          ),
+        ),
       );
       if (stats.cancelled) {
-        job.events.send(const MaintenanceEvent(MaintenanceEventKind.done,
-            cancelled: true, message: '已取消（reclassify 中断，闸门未落）'));
+        job.events.send(
+          const MaintenanceEvent(
+            MaintenanceEventKind.done,
+            cancelled: true,
+            message: '已取消（reclassify 中断，闸门未落）',
+          ),
+        );
         return;
       }
       didWork = didWork || stats.postsUpdated > 0 || stats.entriesUpdated > 0;
     }
-    job.events.send(MaintenanceEvent(
-      MaintenanceEventKind.done,
-      didWork: didWork,
-      message: '后台维护完成（${(sw.elapsedMilliseconds / 1000).toStringAsFixed(1)}s）',
-    ));
+    job.events.send(
+      MaintenanceEvent(
+        MaintenanceEventKind.done,
+        didWork: didWork,
+        message:
+            '后台维护完成（${(sw.elapsedMilliseconds / 1000).toStringAsFixed(1)}s）',
+      ),
+    );
   } catch (e) {
-    job.events.send(MaintenanceEvent(MaintenanceEventKind.failed, message: '$e'));
+    job.events.send(
+      MaintenanceEvent(MaintenanceEventKind.failed, message: '$e'),
+    );
   } finally {
     await db.close();
     control.close();

@@ -54,9 +54,9 @@ class ProfilePage extends ConsumerWidget {
               ),
               SizedBox(height: AppSpacing.of(context).space3),
               Text(
-                '数据来源：百度贴吧公开「扫书帖」的离线整理，书目与推荐语版权归原作者与发帖人所有。'
-                '本应用默认仅做本地检索与阅读，在线采集与在线搜索均由您手动发起；'
-                '接口与合规详情见 设置 → 关于与合规。',
+                '数据来源：百度贴吧公开「扫书帖」的离线整理，版权归原作者与发帖人所有。'
+                '应用默认只做本地检索与阅读，在线采集和在线搜索都需要你手动发起。'
+                '接口风险与隐私说明见 设置 → 关于与合规。',
                 style: t.secondary.copyWith(color: c.textSecondary),
               ),
               SizedBox(height: AppSpacing.of(context).space3),

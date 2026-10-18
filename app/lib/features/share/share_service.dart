@@ -29,7 +29,87 @@ import 'package:share_plus/share_plus.dart';
 const double kSharePixelRatio = 2.5;
 
 /// 移动端判定（无桌面保存对话框；相册写入须经系统分享面板）。
-bool get isMobileShareTarget => Platform.isAndroid || Platform.isIOS;
+@visibleForTesting
+bool isMobileShareTargetFor(String operatingSystem) =>
+    operatingSystem == 'android' || operatingSystem == 'ios';
+
+bool get isMobileShareTarget =>
+    isMobileShareTargetFor(Platform.operatingSystem);
+
+/// 分享与导出共用的平台文件操作；可在 plain test 中注入目标系统和临时目录。
+final class PlatformShareOperations {
+  const PlatformShareOperations({
+    this.operatingSystem,
+    this.documentsDirectory,
+    this.temporaryDirectory,
+    this.saveFileOperation,
+    this.shareOperation,
+  });
+
+  @visibleForTesting
+  final String? operatingSystem;
+  @visibleForTesting
+  final Future<Directory> Function()? documentsDirectory;
+  @visibleForTesting
+  final Future<Directory> Function()? temporaryDirectory;
+  @visibleForTesting
+  final Future<Uri?> Function({
+    required String dialogTitle,
+    required String fileName,
+    required Uint8List bytes,
+    required String mimeType,
+    required List<String> allowedExtensions,
+  })?
+  saveFileOperation;
+  @visibleForTesting
+  final Future<ShareResult> Function(ShareParams params)? shareOperation;
+
+  bool get isMobile =>
+      isMobileShareTargetFor(operatingSystem ?? Platform.operatingSystem);
+
+  Future<Directory> getDocumentsDirectory() =>
+      documentsDirectory?.call() ?? getApplicationDocumentsDirectory();
+
+  Future<Directory> getTemporaryDirectoryPath() =>
+      temporaryDirectory?.call() ?? getTemporaryDirectory();
+
+  Future<Uri?> saveFile({
+    required String dialogTitle,
+    required String fileName,
+    required Uint8List bytes,
+    required String mimeType,
+    required List<String> allowedExtensions,
+  }) {
+    final Future<Uri?> Function({
+      required String dialogTitle,
+      required String fileName,
+      required Uint8List bytes,
+      required String mimeType,
+      required List<String> allowedExtensions,
+    })?
+    operation = saveFileOperation;
+    if (operation != null) {
+      return operation(
+        dialogTitle: dialogTitle,
+        fileName: fileName,
+        bytes: bytes,
+        mimeType: mimeType,
+        allowedExtensions: allowedExtensions,
+      );
+    }
+    return FilePicker.saveFile(
+      dialogTitle: dialogTitle,
+      fileName: fileName,
+      bytes: bytes,
+      mimeType: mimeType,
+      type: FileType.custom,
+      allowedExtensions: allowedExtensions,
+    );
+  }
+
+  Future<ShareResult> shareFiles(ShareParams params) =>
+      shareOperation?.call(params) ?? SharePlus.instance.share(params);
+}
 
 /// 导出文件名：`booksift_share_20261013_142530.png`（纯 ASCII，跨平台无转义坑）。
 String defaultShareFileName({DateTime? now}) {
@@ -52,7 +132,10 @@ final class ShareRenderException implements Exception {
 ///
 /// 只碰渲染层，不触文件系统/平台通道；但在 testWidgets 里属**真实异步**，
 /// 必须包在 `tester.runAsync(...)` 内（app/test/TESTING.md §3.4）。
-Future<Uint8List> renderPng(GlobalKey boundaryKey, {double pixelRatio = kSharePixelRatio}) async {
+Future<Uint8List> renderPng(
+  GlobalKey boundaryKey, {
+  double pixelRatio = kSharePixelRatio,
+}) async {
   final BuildContext? context = boundaryKey.currentContext;
   if (context == null) {
     throw const ShareRenderException('卡片不在当前界面，请确认预览已显示后再导出');
@@ -64,7 +147,9 @@ Future<Uint8List> renderPng(GlobalKey boundaryKey, {double pixelRatio = kSharePi
   try {
     final ui.Image image = await object.toImage(pixelRatio: pixelRatio);
     try {
-      final ByteData? data = await image.toByteData(format: ui.ImageByteFormat.png);
+      final ByteData? data = await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      );
       if (data == null) {
         throw const ShareRenderException('栅格化返回空字节');
       }
@@ -107,7 +192,8 @@ class ShareOutcome {
   final String? path;
   final String? message;
 
-  bool get isSuccess => kind == ShareOutcomeKind.saved || kind == ShareOutcomeKind.shared;
+  bool get isSuccess =>
+      kind == ShareOutcomeKind.saved || kind == ShareOutcomeKind.shared;
 }
 
 /// 平台导出端口（保存 / 分享）；测试用 fake 实现，零真实 IO。
@@ -116,12 +202,19 @@ abstract interface class ShareSink {
   Future<ShareOutcome> save(Uint8List png, String fileName);
 
   /// 交系统分享面板；[origin] 供 iPad popover 锚定（§share_plus iPad 注意事项）。
-  Future<ShareOutcome> share(Uint8List png, String fileName, {String? text, Rect? origin});
+  Future<ShareOutcome> share(
+    Uint8List png,
+    String fileName, {
+    String? text,
+    Rect? origin,
+  });
 }
 
 /// share_plus + file_picker + path_provider 实现。
 final class PlatformShareSink implements ShareSink {
-  const PlatformShareSink();
+  const PlatformShareSink([this.operations = const PlatformShareOperations()]);
+
+  final PlatformShareOperations operations;
 
   /// 应用文档目录下的导出子目录名。
   static const String exportDirName = 'booksift_share';
@@ -135,15 +228,21 @@ final class PlatformShareSink implements ShareSink {
     return file.path;
   }
 
-  Future<String> _writeDocuments(String fileName, Uint8List png) =>
-      getApplicationDocumentsDirectory().then((Directory d) => _writeTo(d, fileName, png));
+  Future<String> _writeDocuments(String fileName, Uint8List png) => operations
+      .getDocumentsDirectory()
+      .then((Directory d) => _writeTo(d, fileName, png));
 
-  Future<String> _writeTemp(String fileName, Uint8List png) =>
-      getTemporaryDirectory().then((Directory d) => _writeTo(d, fileName, png));
+  Future<String> _writeTemp(String fileName, Uint8List png) => operations
+      .getTemporaryDirectoryPath()
+      .then((Directory d) => _writeTo(d, fileName, png));
+
+  bool get _isMobile => isMobileShareTargetFor(
+    operations.operatingSystem ?? Platform.operatingSystem,
+  );
 
   @override
   Future<ShareOutcome> save(Uint8List png, String fileName) async {
-    if (isMobileShareTarget) {
+    if (_isMobile) {
       // 移动端无相册插件：落应用文档目录，「保存到相册」由分享面板承担。
       final String path = await _writeDocuments(fileName, png);
       return ShareOutcome(
@@ -153,12 +252,11 @@ final class PlatformShareSink implements ShareSink {
       );
     }
     try {
-      final Uri? uri = await FilePicker.saveFile(
+      final Uri? uri = await operations.saveFile(
         dialogTitle: '保存分享卡片',
         fileName: fileName,
         bytes: png,
         mimeType: 'image/png',
-        type: FileType.custom,
         allowedExtensions: const <String>['png'],
       );
       if (uri == null) {
@@ -180,10 +278,15 @@ final class PlatformShareSink implements ShareSink {
   }
 
   @override
-  Future<ShareOutcome> share(Uint8List png, String fileName, {String? text, Rect? origin}) async {
+  Future<ShareOutcome> share(
+    Uint8List png,
+    String fileName, {
+    String? text,
+    Rect? origin,
+  }) async {
     try {
       final String path = await _writeTemp(fileName, png);
-      final ShareResult result = await SharePlus.instance.share(
+      final ShareResult result = await operations.shareFiles(
         ShareParams(
           files: <XFile>[XFile(path, mimeType: 'image/png')],
           text: text,
@@ -191,7 +294,11 @@ final class PlatformShareSink implements ShareSink {
         ),
       );
       if (result.status == ShareResultStatus.dismissed) {
-        return ShareOutcome(ShareOutcomeKind.cancelled, path: path, message: '已取消分享');
+        return ShareOutcome(
+          ShareOutcomeKind.cancelled,
+          path: path,
+          message: '已取消分享',
+        );
       }
       // unavailable = 平台不回传用户动作（Windows/Android 部分场景），视作已分享。
       return ShareOutcome(ShareOutcomeKind.shared, path: path);
@@ -214,11 +321,15 @@ final class PlatformShareSink implements ShareSink {
 
 /// 栅格化函数签名（[ShareService] 的可替换渲染端口；测试注入纯内存 fake，
 /// 避开 testWidgets 假时钟区里的真实 `toImage` 异步，见 app/test/TESTING.md §1）。
-typedef SharePngRenderer = Future<Uint8List> Function(GlobalKey boundaryKey, {double pixelRatio});
+typedef SharePngRenderer =
+    Future<Uint8List> Function(GlobalKey boundaryKey, {double pixelRatio});
 
 /// 门面：渲染 + 导出（弹层持有；测试可注入 fake sink / fake renderer）。
 class ShareService {
-  const ShareService([this.sink = const PlatformShareSink(), this.render = renderPng]);
+  const ShareService([
+    this.sink = const PlatformShareSink(),
+    this.render = renderPng,
+  ]);
 
   final ShareSink sink;
   final SharePngRenderer render;
@@ -259,7 +370,12 @@ class ShareService {
       return ShareOutcome(ShareOutcomeKind.failed, message: error.message);
     }
     try {
-      return await sink.share(png, fileName ?? defaultShareFileName(now: now), text: text, origin: origin);
+      return await sink.share(
+        png,
+        fileName ?? defaultShareFileName(now: now),
+        text: text,
+        origin: origin,
+      );
     } on Object catch (error) {
       return ShareOutcome(ShareOutcomeKind.failed, message: '分享失败：$error');
     }

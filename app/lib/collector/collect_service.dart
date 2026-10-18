@@ -52,8 +52,7 @@ const int kPostRn = 30;
 const int kListRetries = 3;
 
 /// §8.12 全局降级横幅文案。
-const String kBannerApiBroken =
-    '贴吧接口似乎已变更或网络持续异常，本轮采集已暂停；离线检索与阅读不受影响';
+const String kBannerApiBroken = '贴吧接口似乎已变更或网络持续异常，本轮采集已暂停；离线检索与阅读不受影响';
 
 typedef CollectStateSink = void Function(CollectRunState state);
 
@@ -131,15 +130,15 @@ class CollectService {
     this.anonymousApiFactory,
     this.onAccountInvalid,
     this.onLog,
-  })  : _repo = repo,
-        _primaryApi = api,
-        _workerFactory = workerFactory,
-        _onState = onState,
-        _clock = clock,
-        _sleeper = sleeper ?? ((Duration d) => Future<void>.delayed(d)),
-        _rng = rng ?? Random(),
-        _gate = networkGate,
-        _ingest = IngestPipeline(db);
+  }) : _repo = repo,
+       _primaryApi = api,
+       _workerFactory = workerFactory,
+       _onState = onState,
+       _clock = clock,
+       _sleeper = sleeper ?? ((Duration d) => Future<void>.delayed(d)),
+       _rng = rng ?? Random(),
+       _gate = networkGate,
+       _ingest = IngestPipeline(db);
 
   final CollectRepository _repo;
   final TiebaApi _primaryApi;
@@ -208,8 +207,7 @@ class CollectService {
     _phase = CollectPhase.stopping;
     final Completer<void>? c = _cancelCompleter;
     if (c != null && !c.isCompleted) c.complete();
-    _log('全局', '取消', '取消请求已发出，等待各吧分支收尾（水位不推进）',
-        level: CollectLogLevel.warn);
+    _log('全局', '取消', '取消请求已发出，等待各吧分支收尾（水位不推进）', level: CollectLogLevel.warn);
     _publish();
   }
 
@@ -262,8 +260,9 @@ class CollectService {
     }
 
     await _repo.seedDefaultsIfEmpty();
-    final List<CollectionStateEntry> forums =
-        (await _repo.forums()).where((CollectionStateEntry e) => e.enabled).toList();
+    final List<CollectionStateEntry> forums = (await _repo.forums())
+        .where((CollectionStateEntry e) => e.enabled)
+        .toList();
     if (forums.isEmpty) {
       _banner = '暂无启用的关注吧，请先添加';
       _log('全局', '失败', _banner!, level: CollectLogLevel.warn);
@@ -284,8 +283,9 @@ class CollectService {
       dateKey: CollectSettingsKeys.budgetDate,
       countKey: CollectSettingsKeys.budgetCount,
     );
-    final ({int minMs, int maxMs}) interval =
-        intervalMsFor(bdussImported: bdussImported);
+    final ({int minMs, int maxMs}) interval = intervalMsFor(
+      bdussImported: bdussImported,
+    );
     _limiter = GlobalRateLimiter(
       clock: _clock,
       sleeper: _sleeper,
@@ -313,8 +313,11 @@ class CollectService {
         watermarkFrom: e.lastThreadTime,
       );
     }
-    _log('全局', '开始',
-        '开始采集 · 并发=$concurrency · ${bdussImported ? 'BDUSS 档' : '匿名'} · ${wifiOnly ? '仅WiFi' : '任意网络'} · ${forums.length} 吧');
+    _log(
+      '全局',
+      '开始',
+      '开始采集 · 并发=$concurrency · ${bdussImported ? 'BDUSS 档' : '匿名'} · ${wifiOnly ? '仅WiFi' : '任意网络'} · ${forums.length} 吧',
+    );
     _publish();
 
     try {
@@ -328,47 +331,81 @@ class CollectService {
 
   // ── 单吧分支 ───────────────────────────────────────────────────────────
 
-  Future<void> _drainForum(CollectionStateEntry entry, PostWorker worker) async {
-    final _ForumCtx ctx = _ForumCtx(entry, Watermark(entry.lastThreadTime, entry.lastTid));
+  Future<void> _drainForum(
+    CollectionStateEntry entry,
+    PostWorker worker,
+  ) async {
+    final _ForumCtx ctx = _ForumCtx(
+      entry,
+      Watermark(entry.lastThreadTime, entry.lastTid),
+    );
     final List<ThreadSummary> queue = <ThreadSummary>[];
     try {
       // 冷却吧跳过启动（§8.11：48h 冷却，不影响其余吧）。
       final DateTime? cooldown = entry.cooldownUntil;
       if (cooldown != null && cooldown.isAfter(_clock.now())) {
         ctx.outcome = _ForumOutcome.skippedCooldown;
-        _setForum(ctx.fname, (ForumRunState s) => s.copyWith(
-              status: ForumStatus.cooldown,
-              cooldownUntil: cooldown,
-              stepDetail: '冷却至 ${_fmtTime(cooldown)}',
-            ));
-        _log(ctx.fname, '频控', '冷却中，不影响其余吧（至 ${_fmtTime(cooldown)}）',
-            level: CollectLogLevel.warn);
+        _setForum(
+          ctx.fname,
+          (ForumRunState s) => s.copyWith(
+            status: ForumStatus.cooldown,
+            cooldownUntil: cooldown,
+            stepDetail: '冷却至 ${_fmtTime(cooldown)}',
+          ),
+        );
+        _log(
+          ctx.fname,
+          '频控',
+          '冷却中，不影响其余吧（至 ${_fmtTime(cooldown)}）',
+          level: CollectLogLevel.warn,
+        );
         return;
       }
 
-      _setForum(ctx.fname, (ForumRunState s) => s.copyWith(status: ForumStatus.listing));
-      _log(ctx.fname, '开始', ctx.wmFrom.isCold
-          ? '冷启动（水位=0），只回溯最近 $kColdStartListPages 页'
-          : '水位 ${_fmtEpoch(ctx.wmFrom.lastThreadTime)} / last_tid=${ctx.wmFrom.lastTid}');
+      _setForum(
+        ctx.fname,
+        (ForumRunState s) => s.copyWith(status: ForumStatus.listing),
+      );
+      _log(
+        ctx.fname,
+        '开始',
+        ctx.wmFrom.isCold
+            ? '冷启动（水位=0），只回溯最近 $kColdStartListPages 页'
+            : '水位 ${_fmtEpoch(ctx.wmFrom.lastThreadTime)} / last_tid=${ctx.wmFrom.lastTid}',
+      );
 
       // ── ① 拉帖列表（增量判定，§8.7 步骤 1-3） ──
-      final int maxPages =
-          ctx.wmFrom.isCold ? kColdStartListPages : kMaxListPages;
+      final int maxPages = ctx.wmFrom.isCold
+          ? kColdStartListPages
+          : kMaxListPages;
       bool missSeen = false; // 首个不命中出现后再扫完本页即停（容忍同秒并列）
       int pn = 0;
       while (pn < maxPages && !missSeen) {
         pn++;
-        if (_cancelRequested) { ctx.outcome = _ForumOutcome.canceled; break; }
-        if (_globalPaused) { ctx.outcome = _ForumOutcome.paused; break; }
-        if (_budgetExhausted) { ctx.outcome = _ForumOutcome.budget; break; }
+        if (_cancelRequested) {
+          ctx.outcome = _ForumOutcome.canceled;
+          break;
+        }
+        if (_globalPaused) {
+          ctx.outcome = _ForumOutcome.paused;
+          break;
+        }
+        if (_budgetExhausted) {
+          ctx.outcome = _ForumOutcome.budget;
+          break;
+        }
         final int pageNo = pn;
-        _setForum(ctx.fname, (ForumRunState s) => s.copyWith(
-              status: ForumStatus.listing,
-              step: CollectStep.list,
-              stepProgress: (pageNo - 1) / maxPages,
-              stepDetail: 'pn $pageNo/$maxPages${ctx.wmFrom.isCold ? '（冷启动）' : ''}',
-              overallProgress: 0.2 * (pageNo - 1) / maxPages,
-            ));
+        _setForum(
+          ctx.fname,
+          (ForumRunState s) => s.copyWith(
+            status: ForumStatus.listing,
+            step: CollectStep.list,
+            stepProgress: (pageNo - 1) / maxPages,
+            stepDetail:
+                'pn $pageNo/$maxPages${ctx.wmFrom.isCold ? '（冷启动）' : ''}',
+            overallProgress: 0.2 * (pageNo - 1) / maxPages,
+          ),
+        );
         ThreadsPage page;
         try {
           page = await _callWithRetry(
@@ -395,20 +432,23 @@ class CollectService {
           ctx.learnedFid = page.fid;
           // ForumRunState.copyWith 不含 fid（契约冻结）→ 手工全量重建。
           final int fid = page.fid;
-          _setForum(ctx.fname, (ForumRunState s) => ForumRunState(
-                fname: s.fname,
-                fid: fid,
-                status: s.status,
-                step: s.step,
-                stepProgress: s.stepProgress,
-                stepDetail: s.stepDetail,
-                overallProgress: s.overallProgress,
-                watermarkFrom: s.watermarkFrom,
-                watermarkTarget: s.watermarkTarget,
-                cooldownUntil: s.cooldownUntil,
-                error: s.error,
-                stats: s.stats,
-              ));
+          _setForum(
+            ctx.fname,
+            (ForumRunState s) => ForumRunState(
+              fname: s.fname,
+              fid: fid,
+              status: s.status,
+              step: s.step,
+              stepProgress: s.stepProgress,
+              stepDetail: s.stepDetail,
+              overallProgress: s.overallProgress,
+              watermarkFrom: s.watermarkFrom,
+              watermarkTarget: s.watermarkTarget,
+              cooldownUntil: s.cooldownUntil,
+              error: s.error,
+              stats: s.stats,
+            ),
+          );
         }
         int hits = 0;
         for (final ThreadSummary t in page.threads) {
@@ -425,13 +465,19 @@ class CollectService {
         final int maxSeen = queue.isEmpty
             ? ctx.wmFrom.lastThreadTime
             : queue.map((ThreadSummary t) => t.createTime).reduce(max);
-        _setForum(ctx.fname, (ForumRunState s) => s.copyWith(
-              stepProgress: pageNo / maxPages,
-              overallProgress: 0.2 * pageNo / maxPages,
-              watermarkTarget: maxSeen,
-            ));
-        _log(ctx.fname, '拉列表',
-            'pn=$pageNo/$maxPages 本页 ${page.threads.length} 条 · 命中新帖 $hits${missSeen ? ' · 已见水位内帖，扫完本页即停' : ''}');
+        _setForum(
+          ctx.fname,
+          (ForumRunState s) => s.copyWith(
+            stepProgress: pageNo / maxPages,
+            overallProgress: 0.2 * pageNo / maxPages,
+            watermarkTarget: maxSeen,
+          ),
+        );
+        _log(
+          ctx.fname,
+          '拉列表',
+          'pn=$pageNo/$maxPages 本页 ${page.threads.length} 条 · 命中新帖 $hits${missSeen ? ' · 已见水位内帖，扫完本页即停' : ''}',
+        );
         if (!page.hasMore) break;
       }
 
@@ -454,7 +500,10 @@ class CollectService {
 
   /// ②③ 线程循环：失败退避 30s×2ⁿ ≤3 次、**延迟重入队尾不阻塞**（§8.8）。
   Future<void> _processThreads(
-      _ForumCtx ctx, List<ThreadSummary> queue, PostWorker worker) async {
+    _ForumCtx ctx,
+    List<ThreadSummary> queue,
+    PostWorker worker,
+  ) async {
     final int n = queue.length;
     final List<_ThreadTask> pending = <_ThreadTask>[
       for (final ThreadSummary t in queue) _ThreadTask(t, _clock.now()),
@@ -465,14 +514,25 @@ class CollectService {
       // 队列耗尽判定**先于**停止旗标：本吧工作已全部做完时正常收尾，
       // 不被并发分支触发的全局熔断/取消误伤（否则健康吧会被记 api_error）。
       if (pending.isEmpty && retries.isEmpty) return;
-      if (_cancelRequested) { ctx.outcome = _ForumOutcome.canceled; return; }
-      if (_globalPaused) { ctx.outcome = _ForumOutcome.paused; return; }
-      if (_budgetExhausted) { ctx.outcome = _ForumOutcome.budget; return; }
+      if (_cancelRequested) {
+        ctx.outcome = _ForumOutcome.canceled;
+        return;
+      }
+      if (_globalPaused) {
+        ctx.outcome = _ForumOutcome.paused;
+        return;
+      }
+      if (_budgetExhausted) {
+        ctx.outcome = _ForumOutcome.budget;
+        return;
+      }
       _ThreadTask task;
       if (pending.isNotEmpty) {
         task = pending.removeAt(0);
       } else if (retries.isNotEmpty) {
-        retries.sort((_ThreadTask a, _ThreadTask b) => a.dueAt.compareTo(b.dueAt));
+        retries.sort(
+          (_ThreadTask a, _ThreadTask b) => a.dueAt.compareTo(b.dueAt),
+        );
         final _ThreadTask next = retries.first;
         final Duration wait = next.dueAt.difference(_clock.now());
         if (wait > Duration.zero && !await _sleepCancelable(wait)) {
@@ -489,24 +549,29 @@ class CollectService {
       final int k = (processed + 1).clamp(1, max(n, 1));
       final int tid = task.thread.tid;
       try {
-        _setForum(ctx.fname, (ForumRunState s) => s.copyWith(
-              status: ForumStatus.parsing,
-              step: CollectStep.parse,
-              stepProgress: n == 0 ? 1 : (k - 1) / n,
-              stepDetail: 'tid $k/$n',
-              overallProgress: 0.2 + 0.7 * (n == 0 ? 1 : (k - 1) / n),
-            ));
+        _setForum(
+          ctx.fname,
+          (ForumRunState s) => s.copyWith(
+            status: ForumStatus.parsing,
+            step: CollectStep.parse,
+            stepProgress: n == 0 ? 1 : (k - 1) / n,
+            stepDetail: 'tid $k/$n',
+            overallProgress: 0.2 + 0.7 * (n == 0 ? 1 : (k - 1) / n),
+          ),
+        );
         final ThreadRecord rec = await _fetchThreadOnce(ctx, task.thread);
-        final ThreadAnalysis analysis = await worker.analyze(ThreadInput(
-          tid: rec.tid,
-          title: rec.title,
-          author: rec.author,
-          createTime: rec.createTime,
-          floors: <FloorInput>[
-            for (final FloorInfo f in rec.floors)
-              FloorInput(pid: f.pid, seq: f.seq, text: f.text),
-          ],
-        ));
+        final ThreadAnalysis analysis = await worker.analyze(
+          ThreadInput(
+            tid: rec.tid,
+            title: rec.title,
+            author: rec.author,
+            createTime: rec.createTime,
+            floors: <FloorInput>[
+              for (final FloorInfo f in rec.floors)
+                FloorInput(pid: f.pid, seq: f.seq, text: f.text),
+            ],
+          ),
+        );
         if (analysis.kind == null) {
           // 日常闲聊：整帖丢弃不入库，仅日志计数（§8.9 处置表）。
           _addStats(ctx, const CollectStats(discardedChat: 1));
@@ -517,35 +582,47 @@ class CollectService {
           _publish();
           continue;
         }
-        _log(ctx.fname, '分类',
-            'tid=$tid → ${analysis.kind} (书名数=${analysis.booknames.length}'
-            '${analysis.hitRules.isEmpty ? '' : '，规则:${analysis.hitRules.join(';')}'}'
-            '${analysis.dictAnchor.isEmpty ? '' : '，锚点:${analysis.dictAnchor}'})');
-        _setForum(ctx.fname, (ForumRunState s) => s.copyWith(
-              status: ForumStatus.ingesting,
-              step: CollectStep.ingest,
-              stepProgress: n == 0 ? 1 : k / n,
-              stepDetail: 'tid $k/$n',
-              overallProgress: 0.2 + 0.7 * (n == 0 ? 1 : (k - 0.5) / n),
-            ));
-        final IngestResult r =
-            await _ingest.ingestThread(rec, analysis, collectedAt: _clock.now());
+        _log(
+          ctx.fname,
+          '分类',
+          'tid=$tid → ${analysis.kind} (书名数=${analysis.booknames.length}'
+              '${analysis.hitRules.isEmpty ? '' : '，规则:${analysis.hitRules.join(';')}'}'
+              '${analysis.dictAnchor.isEmpty ? '' : '，锚点:${analysis.dictAnchor}'})',
+        );
+        _setForum(
+          ctx.fname,
+          (ForumRunState s) => s.copyWith(
+            status: ForumStatus.ingesting,
+            step: CollectStep.ingest,
+            stepProgress: n == 0 ? 1 : k / n,
+            stepDetail: 'tid $k/$n',
+            overallProgress: 0.2 + 0.7 * (n == 0 ? 1 : (k - 0.5) / n),
+          ),
+        );
+        final IngestResult r = await _ingest.ingestThread(
+          rec,
+          analysis,
+          collectedAt: _clock.now(),
+        );
         _addStats(
-            ctx,
-            CollectStats(
-              threadsAdded: r.newPost ? 1 : 0,
-              floorsAdded: r.floorsAdded,
-              entriesAdded: r.entriesAdded,
-              skippedDup: r.skippedDup,
-              mineThreads:
-                  (analysis.kind == PostKind.mine && r.newPost) ? 1 : 0,
-            ));
-        _log(ctx.fname, '入库',
-            'tid=$tid ${r.newPost ? '+1帖 ' : '(重入) '}+${r.floorsAdded}楼'
-            ' +${r.entriesAdded}书目 重复跳过${r.skippedDup}'
-            '${r.postRefBackfilled > 0 ? ' 回填溯源${r.postRefBackfilled}' : ''}'
-            '${rec.partial ? '（超长帖截断 partial）' : ''}',
-            level: CollectLogLevel.ok);
+          ctx,
+          CollectStats(
+            threadsAdded: r.newPost ? 1 : 0,
+            floorsAdded: r.floorsAdded,
+            entriesAdded: r.entriesAdded,
+            skippedDup: r.skippedDup,
+            mineThreads: (analysis.kind == PostKind.mine && r.newPost) ? 1 : 0,
+          ),
+        );
+        _log(
+          ctx.fname,
+          '入库',
+          'tid=$tid ${r.newPost ? '+1帖 ' : '(重入) '}+${r.floorsAdded}楼'
+              ' +${r.entriesAdded}书目 重复跳过${r.skippedDup}'
+              '${r.postRefBackfilled > 0 ? ' 回填溯源${r.postRefBackfilled}' : ''}'
+              '${rec.partial ? '（超长帖截断 partial）' : ''}',
+          level: CollectLogLevel.ok,
+        );
         ctx.succeededTids.add(tid);
         ctx.forumFailures = 0;
         processed++;
@@ -572,9 +649,12 @@ class CollectService {
           ctx.outcome = _ForumOutcome.cooldown;
           ctx.failKind = e.kind;
           ctx.failMessage = 'tid=$tid ${e.message}';
-          _log(ctx.fname, '频控',
-              '连续 ${ctx.forumFailures} 次失败 → 本吧冷却 48h（不影响其余吧）',
-              level: CollectLogLevel.warn);
+          _log(
+            ctx.fname,
+            '频控',
+            '连续 ${ctx.forumFailures} 次失败 → 本吧冷却 48h（不影响其余吧）',
+            level: CollectLogLevel.warn,
+          );
           return;
         }
         if (task.retries < kMaxThreadRetries) {
@@ -582,15 +662,22 @@ class CollectService {
           final Duration backoff = retryBackoff(task.retries - 1);
           task.dueAt = _clock.now().add(backoff);
           retries.add(task);
-          _log(ctx.fname, '频控',
-              'tid=$tid 失败（${e.message}）→ ${backoff.inSeconds}s 后重试'
-              '（第${task.retries}/$kMaxThreadRetries次，重入队尾）',
-              level: CollectLogLevel.warn);
+          _log(
+            ctx.fname,
+            '频控',
+            'tid=$tid 失败（${e.message}）→ ${backoff.inSeconds}s 后重试'
+                '（第${task.retries}/$kMaxThreadRetries次，重入队尾）',
+            level: CollectLogLevel.warn,
+          );
         } else {
           ctx.failedTids.add(tid);
           processed++;
-          _log(ctx.fname, '失败', 'tid=$tid 重试耗尽（${e.message}），跳过该帖',
-              level: CollectLogLevel.warn);
+          _log(
+            ctx.fname,
+            '失败',
+            'tid=$tid 重试耗尽（${e.message}），跳过该帖',
+            level: CollectLogLevel.warn,
+          );
         }
         _publish();
       } catch (e) {
@@ -605,8 +692,7 @@ class CollectService {
   }
 
   /// 单帖全部楼层（pn=1.. ≤20 页 rn=30 ASC；单次尝试，失败由任务循环重入队尾）。
-  Future<ThreadRecord> _fetchThreadOnce(
-      _ForumCtx ctx, ThreadSummary t) async {
+  Future<ThreadRecord> _fetchThreadOnce(_ForumCtx ctx, ThreadSummary t) async {
     final List<FloorInfo> floors = <FloorInfo>[];
     final Set<int> seenPid = <int>{};
     String title = t.title;
@@ -617,7 +703,9 @@ class CollectService {
     bool partial = false;
     for (int pn = 1; pn <= kMaxPostPages; pn++) {
       final PostsPage page = await _request(
-          ctx.fname, () => _api.getPosts(t.tid, pn: pn, rn: kPostRn));
+        ctx.fname,
+        () => _api.getPosts(t.tid, pn: pn, rn: kPostRn),
+      );
       ctx.forumFailures = 0; // 每页成功都清零（吧级连续失败口径）
       if (page.title.isNotEmpty) title = page.title;
       if (page.authorId != 0) authorId = page.authorId;
@@ -725,9 +813,7 @@ class CollectService {
         lastStatus = allOk ? 'ok' : 'partial';
         st = ForumStatus.done;
         clearCooldown = true;
-        lastError = allOk
-            ? null
-            : '${ctx.failedTids.length} 帖重试耗尽，水位推进到连续成功前缀';
+        lastError = allOk ? null : '${ctx.failedTids.length} 帖重试耗尽，水位推进到连续成功前缀';
         logEvent = '完成';
         logLevel = allOk ? CollectLogLevel.ok : CollectLogLevel.warn;
     }
@@ -752,32 +838,38 @@ class CollectService {
       '状态=$lastStatus',
       '+${stats.threadsAdded}帖 +${stats.floorsAdded}楼 +${stats.entriesAdded}书目',
       '重复跳过${stats.skippedDup} 丢弃闲聊${stats.discardedChat}',
-      if (advance != null) '水位→${_fmtEpoch(advance.lastThreadTime)}/tid=${advance.lastTid}',
+      if (advance != null)
+        '水位→${_fmtEpoch(advance.lastThreadTime)}/tid=${advance.lastTid}',
       if (lastError != null) 'err=$lastError',
     ].join(' · ');
-    await _repo.appendLog(CollectionLogsCompanion.insert(
-      fname: fname,
-      runAt: _clock.now(),
-      status: lastStatus,
-      threadsAdded: Value<int>(stats.threadsAdded),
-      floorsAdded: Value<int>(stats.floorsAdded),
-      entriesAdded: Value<int>(stats.entriesAdded),
-      skippedDup: Value<int>(stats.skippedDup),
-      detail: Value<String?>(detail),
-    ));
-    _setForum(fname, (ForumRunState s) => s.copyWith(
-          status: st,
-          step: CollectStep.summary,
-          stepProgress: st == ForumStatus.done ? 1 : s.stepProgress,
-          overallProgress: st == ForumStatus.done ? 1 : s.overallProgress,
-          stepDetail: st == ForumStatus.done
-              ? (lastStatus == 'ok' ? '完成' : '部分完成（$lastStatus）')
-              : (st == ForumStatus.cooldown && cooldownUntil != null
+    await _repo.appendLog(
+      CollectionLogsCompanion.insert(
+        fname: fname,
+        runAt: _clock.now(),
+        status: lastStatus,
+        threadsAdded: Value<int>(stats.threadsAdded),
+        floorsAdded: Value<int>(stats.floorsAdded),
+        entriesAdded: Value<int>(stats.entriesAdded),
+        skippedDup: Value<int>(stats.skippedDup),
+        detail: Value<String?>(detail),
+      ),
+    );
+    _setForum(
+      fname,
+      (ForumRunState s) => s.copyWith(
+        status: st,
+        step: CollectStep.summary,
+        stepProgress: st == ForumStatus.done ? 1 : s.stepProgress,
+        overallProgress: st == ForumStatus.done ? 1 : s.overallProgress,
+        stepDetail: st == ForumStatus.done
+            ? (lastStatus == 'ok' ? '完成' : '部分完成（$lastStatus）')
+            : (st == ForumStatus.cooldown && cooldownUntil != null
                   ? '冷却至 ${_fmtTime(cooldownUntil)}'
                   : (lastError ?? '')),
-          cooldownUntil: cooldownUntil,
-          error: lastError,
-        ));
+        cooldownUntil: cooldownUntil,
+        error: lastError,
+      ),
+    );
     _log(fname, logEvent, detail, level: logLevel);
     _publish();
   }
@@ -785,8 +877,11 @@ class CollectService {
   /// partial 水位推进口径：按 create_time 升序的**连续成功前缀**
   /// （决策依据见 watermark.dart advancePrefix 注释）。
   Watermark? _prefixAdvance(_ForumCtx ctx, List<ThreadSummary> queue) =>
-      advancePrefix(queue,
-          (ThreadSummary t) => ctx.succeededTids.contains(t.tid), ctx.wmFrom);
+      advancePrefix(
+        queue,
+        (ThreadSummary t) => ctx.succeededTids.contains(t.tid),
+        ctx.wmFrom,
+      );
 
   // ── 请求原语：闸门 + 全局限速 + 预算 + 全局熔断计数 ────────────────────
 
@@ -809,8 +904,12 @@ class CollectService {
       if (_globalFailures >= kGlobalFailurePause && !_globalPaused) {
         _globalPaused = true;
         _banner = kBannerApiBroken;
-        _log('全局', '频控', '连续 $_globalFailures 次请求失败 → 整轮暂停',
-            level: CollectLogLevel.warn);
+        _log(
+          '全局',
+          '频控',
+          '连续 $_globalFailures 次请求失败 → 整轮暂停',
+          level: CollectLogLevel.warn,
+        );
         _publish();
       }
       rethrow;
@@ -828,9 +927,12 @@ class CollectService {
     if (!bdussImported || _accountDowngraded) return;
     _accountDowngraded = true;
     _anonymousApi = anonymousApiFactory?.call();
-    _log('全局', '降级',
-        '登录态失效（${e.message}）→ 本轮起回退匿名档；请到设置页「BDUSS 导入」行重新导入',
-        level: CollectLogLevel.warn);
+    _log(
+      '全局',
+      '降级',
+      '登录态失效（${e.message}）→ 本轮起回退匿名档；请到设置页「BDUSS 导入」行重新导入',
+      level: CollectLogLevel.warn,
+    );
     onAccountInvalid?.call();
   }
 
@@ -845,9 +947,15 @@ class CollectService {
     for (int attempt = 0; attempt <= maxAttempts; attempt++) {
       if (attempt > 0) {
         final Duration d = retryBackoff(attempt - 1);
-        _log(ctx.fname, '频控', '$describe 失败 → ${d.inSeconds}s 后重试'
-            '（第$attempt/$maxAttempts次）', level: CollectLogLevel.warn);
-        if (!await _sleepCancelable(d)) throw const _StopSignal(_StopReason.canceled);
+        _log(
+          ctx.fname,
+          '频控',
+          '$describe 失败 → ${d.inSeconds}s 后重试'
+              '（第$attempt/$maxAttempts次）',
+          level: CollectLogLevel.warn,
+        );
+        if (!await _sleepCancelable(d))
+          throw const _StopSignal(_StopReason.canceled);
       }
       try {
         final T v = await _request(ctx.fname, call);
@@ -864,16 +972,23 @@ class CollectService {
       } on CollectRequestException catch (e) {
         last = e;
         ctx.forumFailures++;
-        _log(ctx.fname, '频控', '$describe 失败（${e.message}），本吧连续 ${ctx.forumFailures} 次',
-            level: CollectLogLevel.warn);
-        if (ctx.forumFailures >= kForumFailureCooldown) throw _CooldownSignal(e);
+        _log(
+          ctx.fname,
+          '频控',
+          '$describe 失败（${e.message}），本吧连续 ${ctx.forumFailures} 次',
+          level: CollectLogLevel.warn,
+        );
+        if (ctx.forumFailures >= kForumFailureCooldown)
+          throw _CooldownSignal(e);
         if (attempt >= maxAttempts) {
           throw _PermFailSignal('$describe: ${e.message}', e.kind);
         }
       }
     }
-    throw _PermFailSignal('$describe: ${last?.message ?? "未知错误"}',
-        last?.kind ?? CollectFailureKind.network);
+    throw _PermFailSignal(
+      '$describe: ${last?.message ?? "未知错误"}',
+      last?.kind ?? CollectFailureKind.network,
+    );
   }
 
   /// 可取消睡眠：返回 false = 睡眠期间收到取消。
@@ -881,10 +996,7 @@ class CollectService {
     if (d <= Duration.zero) return !_cancelRequested;
     final Completer<void>? cancel = _cancelCompleter;
     if (cancel != null) {
-      await Future.any<void>(<Future<void>>[
-        _sleeper(d),
-        cancel.future,
-      ]);
+      await Future.any<void>(<Future<void>>[_sleeper(d), cancel.future]);
     } else {
       await _sleeper(d);
     }
@@ -892,10 +1004,10 @@ class CollectService {
   }
 
   _ForumOutcome _mapStop(_StopReason reason) => switch (reason) {
-        _StopReason.canceled => _ForumOutcome.canceled,
-        _StopReason.paused => _ForumOutcome.paused,
-        _StopReason.budget => _ForumOutcome.budget,
-      };
+    _StopReason.canceled => _ForumOutcome.canceled,
+    _StopReason.paused => _ForumOutcome.paused,
+    _StopReason.budget => _ForumOutcome.budget,
+  };
 
   // ── 状态发布（不可变快照；logs 新在前 cap 200 = collection_logs 口径） ──
 
@@ -935,42 +1047,54 @@ class CollectService {
   }
 
   void _publish() {
-    final List<ForumRunState> forums =
-        _forumStates.values.toList(growable: false);
+    final List<ForumRunState> forums = _forumStates.values.toList(
+      growable: false,
+    );
     final CollectStats totals = forums.fold<CollectStats>(
-        const CollectStats.zero(), (CollectStats s, ForumRunState f) => s + f.stats);
+      const CollectStats.zero(),
+      (CollectStats s, ForumRunState f) => s + f.stats,
+    );
     final List<ForumRunState> active = forums
-        .where((ForumRunState f) => const <ForumStatus>{
-              ForumStatus.queued,
-              ForumStatus.listing,
-              ForumStatus.parsing,
-              ForumStatus.ingesting,
-            }.contains(f.status))
+        .where(
+          (ForumRunState f) => const <ForumStatus>{
+            ForumStatus.queued,
+            ForumStatus.listing,
+            ForumStatus.parsing,
+            ForumStatus.ingesting,
+          }.contains(f.status),
+        )
         .toList();
     // 契约口径：未完成吧的最小 step；全部完成 = summary；从未运行（无吧记录）= null。
     final CollectStep? globalStep = forums.isEmpty
         ? null
         : (active.isEmpty
-            ? CollectStep.summary
-            : active
-                .map((ForumRunState f) => f.step)
-                .reduce((CollectStep a, CollectStep b) =>
-                    a.index <= b.index ? a : b));
+              ? CollectStep.summary
+              : active
+                    .map((ForumRunState f) => f.step)
+                    .reduce(
+                      (CollectStep a, CollectStep b) =>
+                          a.index <= b.index ? a : b,
+                    ));
     final double overall = forums.isEmpty
         ? 0
-        : forums.fold<double>(0, (double s, ForumRunState f) => s + f.overallProgress) /
-            forums.length;
-    _onState(CollectRunState(
-      phase: _phase,
-      startedAt: _startedAt,
-      forums: forums,
-      logs: List<CollectLogEntry>.unmodifiable(_logs),
-      totals: totals,
-      overallProgress: overall.clamp(0.0, 1.0),
-      globalStep: globalStep,
-      banner: _banner,
-      finishedAt: _finishedAt,
-    ));
+        : forums.fold<double>(
+                0,
+                (double s, ForumRunState f) => s + f.overallProgress,
+              ) /
+              forums.length;
+    _onState(
+      CollectRunState(
+        phase: _phase,
+        startedAt: _startedAt,
+        forums: forums,
+        logs: List<CollectLogEntry>.unmodifiable(_logs),
+        totals: totals,
+        overallProgress: overall.clamp(0.0, 1.0),
+        globalStep: globalStep,
+        banner: _banner,
+        finishedAt: _finishedAt,
+      ),
+    );
   }
 
   String _fmtEpoch(int epochSec) =>
@@ -997,4 +1121,3 @@ class _RepoBudgetStore implements BudgetStore {
   @override
   Future<void> write(String key, String value) => _repo.setSetting(key, value);
 }
-

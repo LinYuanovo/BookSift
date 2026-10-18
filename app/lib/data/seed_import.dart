@@ -45,9 +45,12 @@ class SeedManifest {
 
   /// 解析 asset/包内 manifest.json（pack_version/schema_version/sha256/行数统计等）。
   factory SeedManifest.fromJson(Map<String, Object?> json) {
-    final Map<String, Object?>? fullPack = json['full_pack'] as Map<String, Object?>?;
-    final Map<String, Object?>? compression = json['compression'] as Map<String, Object?>?;
-    final Map<String, Object?>? features = json['features'] as Map<String, Object?>?;
+    final Map<String, Object?>? fullPack =
+        json['full_pack'] as Map<String, Object?>?;
+    final Map<String, Object?>? compression =
+        json['compression'] as Map<String, Object?>?;
+    final Map<String, Object?>? features =
+        json['features'] as Map<String, Object?>?;
     final Map<String, Object?>? rows = json['rows'] as Map<String, Object?>?;
     return SeedManifest(
       version: (json['pack_version'] as num?)?.toInt() ?? 0,
@@ -64,7 +67,10 @@ class SeedManifest {
       preClassifiedVersion: (features?['pre_classified_v3'] as num?)?.toInt(),
       rows: rows == null
           ? const <String, int>{}
-          : rows.map((String k, Object? v) => MapEntry<String, int>(k, (v as num?)?.toInt() ?? 0)),
+          : rows.map(
+              (String k, Object? v) =>
+                  MapEntry<String, int>(k, (v as num?)?.toInt() ?? 0),
+            ),
     );
   }
 
@@ -117,7 +123,11 @@ enum SeedImportPhase { idle, extracting, importing, rebuildingFts, done, error }
 
 /// 导入进度状态。
 class SeedImportState {
-  const SeedImportState({this.phase = SeedImportPhase.idle, this.progress = 0, this.message = ''});
+  const SeedImportState({
+    this.phase = SeedImportPhase.idle,
+    this.progress = 0,
+    this.message = '',
+  });
 
   final SeedImportPhase phase;
 
@@ -126,9 +136,15 @@ class SeedImportState {
   final String message;
 
   bool get isImporting =>
-      phase == SeedImportPhase.extracting || phase == SeedImportPhase.importing || phase == SeedImportPhase.rebuildingFts;
+      phase == SeedImportPhase.extracting ||
+      phase == SeedImportPhase.importing ||
+      phase == SeedImportPhase.rebuildingFts;
 
-  SeedImportState copyWith({SeedImportPhase? phase, double? progress, String? message}) => SeedImportState(
+  SeedImportState copyWith({
+    SeedImportPhase? phase,
+    double? progress,
+    String? message,
+  }) => SeedImportState(
     phase: phase ?? this.phase,
     progress: progress ?? this.progress,
     message: message ?? this.message,
@@ -201,7 +217,8 @@ class DefaultSeedImporter implements SeedImporter {
        _databasePathProvider = databasePathProvider;
 
   /// 内置 lite 种子包 asset（repack_deflate.py 产物，deflate zip）。
-  static const String defaultSeedZipAssetKey = 'assets/seed/seed_pack_lite_v1.zip';
+  static const String defaultSeedZipAssetKey =
+      'assets/seed/seed_pack_lite_v1.zip';
 
   /// 随包 manifest asset（含 zip_sha256 与 full_pack 下载校验块，无自指问题）。
   static const String defaultManifestAssetKey = 'assets/seed/manifest.json';
@@ -252,17 +269,21 @@ class DefaultSeedImporter implements SeedImporter {
   Future<int?> readSeedVersion() => _readVersion(SettingsKeys.seedVersion);
 
   @override
-  Future<int?> readSeedFullVersion() => _readVersion(SettingsKeys.seedFullVersion);
+  Future<int?> readSeedFullVersion() =>
+      _readVersion(SettingsKeys.seedFullVersion);
 
   Future<int?> _readVersion(String key) async {
-    final row = await (_db.select(_db.settings)..where((tbl) => tbl.key.equals(key))).getSingleOrNull();
+    final row = await (_db.select(
+      _db.settings,
+    )..where((tbl) => tbl.key.equals(key))).getSingleOrNull();
     return row == null ? null : int.tryParse(row.value);
   }
 
   @override
   Future<bool> ftsRebuildDone() async {
-    final row =
-        await (_db.select(_db.settings)..where((tbl) => tbl.key.equals(ftsRebuildDoneKey))).getSingleOrNull();
+    final row = await (_db.select(
+      _db.settings,
+    )..where((tbl) => tbl.key.equals(ftsRebuildDoneKey))).getSingleOrNull();
     return row?.value == '1';
   }
 
@@ -279,8 +300,10 @@ class DefaultSeedImporter implements SeedImporter {
   }
 
   /// 流式 SHA256 校验磁盘 zip（64KB 分块，勿全量入内存；下载侧亦可复用）。
-  Future<bool> verifyZipSha256(String zipPath, String expectedSha256Hex) async =>
-      await _fileSha256(zipPath) == expectedSha256Hex.toLowerCase();
+  Future<bool> verifyZipSha256(
+    String zipPath,
+    String expectedSha256Hex,
+  ) async => await _fileSha256(zipPath) == expectedSha256Hex.toLowerCase();
 
   // ───────────────────────────── 首启导入 ─────────────────────────────
 
@@ -290,17 +313,31 @@ class DefaultSeedImporter implements SeedImporter {
     try {
       final SeedManifest? manifest = await readManifest();
       if (manifest == null) {
-        yield const SeedImportState(phase: SeedImportPhase.error, message: '未找到内置种子包 manifest');
+        yield const SeedImportState(
+          phase: SeedImportPhase.error,
+          message: '未找到内置种子包 manifest',
+        );
         return;
       }
-      yield const SeedImportState(phase: SeedImportPhase.extracting, progress: 0.02, message: '读取内置种子包…');
+      yield const SeedImportState(
+        phase: SeedImportPhase.extracting,
+        progress: 0.02,
+        message: '读取内置种子包…',
+      );
       // asset 一次性物化为 ByteData（≈54MB，rootBundle 无真流式 API；对标扫书 App 首启同款做法），
       // 之后的 sha256/解压全部落盘流式处理，不再双份驻留内存。
       final ByteData zipBytes = await _bundle.load(seedZipAssetKey);
       final Directory w = await _prepareWorkDir('basic');
       work = w;
-      yield const SeedImportState(phase: SeedImportPhase.extracting, progress: 0.08, message: '校验并解压 seed.db…');
-      final Uint8List bytes = zipBytes.buffer.asUint8List(zipBytes.offsetInBytes, zipBytes.lengthInBytes);
+      yield const SeedImportState(
+        phase: SeedImportPhase.extracting,
+        progress: 0.08,
+        message: '校验并解压 seed.db…',
+      );
+      final Uint8List bytes = zipBytes.buffer.asUint8List(
+        zipBytes.offsetInBytes,
+        zipBytes.lengthInBytes,
+      );
       final _PrepareResult prepared = await Isolate.run(
         () => _prepareSeed(
           _PrepareJob(
@@ -313,18 +350,30 @@ class DefaultSeedImporter implements SeedImporter {
         ),
       );
       // 基础包以随包 asset manifest 为权威（zip/db sha、版本闸门值）。
-      yield const SeedImportState(phase: SeedImportPhase.importing, progress: 0.40, message: '导入内容表…');
-      final _ImportOutcome outcome = await _importAttached(prepared.seedDbPath, manifest, full: false);
+      yield const SeedImportState(
+        phase: SeedImportPhase.importing,
+        progress: 0.40,
+        message: '导入内容表…',
+      );
+      final _ImportOutcome outcome = await _importAttached(
+        prepared.seedDbPath,
+        manifest,
+        full: false,
+      );
       yield SeedImportState(
         phase: SeedImportPhase.done,
         progress: 1,
-        message: '基础包 v${manifest.version} 导入完成 ${_countsSummary(outcome.counts)}'
+        message:
+            '基础包 v${manifest.version} 导入完成 ${_countsSummary(outcome.counts)}'
             '${outcome.ftsReady ? '' : '（FTS 待后台重建 rebuildFts()）'}',
       );
     } on SeedImportException catch (e) {
       yield SeedImportState(phase: SeedImportPhase.error, message: e.message);
     } catch (e) {
-      yield SeedImportState(phase: SeedImportPhase.error, message: '种子导入失败: $e');
+      yield SeedImportState(
+        phase: SeedImportPhase.error,
+        message: '种子导入失败: $e',
+      );
     } finally {
       _deleteQuietly(work);
     }
@@ -337,14 +386,21 @@ class DefaultSeedImporter implements SeedImporter {
     Directory? work;
     try {
       if (!File(zipPath).existsSync()) {
-        yield SeedImportState(phase: SeedImportPhase.error, message: '完整包不存在: $zipPath');
+        yield SeedImportState(
+          phase: SeedImportPhase.error,
+          message: '完整包不存在: $zipPath',
+        );
         return;
       }
       // 完整包 zip sha256 以下载清单（随包 asset manifest 的 full_pack 块）为准；缺失时信任下载侧校验。
       final SeedManifest? assetManifest = await readManifest();
       final Directory w = await _prepareWorkDir('full');
       work = w;
-      yield const SeedImportState(phase: SeedImportPhase.extracting, progress: 0.05, message: '校验并解压完整包…');
+      yield const SeedImportState(
+        phase: SeedImportPhase.extracting,
+        progress: 0.05,
+        message: '校验并解压完整包…',
+      );
       final String? expectedZipSha = assetManifest?.sha256;
       final _PrepareResult prepared = await Isolate.run(
         () => _prepareSeed(
@@ -352,7 +408,8 @@ class DefaultSeedImporter implements SeedImporter {
             zipPath: zipPath,
             outDir: w.path,
             expectedZipSha256: expectedZipSha,
-            maxSizeBytes: 1 << 31, // full 档 db ~711MB；内嵌 manifest 读出后由 _prepareSeed 收紧
+            maxSizeBytes:
+                1 << 31, // full 档 db ~711MB；内嵌 manifest 读出后由 _prepareSeed 收紧
           ),
         ),
       );
@@ -365,18 +422,26 @@ class DefaultSeedImporter implements SeedImporter {
         progress: 0.40,
         message: embedded.ftsPrebuilt ? '导入内容表（含预建 FTS 影子表）…' : '导入内容表…',
       );
-      final _ImportOutcome outcome = await _importAttached(prepared.seedDbPath, embedded, full: true);
+      final _ImportOutcome outcome = await _importAttached(
+        prepared.seedDbPath,
+        embedded,
+        full: true,
+      );
       yield SeedImportState(
         phase: SeedImportPhase.done,
         progress: 1,
-        message: '完整包 v${embedded.version} 导入完成 ${_countsSummary(outcome.counts)}；'
+        message:
+            '完整包 v${embedded.version} 导入完成 ${_countsSummary(outcome.counts)}；'
             '${outcome.ftsReady ? 'FTS 预建已就位，跳过重建' : 'FTS 待后台重建 rebuildFts()'
-                '${outcome.ftsError == null ? '' : '（影子表复制失败: ${outcome.ftsError}）'}'}',
+                      '${outcome.ftsError == null ? '' : '（影子表复制失败: ${outcome.ftsError}）'}'}',
       );
     } on SeedImportException catch (e) {
       yield SeedImportState(phase: SeedImportPhase.error, message: e.message);
     } catch (e) {
-      yield SeedImportState(phase: SeedImportPhase.error, message: '完整包导入失败: $e');
+      yield SeedImportState(
+        phase: SeedImportPhase.error,
+        message: '完整包导入失败: $e',
+      );
     } finally {
       _deleteQuietly(work);
     }
@@ -391,7 +456,10 @@ class DefaultSeedImporter implements SeedImporter {
   @override
   Stream<SeedImportState> rebuildFts() async* {
     if (_ftsRunning) {
-      yield const SeedImportState(phase: SeedImportPhase.error, message: 'FTS 重建已在进行中');
+      yield const SeedImportState(
+        phase: SeedImportPhase.error,
+        message: 'FTS 重建已在进行中',
+      );
       return;
     }
     _ftsRunning = true;
@@ -425,25 +493,43 @@ class DefaultSeedImporter implements SeedImporter {
             case _FtsEventKind.done:
               completed = !msg.cancelled;
               yield msg.cancelled
-                  ? const SeedImportState(phase: SeedImportPhase.error, message: 'FTS 重建已取消（可重新发起）')
-                  : SeedImportState(phase: SeedImportPhase.done, progress: 1, message: msg.message);
+                  ? const SeedImportState(
+                      phase: SeedImportPhase.error,
+                      message: 'FTS 重建已取消（可重新发起）',
+                    )
+                  : SeedImportState(
+                      phase: SeedImportPhase.done,
+                      progress: 1,
+                      message: msg.message,
+                    );
               return; // 注意：switch 内 break 只出 switch，须 return 终止生成器（finally 仍执行）
             case _FtsEventKind.failed:
               completed = true; // 失败不再补发 cancel
-              yield SeedImportState(phase: SeedImportPhase.error, message: 'FTS 重建失败: ${msg.message}');
+              yield SeedImportState(
+                phase: SeedImportPhase.error,
+                message: 'FTS 重建失败: ${msg.message}',
+              );
               return;
           }
         } else if (msg == null) {
-          yield const SeedImportState(phase: SeedImportPhase.error, message: 'FTS 重建 isolate 意外退出');
+          yield const SeedImportState(
+            phase: SeedImportPhase.error,
+            message: 'FTS 重建 isolate 意外退出',
+          );
           return;
         } else if (msg is List) {
-          yield SeedImportState(phase: SeedImportPhase.error, message: 'FTS 重建 isolate 错误: ${msg.first}');
+          yield SeedImportState(
+            phase: SeedImportPhase.error,
+            message: 'FTS 重建 isolate 错误: ${msg.first}',
+          );
           return;
         }
       }
     } finally {
       if (!completed) {
-        _ftsControlPort?.send(_ftsCancelMessage); // 订阅取消/异常 → 通知 isolate 优雅收尾（批间检查后自行退出）
+        _ftsControlPort?.send(
+          _ftsCancelMessage,
+        ); // 订阅取消/异常 → 通知 isolate 优雅收尾（批间检查后自行退出）
       }
       _ftsControlPort = null;
       _ftsRunning = false;
@@ -458,12 +544,18 @@ class DefaultSeedImporter implements SeedImporter {
 
   /// ATTACH → 清触发器 → 单事务清理重写（§6.2 SQL 策略）→ 恢复触发器 → DETACH。
   /// ATTACH/DETACH 均须在事务外（SQLite 限制）。
-  Future<_ImportOutcome> _importAttached(String seedDbPath, SeedManifest manifest, {required bool full}) async {
+  Future<_ImportOutcome> _importAttached(
+    String seedDbPath,
+    SeedManifest manifest, {
+    required bool full,
+  }) async {
     // 防御：上次异常中断可能残留 attach（同连接生命周期内）。
     try {
       await _db.customStatement('DETACH DATABASE seed');
     } catch (_) {}
-    await _db.customStatement("ATTACH DATABASE '${seedDbPath.replaceAll("'", "''")}' AS seed");
+    await _db.customStatement(
+      "ATTACH DATABASE '${seedDbPath.replaceAll("'", "''")}' AS seed",
+    );
     try {
       final bool seedHasKindColumns = await _seedPostsHasKindColumns();
       // 批量拷贝期间摘除 FTS 同步触发器（触发器逐行同步会把导入拖慢 ~30s 桌面口径，
@@ -471,7 +563,9 @@ class DefaultSeedImporter implements SeedImporter {
       await _dropFtsTriggers();
       Map<String, int> counts;
       try {
-        counts = await _db.transaction(() => _copyInTransaction(manifest, full, seedHasKindColumns));
+        counts = await _db.transaction(
+          () => _copyInTransaction(manifest, full, seedHasKindColumns),
+        );
       } finally {
         await _createFtsTriggers();
       }
@@ -489,7 +583,11 @@ class DefaultSeedImporter implements SeedImporter {
           ftsError = '$e';
         }
       }
-      return _ImportOutcome(counts: counts, ftsReady: ftsReady, ftsError: ftsError);
+      return _ImportOutcome(
+        counts: counts,
+        ftsReady: ftsReady,
+        ftsError: ftsError,
+      );
     } finally {
       try {
         await _db.customStatement('DETACH DATABASE seed');
@@ -514,7 +612,9 @@ class DefaultSeedImporter implements SeedImporter {
     ''');
     // 2) 清理旧 seed 内容行；用户表与 origin<>'seed' 行永不触碰。
     //    posts 级联清 floors/images（FK ON DELETE CASCADE）；用户条目 post_ref/floor_ref 走 SET NULL。
-    await _db.customStatement("DELETE FROM book_entries WHERE origin = '$seedOrigin'");
+    await _db.customStatement(
+      "DELETE FROM book_entries WHERE origin = '$seedOrigin'",
+    );
     await _db.customStatement("DELETE FROM posts WHERE origin = '$seedOrigin'");
     await _db.customStatement('DELETE FROM book_groups');
     // 3) 重写内容表（FK 依赖序：posts → floors → images → book_groups → book_entries）。
@@ -596,11 +696,14 @@ class DefaultSeedImporter implements SeedImporter {
       await _upsertSettingRaw(SettingsKeys.classifierVersion, '$preClassified');
     }
     // FTS 重建完成标记随内容重写失效（lite 需重建；full 影子表复制成功后另行落账）。
-    await _db.customStatement("DELETE FROM settings WHERE key = '$ftsRebuildDoneKey'");
+    await _db.customStatement(
+      "DELETE FROM settings WHERE key = '$ftsRebuildDoneKey'",
+    );
     await _db.customStatement('DROP TABLE IF EXISTS _ug');
     // 行数对账（信息性，写进 done message；硬性一致性由 zip/db sha256 保证）。
     final Map<String, int> counts = <String, int>{
-      for (final MapEntry<String, String> e in _seedCountQueries.entries) e.key: await _countOne(e.value),
+      for (final MapEntry<String, String> e in _seedCountQueries.entries)
+        e.key: await _countOne(e.value),
     };
     return counts;
   }
@@ -608,36 +711,53 @@ class DefaultSeedImporter implements SeedImporter {
   /// seed 行口径的对账查询（floors/images 无 origin 列，随父帖 origin，§6.1）。
   static const Map<String, String> _seedCountQueries = <String, String>{
     'posts': "SELECT COUNT(*) AS n FROM posts WHERE origin = '$seedOrigin'",
-    'floors': "SELECT COUNT(*) AS n FROM floors f JOIN posts p ON p.id = f.post_id WHERE p.origin = '$seedOrigin'",
-    'images': 'SELECT COUNT(*) AS n FROM images i JOIN floors f ON f.id = i.floor_id '
+    'floors':
+        "SELECT COUNT(*) AS n FROM floors f JOIN posts p ON p.id = f.post_id WHERE p.origin = '$seedOrigin'",
+    'images':
+        'SELECT COUNT(*) AS n FROM images i JOIN floors f ON f.id = i.floor_id '
         "JOIN posts p ON p.id = f.post_id WHERE p.origin = '$seedOrigin'",
-    'book_entries': "SELECT COUNT(*) AS n FROM book_entries WHERE origin = '$seedOrigin'",
+    'book_entries':
+        "SELECT COUNT(*) AS n FROM book_entries WHERE origin = '$seedOrigin'",
     'book_groups': 'SELECT COUNT(*) AS n FROM book_groups',
   };
 
-  Future<int> _countOne(String sql) async => _row(await _db.customSelect(sql).getSingle());
+  Future<int> _countOne(String sql) async =>
+      _row(await _db.customSelect(sql).getSingle());
 
   /// full 档：复制 seed 预建 FTS 影子表（external-content rowid 与显式 id 拷贝一致 → 直接可用）。
   /// FTS5 影子 schema 版本不符或复制失败 → 抛出（调用侧回滚并回退后台 rebuildFts()）。
   Future<void> _copyFtsShadowTables() async {
     const List<String> tables = <String>['book_fts', 'floor_fts'];
     // external-content FTS5 无 _content 影子表（正文存于内容表本体）
-    const List<String> suffixes = <String>['_data', '_idx', '_docsize', '_config'];
+    const List<String> suffixes = <String>[
+      '_data',
+      '_idx',
+      '_docsize',
+      '_config',
+    ];
     for (final String t in tables) {
       // FTS5 config 影子表列名为 k/v（CREATE TABLE x_config(id INTEGER PRIMARY KEY CHECK(id=1), k, v)）
-      final QueryRow mainV = await _db.customSelect(
-        "SELECT v AS ver FROM main.${t}_config WHERE k = 'version'",
-      ).getSingle();
-      final QueryRow seedV = await _db.customSelect(
-        "SELECT v AS ver FROM seed.${t}_config WHERE k = 'version'",
-      ).getSingle();
+      final QueryRow mainV = await _db
+          .customSelect(
+            "SELECT v AS ver FROM main.${t}_config WHERE k = 'version'",
+          )
+          .getSingle();
+      final QueryRow seedV = await _db
+          .customSelect(
+            "SELECT v AS ver FROM seed.${t}_config WHERE k = 'version'",
+          )
+          .getSingle();
       if (mainV.data['ver'] != seedV.data['ver']) {
         // FTS5 版本差异，宁重建不冒索引损坏风险
-        throw SeedImportException('FTS5 影子表版本不符（main=${mainV.data['ver']} seed=${seedV.data['ver']}）');
+        throw SeedImportException(
+          'FTS5 影子表版本不符（main=${mainV.data['ver']} seed=${seedV.data['ver']}）',
+        );
       }
       for (final String s in suffixes) {
         await _db.customStatement('DELETE FROM main.$t$s');
-        await _db.customStatement('INSERT INTO main.$t$s SELECT * FROM seed.$t$s');
+        await _db.customStatement(
+          'INSERT INTO main.$t$s SELECT * FROM seed.$t$s',
+        );
       }
     }
   }
@@ -645,14 +765,22 @@ class DefaultSeedImporter implements SeedImporter {
   /// seed.posts 是否已带分类列（当前打包 ETL 未产出 → 导入侧按 post_type 派生；
   /// 未来 ETL 补上（§7.4 Phase S2）则直迁，无需改导入代码）。
   Future<bool> _seedPostsHasKindColumns() async {
-    final List<QueryRow> cols = await _db.customSelect('PRAGMA seed.table_info(posts)').get();
-    final Set<String> names = cols.map((QueryRow r) => r.data['name'] as String).toSet();
+    final List<QueryRow> cols = await _db
+        .customSelect('PRAGMA seed.table_info(posts)')
+        .get();
+    final Set<String> names = cols
+        .map((QueryRow r) => r.data['name'] as String)
+        .toSet();
     return names.contains('post_kind') && names.contains('recommend_flag');
   }
 
-  Future<void> _upsertSetting(String key, int value) => _upsertSettingRaw(key, '$value');
+  Future<void> _upsertSetting(String key, int value) =>
+      _upsertSettingRaw(key, '$value');
 
-  Future<void> _upsertSettingRaw(String key, String value) => _db.customStatement(
+  Future<void> _upsertSettingRaw(
+    String key,
+    String value,
+  ) => _db.customStatement(
     "INSERT INTO settings(key,value) VALUES('$key','${value.replaceAll("'", "''")}') "
     'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   );
@@ -681,8 +809,12 @@ class DefaultSeedImporter implements SeedImporter {
 
   Future<void> _dropFtsTriggers() async {
     for (final String name in <String>[
-      'book_entries_ai', 'book_entries_ad', 'book_entries_au',
-      'floors_ai', 'floors_ad', 'floors_au',
+      'book_entries_ai',
+      'book_entries_ad',
+      'book_entries_au',
+      'floors_ai',
+      'floors_ad',
+      'floors_au',
     ]) {
       await _db.customStatement('DROP TRIGGER IF EXISTS $name');
     }
@@ -697,7 +829,9 @@ class DefaultSeedImporter implements SeedImporter {
   // ───────────────────────────── 路径/杂项 ─────────────────────────────
 
   Future<Directory> _prepareWorkDir(String tag) async {
-    final Directory base = _workDirProvider == null ? await getTemporaryDirectory() : await _workDirProvider();
+    final Directory base = _workDirProvider == null
+        ? await getTemporaryDirectory()
+        : await _workDirProvider();
     final Directory dir = Directory(p.join(base.path, 'seed_import_$tag'));
     if (dir.existsSync()) {
       dir.deleteSync(recursive: true); // 重入卫生：清掉上次中断的半成品
@@ -734,7 +868,11 @@ class DefaultSeedImporter implements SeedImporter {
 
 /// 导入结果（内部）：行数对账 + full 档 FTS 影子表是否就位（失败原因随 ftsError 透出）。
 class _ImportOutcome {
-  const _ImportOutcome({required this.counts, required this.ftsReady, this.ftsError});
+  const _ImportOutcome({
+    required this.counts,
+    required this.ftsReady,
+    this.ftsError,
+  });
 
   final Map<String, int> counts;
   final bool ftsReady;
@@ -779,7 +917,9 @@ Future<_PrepareResult> _prepareSeed(_PrepareJob job) async {
   if (job.expectedZipSha256 != null) {
     final String actual = await _fileSha256(job.zipPath);
     if (actual != job.expectedZipSha256!.toLowerCase()) {
-      throw SeedImportException('zip SHA256 校验失败（期望 ${job.expectedZipSha256}，实际 $actual）');
+      throw SeedImportException(
+        'zip SHA256 校验失败（期望 ${job.expectedZipSha256}，实际 $actual）',
+      );
     }
   }
   // 先读内嵌 manifest.json（小条目），拿到 db_file/db_sha256/尺寸上限再解大包。
@@ -800,7 +940,9 @@ Future<_PrepareResult> _prepareSeed(_PrepareJob job) async {
   } finally {
     await zipIn.close();
   }
-  final SeedManifest embedded = SeedManifest.fromJson(jsonDecode(manifestJson) as Map<String, Object?>);
+  final SeedManifest embedded = SeedManifest.fromJson(
+    jsonDecode(manifestJson) as Map<String, Object?>,
+  );
   final int maxSize = embedded.dbSizeBytes != null
       ? (embedded.dbSizeBytes! * 1.2).round() + (16 << 20)
       : job.maxSizeBytes;
@@ -810,7 +952,8 @@ Future<_PrepareResult> _prepareSeed(_PrepareJob job) async {
   if (!seedDb.existsSync()) {
     throw SeedImportException('解压后未找到 ${embedded.dbFile}');
   }
-  if (embedded.dbSizeBytes != null && seedDb.lengthSync() != embedded.dbSizeBytes) {
+  if (embedded.dbSizeBytes != null &&
+      seedDb.lengthSync() != embedded.dbSizeBytes) {
     throw SeedImportException(
       'seed.db 尺寸不符（期望 ${embedded.dbSizeBytes}，实际 ${seedDb.lengthSync()}）',
     );
@@ -828,7 +971,9 @@ Future<_PrepareResult> _prepareSeed(_PrepareJob job) async {
 Future<String> _fileSha256(String path) async {
   late final String hex;
   final ByteConversionSink input = sha256.startChunkedConversion(
-    ChunkedConversionSink<Digest>.withCallback((List<Digest> digests) => hex = digests.single.toString()),
+    ChunkedConversionSink<Digest>.withCallback(
+      (List<Digest> digests) => hex = digests.single.toString(),
+    ),
   );
   await for (final List<int> chunk in File(path).openRead()) {
     input.add(chunk);
@@ -844,7 +989,13 @@ const String _ftsCancelMessage = 'cancel';
 enum _FtsEventKind { ready, progress, done, failed }
 
 class _FtsEvent {
-  const _FtsEvent(this.kind, {this.port, this.progress = 0, this.message = '', this.cancelled = false});
+  const _FtsEvent(
+    this.kind, {
+    this.port,
+    this.progress = 0,
+    this.message = '',
+    this.cancelled = false,
+  });
 
   final _FtsEventKind kind;
   final SendPort? port;
@@ -889,34 +1040,54 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
   const int batch = DefaultSeedImporter.ftsRebuildBatch;
   try {
     // 幂等起点：清空旧索引（取消后重跑 / 升级重导后重建 都从这里开始）。
-    await db.customStatement("INSERT INTO book_fts(book_fts) VALUES('delete-all')");
-    await db.customStatement("INSERT INTO floor_fts(floor_fts) VALUES('delete-all')");
-    await db.customStatement("DELETE FROM settings WHERE key = '${DefaultSeedImporter.ftsRebuildDoneKey}'");
-    final int maxEntryId = _row(await db
-        .customSelect('SELECT COALESCE(MAX(id),0) AS n FROM book_entries')
-        .getSingle());
-    final int maxFloorId = _row(await db
-        .customSelect('SELECT COALESCE(MAX(id),0) AS n FROM floors')
-        .getSingle());
-    final int totalBooks = _row(await db
-        .customSelect('SELECT COUNT(*) AS n FROM book_entries WHERE id <= $maxEntryId')
-        .getSingle());
-    final int totalFloors = _row(await db
-        .customSelect('SELECT COUNT(*) AS n FROM floors WHERE id <= $maxFloorId')
-        .getSingle());
+    await db.customStatement(
+      "INSERT INTO book_fts(book_fts) VALUES('delete-all')",
+    );
+    await db.customStatement(
+      "INSERT INTO floor_fts(floor_fts) VALUES('delete-all')",
+    );
+    await db.customStatement(
+      "DELETE FROM settings WHERE key = '${DefaultSeedImporter.ftsRebuildDoneKey}'",
+    );
+    final int maxEntryId = _row(
+      await db
+          .customSelect('SELECT COALESCE(MAX(id),0) AS n FROM book_entries')
+          .getSingle(),
+    );
+    final int maxFloorId = _row(
+      await db
+          .customSelect('SELECT COALESCE(MAX(id),0) AS n FROM floors')
+          .getSingle(),
+    );
+    final int totalBooks = _row(
+      await db
+          .customSelect(
+            'SELECT COUNT(*) AS n FROM book_entries WHERE id <= $maxEntryId',
+          )
+          .getSingle(),
+    );
+    final int totalFloors = _row(
+      await db
+          .customSelect(
+            'SELECT COUNT(*) AS n FROM floors WHERE id <= $maxFloorId',
+          )
+          .getSingle(),
+    );
     final int total = totalBooks + totalFloors;
     var processed = 0;
     // book_fts：id 游标分批（external-content 表直插 rowid，绕过触发器）。
     var cursor = 0;
     while (!cancelled) {
-      final int? maxId = (await db
-              .customSelect(
-                'SELECT MAX(id) AS m FROM (SELECT id FROM book_entries '
-                'WHERE id > $cursor AND id <= $maxEntryId '
-                'ORDER BY id LIMIT $batch)',
-              )
-              .getSingle())
-          .data['m'] as int?;
+      final int? maxId =
+          (await db
+                      .customSelect(
+                        'SELECT MAX(id) AS m FROM (SELECT id FROM book_entries '
+                        'WHERE id > $cursor AND id <= $maxEntryId '
+                        'ORDER BY id LIMIT $batch)',
+                      )
+                      .getSingle())
+                  .data['m']
+              as int?;
       if (maxId == null) {
         break;
       }
@@ -925,13 +1096,17 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
         'SELECT id,name,author,recommender,comment FROM book_entries '
         'WHERE id > $cursor AND id <= $maxId',
       );
-      processed += _row(await db.customSelect('SELECT changes() AS n').getSingle());
+      processed += _row(
+        await db.customSelect('SELECT changes() AS n').getSingle(),
+      );
       cursor = maxId;
-      job.events.send(_FtsEvent(
-        _FtsEventKind.progress,
-        progress: total == 0 ? 1 : processed / total,
-        message: 'book_fts $processed/$total',
-      ));
+      job.events.send(
+        _FtsEvent(
+          _FtsEventKind.progress,
+          progress: total == 0 ? 1 : processed / total,
+          message: 'book_fts $processed/$total',
+        ),
+      );
       // NativeDatabase 同步执行 → await 链全走微任务，须显式让出事件循环，
       // 否则控制端口的 cancel 消息在重建结束前得不到处理。
       await Future<void>.delayed(Duration.zero);
@@ -939,14 +1114,16 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
     // floor_fts：同型。
     cursor = 0;
     while (!cancelled) {
-      final int? maxId = (await db
-              .customSelect(
-                'SELECT MAX(id) AS m FROM (SELECT id FROM floors '
-                'WHERE id > $cursor AND id <= $maxFloorId '
-                'ORDER BY id LIMIT $batch)',
-              )
-              .getSingle())
-          .data['m'] as int?;
+      final int? maxId =
+          (await db
+                      .customSelect(
+                        'SELECT MAX(id) AS m FROM (SELECT id FROM floors '
+                        'WHERE id > $cursor AND id <= $maxFloorId '
+                        'ORDER BY id LIMIT $batch)',
+                      )
+                      .getSingle())
+                  .data['m']
+              as int?;
       if (maxId == null) {
         break;
       }
@@ -955,27 +1132,36 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
         'SELECT id, text FROM floors '
         'WHERE id > $cursor AND id <= $maxId',
       );
-      processed += _row(await db.customSelect('SELECT changes() AS n').getSingle());
+      processed += _row(
+        await db.customSelect('SELECT changes() AS n').getSingle(),
+      );
       cursor = maxId;
-      job.events.send(_FtsEvent(
-        _FtsEventKind.progress,
-        progress: total == 0 ? 1 : processed / total,
-        message: 'floor_fts $processed/$total',
-      ));
+      job.events.send(
+        _FtsEvent(
+          _FtsEventKind.progress,
+          progress: total == 0 ? 1 : processed / total,
+          message: 'floor_fts $processed/$total',
+        ),
+      );
       await Future<void>.delayed(Duration.zero); // 同上：让出事件循环收 cancel
     }
     if (cancelled) {
-      job.events.send(const _FtsEvent(_FtsEventKind.done, cancelled: true, message: '已取消'));
+      job.events.send(
+        const _FtsEvent(_FtsEventKind.done, cancelled: true, message: '已取消'),
+      );
     } else {
       await db.customStatement(
         "INSERT INTO settings(key,value) VALUES('${DefaultSeedImporter.ftsRebuildDoneKey}','1') "
         'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       );
-      job.events.send(_FtsEvent(
-        _FtsEventKind.done,
-        progress: 1,
-        message: 'FTS 重建完成：$processed 行 / ${(sw.elapsedMilliseconds / 1000).toStringAsFixed(1)}s',
-      ));
+      job.events.send(
+        _FtsEvent(
+          _FtsEventKind.done,
+          progress: 1,
+          message:
+              'FTS 重建完成：$processed 行 / ${(sw.elapsedMilliseconds / 1000).toStringAsFixed(1)}s',
+        ),
+      );
     }
   } catch (e) {
     job.events.send(_FtsEvent(_FtsEventKind.failed, message: '$e'));

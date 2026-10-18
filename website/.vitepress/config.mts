@@ -21,14 +21,14 @@ const appVersion = readAppVersion()
 
 // 仓库地址（owner/repo）：与 app/lib/core/update/update_controller.dart 的
 // kUpdateGithubOwner/kUpdateGithubRepo 保持一致，改一处必须同步改另一处。
-const owner = 'booksift-app'
-const repo = 'booksift'
+const owner = 'LinYuanovo'
+const repo = 'BookSift'
 const repoUrl = `https://github.com/${owner}/${repo}`
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
   // GitHub Pages 部署在仓库子路径下，必须与仓库名一致
-  base: '/booksift/',
+  base: '/BookSift/',
   lang: 'zh-CN',
   title: '扫书汇',
   description: '贴吧「扫书帖」离线书单浏览器 —— 使用文档与图文教程',
@@ -36,7 +36,7 @@ export default defineConfig({
   lastUpdated: true,
 
   head: [
-    ['link', { rel: 'icon', type: 'image/png', href: '/booksift/logo.png' }],
+    ['link', { rel: 'icon', type: 'image/png', href: '/BookSift/logo.png' }],
     ['meta', { name: 'theme-color', content: '#D97757' }],
   ],
 
@@ -101,7 +101,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: `${repoUrl}/edit/master/website/:path`,
+      pattern: `${repoUrl}/edit/main/website/:path`,
       text: '在 GitHub 上编辑此页',
     },
 

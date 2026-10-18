@@ -40,12 +40,12 @@ class DoctorCheck {
   final Map<String, Object?> data;
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'name': name,
-        'ok': ok,
-        if (detail.isNotEmpty) 'detail': detail,
-        if (hint.isNotEmpty) 'hint': hint,
-        if (data.isNotEmpty) 'data': data,
-      };
+    'name': name,
+    'ok': ok,
+    if (detail.isNotEmpty) 'detail': detail,
+    if (hint.isNotEmpty) 'hint': hint,
+    if (data.isNotEmpty) 'data': data,
+  };
 }
 
 /// 自检报告。
@@ -57,23 +57,36 @@ class DoctorReport {
   /// 全部通过（skip 型检查项也算 ok）。
   bool get ok => checks.every((DoctorCheck c) => c.ok);
 
-  List<DoctorCheck> get failures => checks.where((DoctorCheck c) => !c.ok).toList();
+  List<DoctorCheck> get failures =>
+      checks.where((DoctorCheck c) => !c.ok).toList();
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'ok': ok,
-        'checks': checks.map((DoctorCheck c) => c.toJson()).toList(),
-      };
+    'ok': ok,
+    'checks': checks.map((DoctorCheck c) => c.toJson()).toList(),
+  };
 }
 
 /// 环境工具集（无状态）。
 abstract final class HeadlessEnv {
-  /// sqlite3 原生库缺失时的修复提示（按平台给可执行步骤：
-  /// Windows 下 anaconda 自带 sqlite3.dll；Linux 走系统 libsqlite3）。
-  static String get sqliteHint => Platform.isWindows
-      ? 'sqlite3 原生库不可用。Windows：把含 sqlite3.dll 的目录加入 PATH，'
-          '例如 \$env:PATH = "C:\\ProgramData\\anaconda3\\Library\\bin;\$env:PATH"'
-      : 'sqlite3 原生库不可用。Linux：安装系统 libsqlite3'
-          '（Debian/Ubuntu：sudo apt install libsqlite3-0），或改用自带 lib/ 的 dist bundle 运行';
+  /// sqlite3 原生库缺失时的修复提示。
+  static String get sqliteHint =>
+      sqliteHintForPlatform(Platform.operatingSystem);
+
+  static String sqliteHintForPlatform(
+    String operatingSystem,
+  ) => switch (operatingSystem) {
+    'windows' =>
+      'sqlite3 原生库不可用。Windows：把含 sqlite3.dll 的目录加入 PATH，'
+          '例如 \$env:PATH = "C:\\ProgramData\\anaconda3\\Library\\bin;\$env:PATH"',
+    'macos' =>
+      'sqlite3 原生库不可用。macOS：安装 Homebrew sqlite3（brew install sqlite3），'
+          '并运行 export DYLD_LIBRARY_PATH="\$(brew --prefix sqlite)/lib:\$DYLD_LIBRARY_PATH"；'
+          '或改用自带 lib/ 的 dist bundle 运行',
+    'linux' =>
+      'sqlite3 原生库不可用。Linux：安装系统 libsqlite3'
+          '（Debian/Ubuntu：sudo apt install libsqlite3-0），或改用自带 lib/ 的 dist bundle 运行',
+    _ => 'sqlite3 原生库不可用。请安装当前系统的 SQLite 3 动态库，或改用自带 lib/ 的 dist bundle 运行',
+  };
 
   /// 打开磁盘库（不存在则创建空库；drift 会在首次访问时建表）。
   static AppDatabase openDb(String path) =>
@@ -89,7 +102,9 @@ abstract final class HeadlessEnv {
       return const <String>[];
     }
     final List<String> lines = await f.readAsLines();
-    return lines.where((String l) => l.trim().isNotEmpty).toList(growable: false);
+    return lines
+        .where((String l) => l.trim().isNotEmpty)
+        .toList(growable: false);
   }
 
   /// 环境自检。
@@ -114,7 +129,8 @@ abstract final class HeadlessEnv {
     return DoctorCheck(
       name: 'runtime',
       ok: true,
-      detail: '${Platform.operatingSystem} / Dart ${Platform.version.split(' ').first}',
+      detail:
+          '${Platform.operatingSystem} / Dart ${Platform.version.split(' ').first}',
       data: <String, Object?>{
         'os': Platform.operatingSystem,
         'osVersion': Platform.operatingSystemVersion,
@@ -123,7 +139,8 @@ abstract final class HeadlessEnv {
         'cwd': Directory.current.path,
         'executable': Platform.resolvedExecutable,
         if (env['SMOKE'] != null) 'env.SMOKE': env['SMOKE'],
-        if (env['BOOKSIFT_NET'] != null) 'env.BOOKSIFT_NET': env['BOOKSIFT_NET'],
+        if (env['BOOKSIFT_NET'] != null)
+          'env.BOOKSIFT_NET': env['BOOKSIFT_NET'],
       },
     );
   }
@@ -152,11 +169,7 @@ abstract final class HeadlessEnv {
 
   static Future<DoctorCheck> _db(String? path) async {
     if (path == null) {
-      return const DoctorCheck(
-        name: 'db',
-        ok: true,
-        detail: 'skip（未指定 --db）',
-      );
+      return const DoctorCheck(name: 'db', ok: true, detail: 'skip（未指定 --db）');
     }
     final File f = File(path);
     if (!await f.exists()) {
@@ -171,7 +184,9 @@ abstract final class HeadlessEnv {
     AppDatabase? db;
     try {
       db = HeadlessEnv.openDb(path);
-      final QueryRow v = await db.customSelect('PRAGMA user_version').getSingle();
+      final QueryRow v = await db
+          .customSelect('PRAGMA user_version')
+          .getSingle();
       final int userVersion = v.data.values.first as int;
       final Map<String, int> rows = await tableRowCounts(db);
       return DoctorCheck(
@@ -220,7 +235,8 @@ abstract final class HeadlessEnv {
     return DoctorCheck(
       name: 'dict',
       ok: true,
-      detail: '${lines.length} 行，可锚定 ${dict.anchorCount} 名（G2 剔除 ${dict.evidenceNameCount}）',
+      detail:
+          '${lines.length} 行，可锚定 ${dict.anchorCount} 名（G2 剔除 ${dict.evidenceNameCount}）',
       data: <String, Object?>{
         'path': path,
         'lines': lines.length,
@@ -286,7 +302,9 @@ abstract final class HeadlessEnv {
     // FTS5 虚拟表基名（其影子表都以 '<基名>_' 开头）。
     final Set<String> virtualBases = <String>{
       for (final QueryRow t in tables)
-        if ((t.read<String?>('sql') ?? '').toUpperCase().contains('CREATE VIRTUAL TABLE'))
+        if ((t.read<String?>('sql') ?? '').toUpperCase().contains(
+          'CREATE VIRTUAL TABLE',
+        ))
           t.read<String>('name'),
     };
     bool isShadow(String name) =>
@@ -299,7 +317,9 @@ abstract final class HeadlessEnv {
         continue;
       }
       // 表名来自 sqlite_master，非用户输入；仍加引号防特殊字符。
-      final QueryRow c = await db.customSelect('SELECT COUNT(*) AS n FROM "$name"').getSingle();
+      final QueryRow c = await db
+          .customSelect('SELECT COUNT(*) AS n FROM "$name"')
+          .getSingle();
       out[name] = c.read<int>('n');
     }
     return out;

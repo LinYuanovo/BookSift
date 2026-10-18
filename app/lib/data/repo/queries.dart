@@ -501,8 +501,12 @@ class EntryRow {
 
   /// 三分类型（扫书 / 推书 / 排雷）：书卡计数、页头 CountTrio 与「仅推荐/仅排雷」筛选同源，
   /// 判定见 [entryKindLabel]（标记优先，其次标题，再类别）。
-  String get kindLabel =>
-      entryKindLabel(category: category, flag: recommendFlag, title: postTitle);
+  String get kindLabel => entryKindLabel(
+    category: category,
+    flag: recommendFlag,
+    title: postTitle,
+    bookGrade: bookGrade,
+  );
 }
 
 /// 首页卡片书名 chip。
@@ -1079,7 +1083,10 @@ class Queries implements BookRepository, SearchSettingsKv {
         if (!summaries.containsKey(p.id)) p.id,
     ];
     if (needSummary.isNotEmpty) {
-      final String sHoles = List<String>.filled(needSummary.length, '?').join(', ');
+      final String sHoles = List<String>.filled(
+        needSummary.length,
+        '?',
+      ).join(', ');
       final List<QueryRow> floorRows = await db
           .customSelect(
             'SELECT post_id, text FROM floors WHERE post_id IN ($sHoles) '
@@ -1092,7 +1099,10 @@ class Queries implements BookRepository, SearchSettingsKv {
           .get();
       for (final QueryRow r in floorRows) {
         final int postRef = r.data['post_id']! as int;
-        summaries.putIfAbsent(postRef, () => summarizeCardText(r.data['text'] as String?) ?? '');
+        summaries.putIfAbsent(
+          postRef,
+          () => summarizeCardText(r.data['text'] as String?) ?? '',
+        );
       }
     }
     return <PostCardData>[
@@ -1547,9 +1557,13 @@ class Queries implements BookRepository, SearchSettingsKv {
     if (except != CategoryDim.tenDay) {
       switch (f.tenDay) {
         case TenDayFilter.upper:
-          sql.write(' AND CAST(substr(b.date,9,2) AS INTEGER) BETWEEN 1 AND 10');
+          sql.write(
+            ' AND CAST(substr(b.date,9,2) AS INTEGER) BETWEEN 1 AND 10',
+          );
         case TenDayFilter.middle:
-          sql.write(' AND CAST(substr(b.date,9,2) AS INTEGER) BETWEEN 11 AND 20');
+          sql.write(
+            ' AND CAST(substr(b.date,9,2) AS INTEGER) BETWEEN 11 AND 20',
+          );
         case TenDayFilter.lower:
           sql.write(' AND CAST(substr(b.date,9,2) AS INTEGER) >= 21');
         case null:
@@ -1562,7 +1576,9 @@ class Queries implements BookRepository, SearchSettingsKv {
           sql.write(
             ' AND b.channel IN (${List<String>.filled(ChannelFilter.otherSmallMembers.length, '?').join(', ')})',
           );
-          vars.addAll(ChannelFilter.otherSmallMembers.map(Variable<String>.new));
+          vars.addAll(
+            ChannelFilter.otherSmallMembers.map(Variable<String>.new),
+          );
         case ChannelFilter.otherBig:
           sql.write(
             ' AND b.channel IN (${List<String>.filled(ChannelFilter.otherBigMembers.length, '?').join(', ')})',
@@ -1631,7 +1647,7 @@ class Queries implements BookRepository, SearchSettingsKv {
     final Map<String, int> tenMap = await groupFor(
       CategoryDim.tenDay,
       "CASE WHEN CAST(substr(b.date,9,2) AS INTEGER) BETWEEN 1 AND 10 THEN 'upper' "
-          "WHEN CAST(substr(b.date,9,2) AS INTEGER) BETWEEN 11 AND 20 THEN 'middle' ELSE 'lower' END",
+      "WHEN CAST(substr(b.date,9,2) AS INTEGER) BETWEEN 11 AND 20 THEN 'middle' ELSE 'lower' END",
     );
     final Map<String, int> channelMap = await groupFor(
       CategoryDim.channel,
@@ -1655,7 +1671,9 @@ class Queries implements BookRepository, SearchSettingsKv {
       }
     }
     if (earlyCount > 0) {
-      years.add(DimCount(value: YearFilter.early, label: '更早', count: earlyCount));
+      years.add(
+        DimCount(value: YearFilter.early, label: '更早', count: earlyCount),
+      );
     }
 
     final List<DimCount> months = <DimCount>[
@@ -1663,9 +1681,21 @@ class Queries implements BookRepository, SearchSettingsKv {
         DimCount(value: '$m', label: '$m月', count: monthMap['$m'] ?? 0),
     ];
     final List<DimCount> tenDays = <DimCount>[
-      DimCount(value: TenDayFilter.upper, label: '上旬', count: tenMap[TenDayFilter.upper] ?? 0),
-      DimCount(value: TenDayFilter.middle, label: '中旬', count: tenMap[TenDayFilter.middle] ?? 0),
-      DimCount(value: TenDayFilter.lower, label: '下旬', count: tenMap[TenDayFilter.lower] ?? 0),
+      DimCount(
+        value: TenDayFilter.upper,
+        label: '上旬',
+        count: tenMap[TenDayFilter.upper] ?? 0,
+      ),
+      DimCount(
+        value: TenDayFilter.middle,
+        label: '中旬',
+        count: tenMap[TenDayFilter.middle] ?? 0,
+      ),
+      DimCount(
+        value: TenDayFilter.lower,
+        label: '下旬',
+        count: tenMap[TenDayFilter.lower] ?? 0,
+      ),
     ];
     int otherCount = 0;
     for (final String name in ChannelFilter.otherBigMembers) {
@@ -1744,23 +1774,20 @@ class Queries implements BookRepository, SearchSettingsKv {
     final List<String> cols = recommenderOnly
         ? const <String>['b.recommender']
         : titleOnly
-            ? const <String>[
-                'b.name',
-                'b.name_norm',
-                'b.author',
-                'b.author_norm',
-              ]
-            : const <String>[
-                'b.name',
-                'b.name_norm',
-                'b.author',
-                'b.author_norm',
-                'b.recommender',
-                'b.comment',
-              ];
+        ? const <String>['b.name', 'b.name_norm', 'b.author', 'b.author_norm']
+        : const <String>[
+            'b.name',
+            'b.name_norm',
+            'b.author',
+            'b.author_norm',
+            'b.recommender',
+            'b.comment',
+          ];
     for (final String w in words) {
       final String arg = _likeArg(w);
-      final String colExpr = cols.map((String c) => "$c LIKE ? ESCAPE '\\'").join(' OR ');
+      final String colExpr = cols
+          .map((String c) => "$c LIKE ? ESCAPE '\\'")
+          .join(' OR ');
       if (titleOnly || recommenderOnly) {
         conds.add('($colExpr)');
         for (int i = 0; i < cols.length; i++) {
@@ -1768,7 +1795,9 @@ class Queries implements BookRepository, SearchSettingsKv {
         }
       } else {
         // 楼层正文：角色名常只出现在 floors.text，条目评语是空的。
-        conds.add('($colExpr OR EXISTS (SELECT 1 FROM floors fl WHERE fl.id = b.floor_ref AND fl.text LIKE ? ESCAPE \'\\\'))');
+        conds.add(
+          '($colExpr OR EXISTS (SELECT 1 FROM floors fl WHERE fl.id = b.floor_ref AND fl.text LIKE ? ESCAPE \'\\\'))',
+        );
         for (int i = 0; i < cols.length + 1; i++) {
           vars.add(Variable<String>(arg));
         }
@@ -1848,7 +1877,11 @@ class Queries implements BookRepository, SearchSettingsKv {
             Variable<int>(filter.limit),
             Variable<int>(filter.offset),
           ],
-          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.bookGroups, db.posts},
+          readsFrom: <TableInfo<Table, Object?>>{
+            db.bookEntries,
+            db.bookGroups,
+            db.posts,
+          },
         )
         .get();
     if (aggRows.isEmpty) {
@@ -1910,8 +1943,9 @@ class Queries implements BookRepository, SearchSettingsKv {
           )
           .get();
       for (final QueryRow r in totalRows) {
-        totals[(r.data['gid']! as num).toInt()] =
-            kindCountsOf(r.data['kinds'] as String?);
+        totals[(r.data['gid']! as num).toInt()] = kindCountsOf(
+          r.data['kinds'] as String?,
+        );
       }
     }
     final List<GroupHit> items = <GroupHit>[];
@@ -1921,7 +1955,9 @@ class Queries implements BookRepository, SearchSettingsKv {
       final String? snip = b?.data['snip'] as String?;
       final String? groupName = r.data['gname'] as String?;
       final String? entryName = b?.data['name'] as String?;
-      final (int scanK, int recK, int avoidK) = kindCountsOf(r.data['kinds'] as String?);
+      final (int scanK, int recK, int avoidK) = kindCountsOf(
+        r.data['kinds'] as String?,
+      );
       final (int scan, int rec, int avoid) total =
           totals[gid] ?? (scanK, recK, avoidK);
       final String? snippet = (snip == null || snip.isEmpty)
@@ -1978,13 +2014,13 @@ class Queries implements BookRepository, SearchSettingsKv {
     );
   }
 
-  /// 三分计数载荷（[kindCountsOf] 的输入）：每条目 `category\u001f flag\u001f title`，
+  /// 三分计数载荷（[kindCountsOf] 的输入）：每条目 `category\u001f flag\u001f title\u001f book_grade`，
   /// 多条以 `\u001e` 连接（SQLite char(31)/char(30)）。**必须**与 [entryKindLabel] 对账
   /// （test/data/entry_kind_test.dart 表驱动守卫）。
   static String _kindPayload(String alias) =>
-      "GROUP_CONCAT(COALESCE($alias.category, '') || char(31) || (${_flagSql(alias)}) || char(31) || COALESCE(p.title, ''), char(30))";
+      "GROUP_CONCAT(COALESCE($alias.category, '') || char(31) || (${_flagSql(alias)}) || char(31) || COALESCE(p.title, '') || char(31) || COALESCE($alias.book_grade, ''), char(30))";
 
-  /// `category\u001f flag\u001f title` 串（`\u001e` 分隔）→ (扫书, 推书, 排雷) 条数。
+  /// `category\u001f flag\u001f title\u001f book_grade` 串（`\u001e` 分隔）→ (扫书, 推书, 排雷) 条数。
   /// 同一帖的多条条目各算一次：书卡要的是「被扫到 / 被推 / 被排雷」的**条目**次数，不是帖数。
   static (int scan, int recommend, int avoid) kindCountsOf(String? packed) {
     if (packed == null || packed.isEmpty) {
@@ -1998,7 +2034,8 @@ class Queries implements BookRepository, SearchSettingsKv {
       switch (entryKindLabel(
         category: fields.isEmpty ? '' : fields.first,
         flag: fields.length > 1 ? (int.tryParse(fields[1]) ?? 0) : 0,
-        title: fields.length > 2 ? fields.sublist(2).join('\u001f') : null,
+        title: fields.length > 2 ? fields[2] : null,
+        bookGrade: fields.length > 3 ? fields[3] : null,
       )) {
         case kRecommendKind:
           recommend++;
@@ -2067,14 +2104,17 @@ class Queries implements BookRepository, SearchSettingsKv {
         .get();
     final List<PostBookCount> books = <PostBookCount>[];
     for (final QueryRow r in bookRows) {
-      final (int _, int recommend, int avoid) =
-          kindCountsOf(r.data['kinds'] as String?);
-      books.add(PostBookCount(
-        groupId: (r.data['gid'] as num?)?.toInt(),
-        name: (r.data['name'] as String?) ?? '',
-        recommend: recommend,
-        avoid: avoid,
-      ));
+      final (int _, int recommend, int avoid) = kindCountsOf(
+        r.data['kinds'] as String?,
+      );
+      books.add(
+        PostBookCount(
+          groupId: (r.data['gid'] as num?)?.toInt(),
+          name: (r.data['name'] as String?) ?? '',
+          recommend: recommend,
+          avoid: avoid,
+        ),
+      );
     }
     // 排序随计数下移（原 SQL ORDER BY rec DESC, avoid DESC, name_norm）：
     // 推荐多者在前，再排雷多者，再按书名稳定序。
@@ -2118,8 +2158,9 @@ class Queries implements BookRepository, SearchSettingsKv {
           readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.posts},
         )
         .getSingle();
-    final (int scan, int recommend, int avoid) =
-        kindCountsOf(counts.data['kinds'] as String?);
+    final (int scan, int recommend, int avoid) = kindCountsOf(
+      counts.data['kinds'] as String?,
+    );
     return BookDetailData(
       group: group,
       scanCount: scan,
@@ -2152,7 +2193,11 @@ class Queries implements BookRepository, SearchSettingsKv {
         .customSelect(
           'SELECT $_entryCols$_entryFrom WHERE b.book_group_id = ? ORDER BY $order',
           variables: <Variable<Object>>[Variable<int>(groupId)],
-          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.floors, db.posts},
+          readsFrom: <TableInfo<Table, Object?>>{
+            db.bookEntries,
+            db.floors,
+            db.posts,
+          },
         )
         .map((QueryRow r) => EntryRow.fromRow(r))
         .get();
@@ -2161,7 +2206,13 @@ class Queries implements BookRepository, SearchSettingsKv {
       // 「扫书」桶 = [kindCountsOf] 的 default 分支（本文件 1970-1971 行）：
       // 非推书且非排雷（含求书档）——页头数字与点开的列表同源。
       SemanticFilter.scan =>
-        rows.where((EntryRow e) => e.kindLabel != kRecommendKind && e.kindLabel != CategoryKind.avoid).toList(),
+        rows
+            .where(
+              (EntryRow e) =>
+                  e.kindLabel != kRecommendKind &&
+                  e.kindLabel != CategoryKind.avoid,
+            )
+            .toList(),
       SemanticFilter.recommend =>
         rows.where((EntryRow e) => e.kindLabel == kRecommendKind).toList(),
       SemanticFilter.avoid =>

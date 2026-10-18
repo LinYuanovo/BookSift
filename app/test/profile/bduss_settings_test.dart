@@ -10,9 +10,13 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart'
+    show MacOsOptions;
 import 'package:booksift/collector/collect_providers.dart';
 import 'package:booksift/collector/tieba_account.dart';
 import 'package:booksift/collector/tieba_search.dart' show computeFormSign;
@@ -53,13 +57,15 @@ class MemorySecrets implements SecretStore {
 class _GatedAdapter implements HttpClientAdapter {
   final Completer<ResponseBody> _completer = Completer<ResponseBody>();
 
-  void complete(String body) => _completer.complete(ResponseBody.fromString(
-        body,
-        200,
-        headers: <String, List<String>>{
-          Headers.contentTypeHeader: <String>['application/json; charset=utf-8'],
-        },
-      ));
+  void complete(String body) => _completer.complete(
+    ResponseBody.fromString(
+      body,
+      200,
+      headers: <String, List<String>>{
+        Headers.contentTypeHeader: <String>['application/json; charset=utf-8'],
+      },
+    ),
+  );
 
   @override
   Future<ResponseBody> fetch(
@@ -78,7 +84,8 @@ class _GatedAdapter implements HttpClientAdapter {
 }
 
 /// 合法形态的假 BDUSS（56 位；真实值约 192 位，长度只做粗校验）。
-const String kFakeBduss = 'aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789aBcDeFgHiJkLmNoPqRsTuV';
+const String kFakeBduss =
+    'aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789aBcDeFgHiJkLmNoPqRsTuV';
 
 Future<void> pumpSettings(WidgetTester tester, MemorySecrets secrets) async {
   useTallSurface(tester);
@@ -88,7 +95,9 @@ Future<void> pumpSettings(WidgetTester tester, MemorySecrets secrets) async {
       home: const SettingsPage(),
       extraOverrides: <Override>[
         secretStoreProvider.overrideWithValue(secrets),
-        ...updateTestOverrides(adapter: ScriptedAdapter(<String, ScriptedResponse>{})),
+        ...updateTestOverrides(
+          adapter: ScriptedAdapter(<String, ScriptedResponse>{}),
+        ),
       ],
     ),
   );
@@ -96,6 +105,23 @@ Future<void> pumpSettings(WidgetTester tester, MemorySecrets secrets) async {
 }
 
 void main() {
+  test('secure storage disables data protection keychain only on macOS', () {
+    for (final TargetPlatform platform in TargetPlatform.values) {
+      debugDefaultTargetPlatformOverride = platform;
+      try {
+        final options = SecureStorageSecrets().storage.mOptions;
+        if (platform == TargetPlatform.macOS) {
+          expect(options, isA<MacOsOptions>());
+          expect((options as MacOsOptions).usesDataProtectionKeychain, isFalse);
+        } else {
+          expect(options.toMap()['usesDataProtectionKeychain'], 'true');
+        }
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    }
+  });
+
   group('parseBdussInput / maskBduss（纯函数）', () {
     test('裸值 / BDUSS= 前缀 / 整段 Cookie 片段都能提取', () {
       expect(parseBdussInput(kFakeBduss), kFakeBduss);
@@ -108,7 +134,10 @@ void main() {
       expect(parseBdussInput(''), isNull);
       expect(parseBdussInput('   '), isNull);
       expect(parseBdussInput('abc123'), isNull);
-      expect(parseBdussInput('我的账号密码：password123456789012345678901234567890'), isNull);
+      expect(
+        parseBdussInput('我的账号密码：password123456789012345678901234567890'),
+        isNull,
+      );
       expect(parseBdussInput('${'a' * 40}中文'), isNull);
     });
 
@@ -122,7 +151,10 @@ void main() {
     testWidgets('匿名态：诚实标注当前配额，无清除钮', (WidgetTester tester) async {
       await pumpSettings(tester, MemorySecrets());
       expect(find.text('BDUSS 导入'), findsOneWidget);
-      expect(find.text('匿名模式 · 每日配额 300 · 导入后 600 · 详见「关于与合规」'), findsOneWidget);
+      expect(
+        find.text('匿名模式 · 每日配额 300 · 导入后 600 · 详见「关于与合规」'),
+        findsOneWidget,
+      );
       expect(find.text('清除'), findsNothing);
     });
 
@@ -132,7 +164,10 @@ void main() {
 
       await tester.tap(find.text('BDUSS 导入'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(TextField), 'BDUSS=$kFakeBduss; STOKEN=zzz');
+      await tester.enterText(
+        find.byType(TextField),
+        'BDUSS=$kFakeBduss; STOKEN=zzz',
+      );
       await tester.tap(find.text('保存'));
       await tester.pumpAndSettle();
 
@@ -165,7 +200,9 @@ void main() {
   });
 
   group('并发分段按档位（需求 5）', () {
-    testWidgets('匿名档上限 3（分段 2/3）；导入后上限 4（分段 2/3/4）', (WidgetTester tester) async {
+    testWidgets('匿名档上限 3（分段 2/3）；导入后上限 4（分段 2/3/4）', (
+      WidgetTester tester,
+    ) async {
       await pumpSettings(tester, MemorySecrets());
       expect(find.textContaining('上限 3（匿名档）'), findsOneWidget);
       expect(find.textContaining('上限 4（BDUSS 档）'), findsNothing);
@@ -180,7 +217,10 @@ void main() {
 
   group('设置页「测试」按钮（需求 5：initNickname 有效性探测）', () {
     Future<void> pumpWithProbe(
-        WidgetTester tester, MemorySecrets secrets, Dio probeDio) async {
+      WidgetTester tester,
+      MemorySecrets secrets,
+      Dio probeDio,
+    ) async {
       useTallSurface(tester);
       await tester.pumpWidget(
         testApp(
@@ -188,20 +228,26 @@ void main() {
           home: const SettingsPage(),
           extraOverrides: <Override>[
             secretStoreProvider.overrideWithValue(secrets),
-            tiebaAccountProbeProvider
-                .overrideWithValue(TiebaAccountProbe(dio: probeDio)),
+            tiebaAccountProbeProvider.overrideWithValue(
+              TiebaAccountProbe(dio: probeDio),
+            ),
             ...updateTestOverrides(
-                adapter: ScriptedAdapter(<String, ScriptedResponse>{})),
+              adapter: ScriptedAdapter(<String, ScriptedResponse>{}),
+            ),
           ],
         ),
       );
       await tester.pumpAndSettle();
     }
 
-    testWidgets('有效：toast 显示昵称；请求体带 BDUSS 且 sign 与 App 同源', (WidgetTester tester) async {
-      final ScriptedAdapter adapter = ScriptedAdapter(<String, ScriptedResponse>{
+    testWidgets('有效：toast 显示昵称；请求体带 BDUSS 且 sign 与 App 同源', (
+      WidgetTester tester,
+    ) async {
+      final ScriptedAdapter
+      adapter = ScriptedAdapter(<String, ScriptedResponse>{
         kInitNicknameUrl: const ScriptedResponse(
-            '{"error_code":0,"user_info":{"user_name":"u1","name_show":"测试昵称","tieba_uid":9}}'),
+          '{"error_code":0,"user_info":{"user_name":"u1","name_show":"测试昵称","tieba_uid":9}}',
+        ),
       });
       final MemorySecrets secrets = MemorySecrets(kFakeBduss);
       await pumpWithProbe(tester, secrets, scriptedDio(adapter));
@@ -223,11 +269,15 @@ void main() {
       await dismissSnackBars(tester);
     });
 
-    testWidgets('失效：toast 无效 + 行内转「已失效 · 请重新导入」并落标记', (WidgetTester tester) async {
-      final ScriptedAdapter adapter = ScriptedAdapter(<String, ScriptedResponse>{
-        kInitNicknameUrl: const ScriptedResponse(
-            '{"error_code":110001,"error_msg":"请先登录"}'),
-      });
+    testWidgets('失效：toast 无效 + 行内转「已失效 · 请重新导入」并落标记', (
+      WidgetTester tester,
+    ) async {
+      final ScriptedAdapter adapter =
+          ScriptedAdapter(<String, ScriptedResponse>{
+            kInitNicknameUrl: const ScriptedResponse(
+              '{"error_code":110001,"error_msg":"请先登录"}',
+            ),
+          });
       final MemorySecrets secrets = MemorySecrets(kFakeBduss);
       await pumpWithProbe(tester, secrets, scriptedDio(adapter));
 
@@ -235,8 +285,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('BDUSS 无效或已失效'), findsOneWidget);
-      expect(secrets.extra[kSecretKeyBdussInvalid], '1',
-          reason: '测试失效与采集侧自动降级同源标记');
+      expect(
+        secrets.extra[kSecretKeyBdussInvalid],
+        '1',
+        reason: '测试失效与采集侧自动降级同源标记',
+      );
       expect(find.text('BDUSS 已失效'), findsOneWidget);
       expect(find.text('已失效 · 请重新导入（当前按匿名档运行）'), findsOneWidget);
       await dismissSnackBars(tester);
@@ -254,11 +307,12 @@ void main() {
 
     testWidgets('进行中：按钮禁用 + 转圈；完成后恢复并出结果', (WidgetTester tester) async {
       final _GatedAdapter gate = _GatedAdapter();
-      final Dio dio = Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 8),
-        receiveTimeout: const Duration(seconds: 8),
-      ))
-        ..httpClientAdapter = gate;
+      final Dio dio = Dio(
+        BaseOptions(
+          connectTimeout: const Duration(seconds: 8),
+          receiveTimeout: const Duration(seconds: 8),
+        ),
+      )..httpClientAdapter = gate;
       await pumpWithProbe(tester, MemorySecrets(kFakeBduss), dio);
 
       await tester.tap(find.text('测试'));
@@ -266,12 +320,16 @@ void main() {
       expect(find.text('测试'), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       expect(
-        tester.widget<TextButton>(find.widgetWithText(TextButton, '清除')).onPressed,
+        tester
+            .widget<TextButton>(find.widgetWithText(TextButton, '清除'))
+            .onPressed,
         isNull,
         reason: '测试进行中禁用清除',
       );
 
-      gate.complete('{"error_code":0,"user_info":{"user_name":"u2","name_show":"昵称C"}}');
+      gate.complete(
+        '{"error_code":0,"user_info":{"user_name":"u2","name_show":"昵称C"}}',
+      );
       await tester.pumpAndSettle();
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(find.text('测试'), findsOneWidget);

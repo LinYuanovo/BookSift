@@ -24,17 +24,17 @@
 
 ## 下载
 
-在 [Releases 页面](https://github.com/booksift-app/booksift/releases) 下载对应平台的包：
+在 [Releases 页面](https://github.com/LinYuanovo/BookSift/releases) 下载对应平台的包：
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Android | `app-v1.0.0.apk` | 直接安装，无需 Google Play |
-| Windows | `booksift-windows-v1.0.0-x64.zip` | 解压即用，无需安装 |
+| Android | `android-v1.0.0.apk` | 直接安装，无需 Google Play |
+| Windows | `windows-x64-v1.0.0.zip` | 解压即用，无需安装 |
 | 完整性 | 同名 `.sha256` | 一行 64 位十六进制摘要，用于校验下载文件 |
 
 ::: tip 建议校验一下
 ```powershell
-certutil -hashfile .\app-v1.0.0.apk SHA256
+certutil -hashfile .\android-v1.0.0.apk SHA256
 ```
 与 `.sha256` 文件里的值逐字对上再安装。
 :::

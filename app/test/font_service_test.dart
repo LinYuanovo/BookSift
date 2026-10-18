@@ -59,7 +59,9 @@ class FakeRegistrar implements FontRegistrar {
 
   @override
   Future<void> registerFamily(String familyName, Uint8List bytes) async {
-    if (failAll || familyName == failFamily) throw StateError('engine rejected font');
+    if (failAll || familyName == failFamily) {
+      throw StateError('engine rejected font');
+    }
     loaded.add(familyName);
   }
 }
@@ -107,12 +109,24 @@ SystemFontEntry systemEntry({
   String familyName = 'Arial',
   String fileName = 'arial.ttf',
   String filePath = r'C:\Windows\Fonts\arial.ttf',
-}) => SystemFontEntry(familyName: familyName, fileName: fileName, filePath: filePath);
+}) => SystemFontEntry(
+  familyName: familyName,
+  fileName: fileName,
+  filePath: filePath,
+);
 
 Uint8List fakeBytes() => Uint8List.fromList(List<int>.filled(16, 7));
 
-ImportedFont sampleFont({String fontId = 'f1', String familyName = 'MySerif', String fileName = 'MySerif.ttf'}) =>
-    ImportedFont(fontId: fontId, familyName: familyName, fileName: fileName, importedAt: DateTime.utc(2026, 10, 13));
+ImportedFont sampleFont({
+  String fontId = 'f1',
+  String familyName = 'MySerif',
+  String fileName = 'MySerif.ttf',
+}) => ImportedFont(
+  fontId: fontId,
+  familyName: familyName,
+  fileName: fileName,
+  importedAt: DateTime.utc(2026, 10, 13),
+);
 
 ({
   FontService service,
@@ -135,15 +149,27 @@ buildService() {
     files: files,
     systemFonts: catalog,
   );
-  return (service: service, store: store, files: files, registrar: registrar, picker: picker, catalog: catalog);
+  return (
+    service: service,
+    store: store,
+    files: files,
+    registrar: registrar,
+    picker: picker,
+    catalog: catalog,
+  );
 }
 
 /// 预置一个已导入字体（注册表 + 落盘文件）。
-void seedFont(FakeSettingsStore store, FakeFileStore files, {List<ImportedFont> fonts = const <ImportedFont>[]}) {
+void seedFont(
+  FakeSettingsStore store,
+  FakeFileStore files, {
+  List<ImportedFont> fonts = const <ImportedFont>[],
+}) {
   store.data[FontSettingsKeys.registry] = FontRegistryCodec.encode(
     fonts.isEmpty ? <ImportedFont>[sampleFont()] : fonts,
   );
-  for (final ImportedFont f in fonts.isEmpty ? <ImportedFont>[sampleFont()] : fonts) {
+  for (final ImportedFont f
+      in fonts.isEmpty ? <ImportedFont>[sampleFont()] : fonts) {
     files.files[f.storedName] = fakeBytes();
   }
 }
@@ -166,7 +192,8 @@ void main() {
     test('注册表 + 角色槽：加载字体并按槽解析 family', () async {
       final b = buildService();
       seedFont(b.store, b.files);
-      b.store.data[FontSettingsKeys.roles] = '{"display":"imported:f1","body":"system","mono":"imported:f1"}';
+      b.store.data[FontSettingsKeys.roles] =
+          '{"display":"imported:f1","body":"system","mono":"imported:f1"}';
       await b.service.bootstrap();
       expect(b.registrar.loaded, <String>['MySerif']);
       expect(b.service.families.display, 'MySerif');
@@ -179,7 +206,8 @@ void main() {
 
     test('槽引用不存在的 fontId：该角色回退 system，其余角色不受影响', () async {
       final b = buildService();
-      b.store.data[FontSettingsKeys.roles] = '{"display":"imported:ghost","title":"imported:f1"}';
+      b.store.data[FontSettingsKeys.roles] =
+          '{"display":"imported:ghost","title":"imported:f1"}';
       await b.service.bootstrap();
       expect(b.service.families.display, isNull);
       expect(b.service.families.title, isNull, reason: 'f1 不在注册表 → system');
@@ -246,7 +274,8 @@ void main() {
       expect(b.files.files.keys, <String>[font.storedName]);
       expect(b.registrar.loaded, <String>['Kaiti']);
       // 持久化 JSON 含四字段
-      final List<dynamic> persisted = jsonDecode(b.store.data[FontSettingsKeys.registry]!) as List<dynamic>;
+      final List<dynamic> persisted =
+          jsonDecode(b.store.data[FontSettingsKeys.registry]!) as List<dynamic>;
       expect(persisted.length, 1);
       final Map<String, dynamic> json = persisted.first as Map<String, dynamic>;
       expect(json['fontId'], font.fontId);
@@ -254,7 +283,13 @@ void main() {
       expect(json['fileName'], 'Kaiti.ttf');
       expect(DateTime.tryParse(json['importedAt'] as String), isNotNull);
       // 新导入字体立即可被槽引用
-      expect(await b.service.setRoleSlot(FontRole.body, FontSlot.imported(font.fontId)), isNull);
+      expect(
+        await b.service.setRoleSlot(
+          FontRole.body,
+          FontSlot.imported(font.fontId),
+        ),
+        isNull,
+      );
       expect(b.service.families.body, 'Kaiti');
       b.service.dispose();
     });
@@ -262,7 +297,10 @@ void main() {
     test('otf 扩展名同样接受', () async {
       final b = buildService();
       await b.service.bootstrap();
-      expect(await b.service.importFontBytes('SourceSerif.otf', fakeBytes()), isNull);
+      expect(
+        await b.service.importFontBytes('SourceSerif.otf', fakeBytes()),
+        isNull,
+      );
       expect(b.service.registry.single.storedName, endsWith('.otf'));
       b.service.dispose();
     });
@@ -292,7 +330,10 @@ void main() {
     test('非 ttf/otf：拒绝且不落盘不注册', () async {
       final b = buildService();
       await b.service.bootstrap();
-      final String? error = await b.service.importFontBytes('evil.zip', fakeBytes());
+      final String? error = await b.service.importFontBytes(
+        'evil.zip',
+        fakeBytes(),
+      );
       expect(error, isNotNull);
       expect(b.service.registry, isEmpty);
       expect(b.files.files, isEmpty);
@@ -303,7 +344,10 @@ void main() {
     test('空字节：拒绝', () async {
       final b = buildService();
       await b.service.bootstrap();
-      expect(await b.service.importFontBytes('Empty.ttf', Uint8List(0)), isNotNull);
+      expect(
+        await b.service.importFontBytes('Empty.ttf', Uint8List(0)),
+        isNotNull,
+      );
       expect(b.service.registry, isEmpty);
       b.service.dispose();
     });
@@ -312,7 +356,10 @@ void main() {
       final b = buildService();
       await b.service.bootstrap();
       expect(await b.service.importFontBytes('Kaiti.ttf', fakeBytes()), isNull);
-      final String? error = await b.service.importFontBytes('Kaiti.ttf', fakeBytes());
+      final String? error = await b.service.importFontBytes(
+        'Kaiti.ttf',
+        fakeBytes(),
+      );
       expect(error, contains('Kaiti'));
       expect(b.service.registry.length, 1);
       b.service.dispose();
@@ -322,7 +369,10 @@ void main() {
       final b = buildService();
       await b.service.bootstrap();
       b.registrar.failAll = true;
-      final String? error = await b.service.importFontBytes('Broken.ttf', fakeBytes());
+      final String? error = await b.service.importFontBytes(
+        'Broken.ttf',
+        fakeBytes(),
+      );
       expect(error, isNotNull);
       expect(b.files.files, isEmpty, reason: '落盘文件应回滚');
       expect(b.service.registry, isEmpty);
@@ -333,7 +383,10 @@ void main() {
       final b = buildService();
       await b.service.bootstrap();
       b.files.failWrites = true;
-      expect(await b.service.importFontBytes('NoDisk.ttf', fakeBytes()), isNotNull);
+      expect(
+        await b.service.importFontBytes('NoDisk.ttf', fakeBytes()),
+        isNotNull,
+      );
       expect(b.registrar.loaded, isEmpty);
       expect(b.service.registry, isEmpty);
       b.service.dispose();
@@ -344,7 +397,9 @@ void main() {
     test('scanSystemFonts：返回枚举结果（扩展名过滤在端口层完成）', () async {
       final b = buildService();
       b.catalog.fonts = <SystemFontEntry>[systemEntry()];
-      final ({List<SystemFontEntry> fonts, String? error}) scan = await b.service.scanSystemFonts();
+      final ({List<SystemFontEntry> fonts, String? error}) scan = await b
+          .service
+          .scanSystemFonts();
       expect(scan.error, isNull);
       expect(scan.fonts.single.familyName, 'Arial');
       expect(scan.fonts.single.displayName, 'Arial');
@@ -355,7 +410,9 @@ void main() {
     test('scanSystemFonts：端口失败（如非 Windows）→ 空列表 + 可展示提示，不抛异常', () async {
       final b = buildService();
       b.catalog.listError = '当前系统不支持读取系统字体，请使用「导入字体」选择文件';
-      final ({List<SystemFontEntry> fonts, String? error}) scan = await b.service.scanSystemFonts();
+      final ({List<SystemFontEntry> fonts, String? error}) scan = await b
+          .service
+          .scanSystemFonts();
       expect(scan.fonts, isEmpty);
       expect(scan.error, '当前系统不支持读取系统字体，请使用「导入字体」选择文件');
       b.service.dispose();
@@ -364,7 +421,9 @@ void main() {
     test('scanSystemFonts：端口抛非预期异常 → 通用提示兜底', () async {
       final b = buildService();
       b.catalog.crashList = true;
-      final ({List<SystemFontEntry> fonts, String? error}) scan = await b.service.scanSystemFonts();
+      final ({List<SystemFontEntry> fonts, String? error}) scan = await b
+          .service
+          .scanSystemFonts();
       expect(scan.fonts, isEmpty);
       expect(scan.error, '读取系统字体失败，请使用「导入字体」选择文件');
       b.service.dispose();
@@ -381,9 +440,18 @@ void main() {
       expect(font.fileName, 'arial.ttf');
       expect(b.files.files.keys, <String>[font.storedName]);
       expect(b.registrar.loaded, <String>['Arial']);
-      expect(FontRegistryCodec.decode(b.store.data[FontSettingsKeys.registry]), b.service.registry);
+      expect(
+        FontRegistryCodec.decode(b.store.data[FontSettingsKeys.registry]),
+        b.service.registry,
+      );
       // 加入后立即可被角色槽引用
-      expect(await b.service.setRoleSlot(FontRole.body, FontSlot.imported(font.fontId)), isNull);
+      expect(
+        await b.service.setRoleSlot(
+          FontRole.body,
+          FontSlot.imported(font.fontId),
+        ),
+        isNull,
+      );
       expect(b.service.families.body, 'Arial');
       b.service.dispose();
     });
@@ -391,7 +459,10 @@ void main() {
     test('importSystemFont：ttc 合集走同一链路（系统字体才放行）', () async {
       final b = buildService();
       await b.service.bootstrap();
-      final SystemFontEntry entry = systemEntry(familyName: '华文宋体', fileName: 'STSONG.TTC');
+      final SystemFontEntry entry = systemEntry(
+        familyName: '华文宋体',
+        fileName: 'STSONG.TTC',
+      );
       b.catalog.bytes[entry.filePath] = fakeBytes();
       expect(await b.service.importSystemFont(entry), isNull);
       expect(b.service.registry.single.familyName, '华文宋体');
@@ -416,7 +487,10 @@ void main() {
       final b = buildService();
       await b.service.bootstrap();
       b.catalog.failReads = true;
-      expect(await b.service.importSystemFont(systemEntry()), '读取系统字体文件失败：arial.ttf');
+      expect(
+        await b.service.importSystemFont(systemEntry()),
+        '读取系统字体文件失败：arial.ttf',
+      );
       expect(b.service.registry, isEmpty);
       expect(b.files.files, isEmpty);
       b.service.dispose();
@@ -424,6 +498,71 @@ void main() {
   });
 
   group('系统字体真实枚举（真机 IO，plain test）', () {
+    test('macOS 目录枚举递归读取字体、过滤扩展名并按家族名排序', () async {
+      final Directory root = await Directory.systemTemp.createTemp(
+        'booksift_macos_fonts',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final Directory nested = Directory(
+        '${root.path}${Platform.pathSeparator}nested',
+      );
+      await nested.create();
+      await File(
+        '${root.path}${Platform.pathSeparator}zebra.ttf',
+      ).writeAsBytes(fakeBytes());
+      await File(
+        '${nested.path}${Platform.pathSeparator}alpha.otf',
+      ).writeAsBytes(fakeBytes());
+      await File(
+        '${nested.path}${Platform.pathSeparator}ignored.txt',
+      ).writeAsBytes(fakeBytes());
+
+      final PlatformSystemFontCatalog testCatalog = PlatformSystemFontCatalog(
+        operatingSystem: 'macos',
+        macosFontDirectories: <String>[root.path],
+      );
+      final List<SystemFontEntry> fonts = await testCatalog.listFonts();
+
+      expect(fonts.map((SystemFontEntry font) => font.fileName), <String>[
+        'alpha.otf',
+        'zebra.ttf',
+      ]);
+      expect(fonts.map((SystemFontEntry font) => font.familyName), <String>[
+        'alpha',
+        'zebra',
+      ]);
+      expect(
+        fonts.every((SystemFontEntry font) => File(font.filePath).existsSync()),
+        isTrue,
+      );
+    });
+
+    test('iOS 系统字体枚举保持受限，但自定义字体字节导入可用', () async {
+      final FakeSettingsStore store = FakeSettingsStore();
+      final FakeFileStore files = FakeFileStore();
+      final FakeRegistrar registrar = FakeRegistrar();
+      final FakePicker picker = FakePicker()
+        ..next = PickedFontFile(fileName: 'Custom.ttf', bytes: fakeBytes());
+      final FontService service = FontService(
+        settings: store,
+        picker: picker,
+        registrar: registrar,
+        files: files,
+        systemFonts: const PlatformSystemFontCatalog(operatingSystem: 'ios'),
+      );
+      await service.bootstrap();
+
+      final ({List<SystemFontEntry> fonts, String? error}) scan = await service
+          .scanSystemFonts();
+      expect(scan.fonts, isEmpty);
+      expect(scan.error, contains('iOS 不支持直接读取系统字体文件'));
+      expect(await service.importPickedFont(), isNull);
+      expect(picker.picks, 1);
+      expect(service.registry.single.fileName, 'Custom.ttf');
+      expect(registrar.loaded, <String>['Custom']);
+      service.dispose();
+    });
+
     test('PlatformSystemFontCatalog 能枚举本机字体、解析家族名且文件可读', () async {
       if (Platform.isIOS) return;
       const PlatformSystemFontCatalog catalog = PlatformSystemFontCatalog();
@@ -442,8 +581,16 @@ void main() {
       // 抽查第一条：字节确实可读且带 SFNT 签名（真实字体文件）
       final Uint8List bytes = await catalog.readFontBytes(fonts.first);
       expect(bytes.length, greaterThan(1000));
-      final int signature = ByteData.sublistView(bytes, 0, 4).getUint32(0, Endian.big);
-      expect(<int>[0x00010000, 0x4F54544F, 0x74727565], contains(signature), reason: 'SFNT 签名');
+      final int signature = ByteData.sublistView(
+        bytes,
+        0,
+        4,
+      ).getUint32(0, Endian.big);
+      expect(
+        <int>[0x00010000, 0x4F54544F, 0x74727565],
+        contains(signature),
+        reason: 'SFNT 签名',
+      );
     });
   });
 
@@ -454,15 +601,28 @@ void main() {
       await b.service.bootstrap();
       int notifications = 0;
       b.service.addListener(() => notifications++);
-      expect(await b.service.setRoleSlot(FontRole.display, const FontSlot.imported('f1')), isNull);
+      expect(
+        await b.service.setRoleSlot(
+          FontRole.display,
+          const FontSlot.imported('f1'),
+        ),
+        isNull,
+      );
       expect(b.service.families.display, 'MySerif');
       expect(notifications, 1);
-      final Map<String, dynamic> roles = jsonDecode(b.store.data[FontSettingsKeys.roles]!) as Map<String, dynamic>;
+      final Map<String, dynamic> roles =
+          jsonDecode(b.store.data[FontSettingsKeys.roles]!)
+              as Map<String, dynamic>;
       expect(roles['display'], 'imported:f1');
       // 回 system：键移除
-      expect(await b.service.setRoleSlot(FontRole.display, const FontSlot.system()), isNull);
+      expect(
+        await b.service.setRoleSlot(FontRole.display, const FontSlot.system()),
+        isNull,
+      );
       expect(b.service.families.display, isNull);
-      final Map<String, dynamic> roles2 = jsonDecode(b.store.data[FontSettingsKeys.roles]!) as Map<String, dynamic>;
+      final Map<String, dynamic> roles2 =
+          jsonDecode(b.store.data[FontSettingsKeys.roles]!)
+              as Map<String, dynamic>;
       expect(roles2.containsKey('display'), isFalse);
       b.service.dispose();
     });
@@ -470,7 +630,13 @@ void main() {
     test('setRoleSlot 未知 fontId：防御性视为 system', () async {
       final b = buildService();
       await b.service.bootstrap();
-      expect(await b.service.setRoleSlot(FontRole.body, const FontSlot.imported('ghost')), isNull);
+      expect(
+        await b.service.setRoleSlot(
+          FontRole.body,
+          const FontSlot.imported('ghost'),
+        ),
+        isNull,
+      );
       expect(b.service.families.body, isNull);
       expect(b.service.slotOf(FontRole.body), const FontSlot.system());
       b.service.dispose();
@@ -484,16 +650,28 @@ void main() {
         await b.service.setRoleSlot(role, const FontSlot.imported('f1'));
       }
       for (final FontRole role in FontRole.values) {
-        expect(b.service.families.familyOf(role), 'MySerif', reason: '${role.name} 应解析到导入家族');
+        expect(
+          b.service.families.familyOf(role),
+          'MySerif',
+          reason: '${role.name} 应解析到导入家族',
+        );
         expect(b.service.slotOf(role), const FontSlot.imported('f1'));
       }
       // 持久化往返：decode(encode(slots)) 与原槽一致
-      final Map<FontRole, FontSlot> decoded = FontRoleSlotsCodec.decode(b.store.data[FontSettingsKeys.roles]);
-      expect(decoded, <FontRole, FontSlot>{for (final FontRole r in FontRole.values) r: const FontSlot.imported('f1')});
+      final Map<FontRole, FontSlot> decoded = FontRoleSlotsCodec.decode(
+        b.store.data[FontSettingsKeys.roles],
+      );
+      expect(decoded, <FontRole, FontSlot>{
+        for (final FontRole r in FontRole.values)
+          r: const FontSlot.imported('f1'),
+      });
       // 恢复默认
       expect(await b.service.resetRoles(), isNull);
       expect(b.service.families, FontFamilySet.standard);
-      expect(FontRoleSlotsCodec.decode(b.store.data[FontSettingsKeys.roles]), isEmpty);
+      expect(
+        FontRoleSlotsCodec.decode(b.store.data[FontSettingsKeys.roles]),
+        isEmpty,
+      );
       b.service.dispose();
     });
 
@@ -520,7 +698,8 @@ void main() {
     test('引用它的角色自动回退 system（mono 回平台等宽族），文件删除、注册表持久化', () async {
       final b = buildService();
       seedFont(b.store, b.files);
-      b.store.data[FontSettingsKeys.roles] = '{"display":"imported:f1","mono":"imported:f1","body":"imported:f1"}';
+      b.store.data[FontSettingsKeys.roles] =
+          '{"display":"imported:f1","mono":"imported:f1","body":"imported:f1"}';
       await b.service.bootstrap();
       expect(b.service.families.display, 'MySerif');
       expect(await b.service.deleteFont('f1'), isNull);
@@ -528,9 +707,19 @@ void main() {
       expect(b.files.files, isEmpty);
       expect(b.service.families.display, isNull);
       expect(b.service.families.body, isNull);
-      expect(b.service.families.mono, FontFamily.monospace, reason: 'mono 的 system 值 = 平台等宽族');
-      expect(FontRegistryCodec.decode(b.store.data[FontSettingsKeys.registry]), isEmpty);
-      expect(FontRoleSlotsCodec.decode(b.store.data[FontSettingsKeys.roles]), isEmpty);
+      expect(
+        b.service.families.mono,
+        FontFamily.monospace,
+        reason: 'mono 的 system 值 = 平台等宽族',
+      );
+      expect(
+        FontRegistryCodec.decode(b.store.data[FontSettingsKeys.registry]),
+        isEmpty,
+      );
+      expect(
+        FontRoleSlotsCodec.decode(b.store.data[FontSettingsKeys.roles]),
+        isEmpty,
+      );
       b.service.dispose();
     });
 
@@ -561,7 +750,10 @@ void main() {
       b.store.failWrites = true;
       int notifications = 0;
       b.service.addListener(() => notifications++);
-      final String? error = await b.service.setRoleSlot(FontRole.display, const FontSlot.imported('f1'));
+      final String? error = await b.service.setRoleSlot(
+        FontRole.display,
+        const FontSlot.imported('f1'),
+      );
       expect(error, isNotNull);
       expect(b.service.families.display, 'MySerif');
       expect(notifications, 1);

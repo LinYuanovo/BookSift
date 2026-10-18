@@ -482,5 +482,5 @@ $db  = "$tmp\app_copy.db"
 `lib/features/collect/collect_page.dart`、`test/app_shell_test.dart`、`test/support/fake_book_repository.dart`。
 
 > **备注（§9-3 的恢复过程）**：`test/support/fake_book_repository.dart` 被超时命令截断后，
-> 用「`git show HEAD:` 版本 + 重放 `saoshuhui→booksift` 包名 rename」重建，并以残骸前 239 行做
+> 用「`git show HEAD:` 版本 + 当时的测试文件重建」恢复，并以残骸前 239 行做
 > **逐字节交叉验证**（一致）；`git diff -U0` 亦证明预存改动只有 rename 两个 hunk。现 602 行，测试通过。

@@ -12,6 +12,8 @@
 /// 这里 re-export 保持既有 `import 'bduss.dart'` 调用点不变。
 library;
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
@@ -31,7 +33,14 @@ abstract interface class SecretStore {
 
 /// flutter_secure_storage 实现（设备本地系统加密存储）。
 class SecureStorageSecrets implements SecretStore {
-  const SecureStorageSecrets([this.storage = const FlutterSecureStorage()]);
+  SecureStorageSecrets([FlutterSecureStorage? storage])
+    : storage =
+          storage ??
+          (defaultTargetPlatform == TargetPlatform.macOS
+              ? const FlutterSecureStorage(
+                  mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+                )
+              : const FlutterSecureStorage());
 
   final FlutterSecureStorage storage;
 
@@ -50,14 +59,18 @@ class SecureStorageSecrets implements SecretStore {
 
 /// 机密存储端口（测试可 override 为内存实现）。
 final Provider<SecretStore> secretStoreProvider = Provider<SecretStore>(
-  (Ref ref) => const SecureStorageSecrets(),
+  (Ref ref) => SecureStorageSecrets(),
 );
 
 /// 当前 BDUSS：null = 匿名模式。读取失败（首启竞态 / 平台通道不可用）一律回落 null，
 /// 与 collectSettingsProvider 同策略——不阻断 UI，也不改变匿名档行为。
-final FutureProvider<String?> bdussProvider = FutureProvider<String?>((Ref ref) async {
+final FutureProvider<String?> bdussProvider = FutureProvider<String?>((
+  Ref ref,
+) async {
   try {
-    final String? raw = await ref.watch(secretStoreProvider).read(kSecretKeyBduss);
+    final String? raw = await ref
+        .watch(secretStoreProvider)
+        .read(kSecretKeyBduss);
     return (raw ?? '').isEmpty ? null : raw;
   } catch (_) {
     return null;
@@ -68,9 +81,13 @@ final FutureProvider<String?> bdussProvider = FutureProvider<String?>((Ref ref) 
 ///
 /// 失效 = 采集/在线搜索命中「登录态失效」特征后自动降级匿名档（需求 5，§8.10）；
 /// 设置页据此显示「已失效 · 请重新导入」。[BdussController.save]/[clear] 会清标记。
-final FutureProvider<bool> bdussInvalidProvider = FutureProvider<bool>((Ref ref) async {
+final FutureProvider<bool> bdussInvalidProvider = FutureProvider<bool>((
+  Ref ref,
+) async {
   try {
-    final String? raw = await ref.watch(secretStoreProvider).read(kSecretKeyBdussInvalid);
+    final String? raw = await ref
+        .watch(secretStoreProvider)
+        .read(kSecretKeyBdussInvalid);
     return (raw ?? '').isNotEmpty;
   } catch (_) {
     return false;
@@ -80,7 +97,9 @@ final FutureProvider<bool> bdussInvalidProvider = FutureProvider<bool>((Ref ref)
 /// 生效凭证（全装配链路的唯一读取口径）：已标记失效 → null（按匿名档运行）。
 /// 其余消费方（tiebaApiProvider / 采集控制器 / 账号徽标）都读这个而不是
 /// [bdussProvider]，失效降级才不会漏过某一条链路。
-final FutureProvider<String?> effectiveBdussProvider = FutureProvider<String?>((Ref ref) async {
+final FutureProvider<String?> effectiveBdussProvider = FutureProvider<String?>((
+  Ref ref,
+) async {
   if (await ref.watch(bdussInvalidProvider.future)) {
     return null;
   }
@@ -115,7 +134,8 @@ class BdussController {
   /// 幂等：返回 true = 本次是**新**标记（UI 可据此只提示一次）。
   Future<bool> markInvalid() async {
     final SecretStore store = _ref.read(secretStoreProvider);
-    final bool already = ((await store.read(kSecretKeyBdussInvalid)) ?? '').isNotEmpty;
+    final bool already =
+        ((await store.read(kSecretKeyBdussInvalid)) ?? '').isNotEmpty;
     if (!already) {
       await store.write(kSecretKeyBdussInvalid, '1');
     }

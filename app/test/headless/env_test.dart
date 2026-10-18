@@ -94,6 +94,26 @@ void main() {
   });
 
   group('doctor', () {
+    test('sqliteHint 按 Windows/macOS/Linux 给各自的动态库修复提示', () {
+      final String windows = HeadlessEnv.sqliteHintForPlatform('windows');
+      final String macos = HeadlessEnv.sqliteHintForPlatform('macos');
+      final String linux = HeadlessEnv.sqliteHintForPlatform('linux');
+
+      expect(windows, contains('sqlite3.dll'));
+      expect(windows, contains(r'$env:PATH'));
+      expect(macos, contains('macOS'));
+      expect(macos, contains('brew install sqlite3'));
+      expect(
+        macos,
+        contains(
+          r'export DYLD_LIBRARY_PATH="$(brew --prefix sqlite)/lib:$DYLD_LIBRARY_PATH"',
+        ),
+      );
+      expect(linux, contains('Linux'));
+      expect(linux, contains('libsqlite3-0'));
+      expect(linux, isNot(contains('macOS')));
+    });
+
     test('runtime 与 sqlite3 两项在纯净环境下即通过', () async {
       final DoctorReport r = await HeadlessEnv.doctor();
       final DoctorCheck runtime = r.checks.firstWhere(

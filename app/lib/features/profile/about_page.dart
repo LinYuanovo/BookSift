@@ -12,8 +12,9 @@ import '../../theme/app_typography.dart';
 
 /// 内置库数据截至日（口径与 headless `stats` 的 `dataCutoff` 同源：
 /// `SELECT MAX(date) FROM book_entries`）。null = 空库或无日期列。
-final FutureProvider<String?> aboutCutoffProvider =
-    FutureProvider<String?>((Ref ref) => ref.watch(queriesProvider).dataCutoff());
+final FutureProvider<String?> aboutCutoffProvider = FutureProvider<String?>(
+  (Ref ref) => ref.watch(queriesProvider).dataCutoff(),
+);
 
 /// 关于与合规页（路线图 Phase 5 合规文案；口径出处：原型 §11.2 BDUSS 政策 /
 /// §11.3 版权与数据来源署名 / §11.4 贴吧 ToS 风险与免责文案）。
@@ -24,87 +25,90 @@ class AboutPage extends ConsumerWidget {
   const AboutPage({super.key});
 
   /// 全局间隔下限（秒，1 位小数）：`kMinIntervalMs` 1500 → 「1.5」。
-  static String get _minIntervalSec => (kMinIntervalMs / 1000).toStringAsFixed(1);
+  static String get _minIntervalSec =>
+      (kMinIntervalMs / 1000).toStringAsFixed(1);
 
   /// 全局间隔上限（秒，1 位小数）：`kMaxIntervalMs` 3000 → 「3.0」。
-  static String get _maxIntervalSec => (kMaxIntervalMs / 1000).toStringAsFixed(1);
+  static String get _maxIntervalSec =>
+      (kMaxIntervalMs / 1000).toStringAsFixed(1);
 
   /// BDUSS 档间隔下限（秒，1 位小数）：`kMinIntervalBdussMs` 1000 → 「1.0」。
-  static String get _bdMinIntervalSec => (kMinIntervalBdussMs / 1000).toStringAsFixed(1);
+  static String get _bdMinIntervalSec =>
+      (kMinIntervalBdussMs / 1000).toStringAsFixed(1);
 
   /// BDUSS 档间隔上限（秒，1 位小数）：`kMaxIntervalBdussMs` 2000 → 「2.0」。
-  static String get _bdMaxIntervalSec => (kMaxIntervalBdussMs / 1000).toStringAsFixed(1);
+  static String get _bdMaxIntervalSec =>
+      (kMaxIntervalBdussMs / 1000).toStringAsFixed(1);
 
   /// 单帖退避序列（`retryBackoff` 30s×2ⁿ，重试 ≤ `kMaxThreadRetries`）。
   static String get _backoffSeq => List<int>.generate(
-        kMaxThreadRetries,
-        (int i) => retryBackoff(i).inSeconds,
-      ).join(' / ');
+    kMaxThreadRetries,
+    (int i) => retryBackoff(i).inSeconds,
+  ).join(' / ');
 
   /// 数据来源署名（原型 §11.3：署名区 + 可溯源 + 快照口径 + 删除通道）。
   List<String> _attribution(String? cutoff) => <String>[
-        '书目、推荐语与排雷信息全部来自百度贴吧各扫书相关吧（如 yy小说吧、哀伤雪刃吧）的公开帖子，'
-            '由社区用户自发发布，版权归原作者与发帖人所有。',
-        '扫书汇只做离线整理与检索：把公开帖文按书名归并、分类、建索引，供个人学习研究使用。'
-            '本应用不商用、不声称拥有任何内容版权，也不提供原帖全文的批量导出。',
-        '带原帖链接（tid）的条目可在书聚合页复制跳回贴吧溯源；无链接的条目会如实提示'
-            '「原帖已不可溯源」，不假装可跳。',
-        cutoff == null
-            ? '内置种子数据包是一次性快照，不随时间自动更新；快照之后的新帖需自行发起增量采集。'
-            : '内置种子数据包是一次性快照，不随时间自动更新，数据截至 $cutoff；'
-                '快照之后的新帖需自行发起增量采集。',
-        '如权利人希望移除相关内容，可通过项目发布渠道提出，我们会在后续数据包中处理。',
-      ];
+    '书名、推荐语和排雷信息都来自百度贴吧各扫书相关吧的公开帖子，由吧友自己发布，'
+        '版权归原作者与发帖人所有。',
+    '扫书汇只做离线整理和检索：把公开帖子按书名归并、分类、建索引，供个人学习研究。'
+        '应用不商用、不声称拥有任何内容版权，也不提供原帖全文的批量导出。',
+    '带原帖链接（tid）的条目，可以在书聚合页复制链接跳回贴吧溯源；没有链接的条目'
+        '会如实提示「原帖已不可溯源」。',
+    cutoff == null
+        ? '内置种子数据包是一次性快照，不会自动更新。快照之后的新帖，需要你自己增量采集。'
+        : '内置种子数据包是一次性快照，不会自动更新，数据截至 $cutoff。'
+              '之后的新帖需要你自己增量采集。',
+    '权利人如果希望移除相关内容，可以通过项目发布渠道提出，我们会在后续数据包中处理。',
+  ];
 
   /// 贴吧 ToS 与使用提示（原型 §11.4：非公开逆向接口 + 保守频控 + 风险自担）。
   List<String> get _tosParagraphs => <String>[
-        '增量采集使用的是贴吧的非官方逆向接口（逆向自官方 Android 客户端），并非百度对外开放的 API，'
-            '违反贴吧服务条款的可能性存在。接口随时可能变更或失效，我们不对其可用性做任何保证。',
-        '为把对贴吧服务的影响压到最低，采集侧内置了三重约束：',
-      ];
+    '增量采集使用的是贴吧的非官方逆向接口，来自对官方 Android 客户端的逆向分析，'
+        '不是百度对外开放的接口，有可能违反贴吧服务条款。接口随时可能变更或失效，不保证一直可用。',
+    '为了尽量少打扰贴吧服务，采集做了以下限制：',
+  ];
 
   List<String> get _tosBullets => <String>[
-        '全局限速：所有并发分支共享同一令牌桶，相邻请求启动间隔匿名档 $_minIntervalSec–$_maxIntervalSec 秒、'
-            'BDUSS 档 $_bdMinIntervalSec–$_bdMaxIntervalSec 秒随机抖动；',
-        '每日预算：匿名档每日最多 $kDailyBudgetAnonymous 次请求，导入 BDUSS 的账号档提高到 '
-            '$kDailyBudgetBduss 次；触顶当日停止、次日 0 点重置；',
-        '退避熔断：单帖失败按 $_backoffSeq 秒退避、最多重试 $kMaxThreadRetries 次；'
-            '同一吧连续失败 $kForumFailureCooldown 次进入 ${kForumCooldownDuration.inHours} 小时冷却；'
-            '全局连续失败 $kGlobalFailurePause 次整轮暂停。',
-      ];
+    '全局限速：相邻两次请求的启动间隔，匿名档为 $_minIntervalSec–$_maxIntervalSec 秒，'
+        'BDUSS 档为 $_bdMinIntervalSec–$_bdMaxIntervalSec 秒，并在区间内随机抖动；',
+    '每日预算：匿名档每日最多 $kDailyBudgetAnonymous 次请求，'
+        '账号档提高到 $kDailyBudgetBduss 次。当天用完就停止，第二天 0 点重置；',
+    '退避熔断：单帖失败后按 $_backoffSeq 秒退避，最多重试 $kMaxThreadRetries 次；'
+        '同一吧连续失败 $kForumFailureCooldown 次进入 ${kForumCooldownDuration.inHours} 小时冷却；'
+        '全局连续失败 $kGlobalFailurePause 次会暂停整轮采集。',
+  ];
 
   List<String> get _tosTail => <String>[
-        '除跨吧并发数（默认 $kDefaultConcurrency、上限 匿名 $kMaxConcurrencyAnonymous / BDUSS 档 $kMaxConcurrencyBduss，设置页可调）外，'
-            '以上频控参数不对用户开放调高。',
-        '我们把采集定位为「用户在自己设备上的低频订阅行为」：不做高频压测，也不做批量商用抓取。',
-        '把并发调到上限会提高单位时间请求数，使用 BDUSS 则让请求带上账号身份 —— '
-            '两者都会提高触发风控（429 / 110xxx / 冷却）的概率，可能导致账号被限制；'
-            '是否使用由你决定，风险自行承担。',
-      ];
+    '跨吧并发数默认 $kDefaultConcurrency、上限 匿名 $kMaxConcurrencyAnonymous / '
+        'BDUSS 档 $kMaxConcurrencyBduss，可以在设置页调整。其他频控参数固定，不开放调高。',
+    '采集只面向个人自用的低频使用，不做高频压测，也不做批量商用抓取。',
+    '把并发调高会让单位时间内的请求变多，使用 BDUSS 则会让请求带上账号身份。'
+        '两者都会提高触发风控的概率，可能导致账号被限制。是否使用由你决定，风险自行承担。',
+  ];
 
   /// BDUSS 与隐私声明（原型 §11.2 / §8.10）：导入入口已实装（设置页「BDUSS 导入」行）。
   List<String> get _privacyHead => <String>[
-        '账号凭证（BDUSS）为可选：不导入时全程匿名，只读接口照常可用。导入入口在设置页'
-            '「BDUSS 导入」一行 —— 从贴吧 App / 网页版的 Cookie 里复制粘贴即可'
-            '（只填 BDUSS，不要填账号密码）。',
-        '导入后，它将：',
-      ];
+    'BDUSS 是可选的账号凭证。不导入时全程匿名，只读接口照常使用。导入入口在设置页的'
+        '「BDUSS 导入」一行：从贴吧 App 或网页版的 Cookie 里复制粘贴即可，'
+        '只填 BDUSS，不要填账号密码。',
+    '导入后，它只会用于以下用途：',
+  ];
 
   List<String> get _privacyBullets => <String>[
-        '仅通过 flutter_secure_storage 存放在设备本地的系统加密存储中'
-            '（Windows 凭据管理器 / Android Keystore / iOS Keychain），不落明文、不写日志、不进数据库；',
-        '只用于对贴吧官方接口发起请求时携带账号身份 —— 每日请求配额 $kDailyBudgetAnonymous → '
-            '$kDailyBudgetBduss，仅此而已；',
-        '可随时在设置页一键清除，清除即回匿名档；设置页「测试」按钮可用一次 initNickname 请求校验当前凭证；',
-        '失效自动降级（§8.10）：采集 / 在线搜索命中「登录态失效」特征时自动回退匿名档并标记失效'
-            '（不删凭证），重新导入即恢复；',
-        '绝不上传到任何第三方服务器 —— 本应用没有自建服务端。',
-      ];
+    '仅通过 flutter_secure_storage 存放在设备本地的系统加密存储中'
+        '（Windows 凭据管理器 / Android Keystore / Apple 平台 Keychain），不落明文、不写日志、不进数据库；',
+    '只在请求贴吧官方接口时携带账号身份，每日请求配额 $kDailyBudgetAnonymous → $kDailyBudgetBduss，'
+        '没有其他用途；',
+    '可随时在设置页一键清除，清除后回到匿名档。设置页的「测试」按钮可以校验当前凭证；',
+    '如果凭证失效，采集和在线搜索会自动降级回匿名档并标记失效，但不会删除凭证。'
+        '重新导入即可恢复；',
+    '绝不上传到任何第三方服务器。本应用没有自建服务端。',
+  ];
 
   List<String> get _privacyTail => <String>[
-        '本地数据同样只留在设备上：数据库、书签、收藏、搜索历史与导入字体全部存于应用私有目录，'
-            '不上传、不同步。应用不含任何统计或广告 SDK。',
-      ];
+    '本地数据同样只留在设备上：数据库、书签、收藏、搜索历史和导入字体都存放在应用私有目录，'
+        '不上传、不同步。应用不含任何统计或广告 SDK。',
+  ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -116,13 +120,18 @@ class AboutPage extends ConsumerWidget {
     final String versionText = local == null || !local.isKnown
         ? '版本未知'
         : local.buildNumber == null
-            ? 'v${local.version}'
-            : 'v${local.version} (${local.buildNumber})';
+        ? 'v${local.version}'
+        : 'v${local.version} (${local.buildNumber})';
 
     return Scaffold(
       appBar: AppBar(title: const Text('关于与合规')),
       body: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(space.pagePadding, space.space4, space.pagePadding, space.space8),
+        padding: EdgeInsets.fromLTRB(
+          space.pagePadding,
+          space.space4,
+          space.pagePadding,
+          space.space8,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
@@ -151,7 +160,9 @@ class AboutPage extends ConsumerWidget {
             Text(
               '扫书汇 · $versionText',
               textAlign: TextAlign.center,
-              style: AppTypography.tabular(t.caption.copyWith(color: colors.textSecondary)),
+              style: AppTypography.tabular(
+                t.caption.copyWith(color: colors.textSecondary),
+              ),
             ),
             SizedBox(height: space.space2),
             Text(
@@ -198,14 +209,22 @@ class _Block extends StatelessWidget {
               children: <Widget>[
                 AppIcon(icon, size: 20, color: colors.accent),
                 SizedBox(width: space.space3),
-                Expanded(child: Text(title, style: t.cardTitle.copyWith(color: colors.text))),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: t.cardTitle.copyWith(color: colors.text),
+                  ),
+                ),
               ],
             ),
             SizedBox(height: space.space4),
             for (final String p in paragraphs)
               Padding(
                 padding: EdgeInsets.only(bottom: space.space3),
-                child: Text(p, style: t.body.copyWith(color: colors.textSecondary)),
+                child: Text(
+                  p,
+                  style: t.body.copyWith(color: colors.textSecondary),
+                ),
               ),
             for (final String b in bullets)
               Padding(
@@ -215,14 +234,22 @@ class _Block extends StatelessWidget {
                   children: <Widget>[
                     Text('·', style: t.body.copyWith(color: colors.textMuted)),
                     SizedBox(width: space.space2),
-                    Expanded(child: Text(b, style: t.body.copyWith(color: colors.textSecondary))),
+                    Expanded(
+                      child: Text(
+                        b,
+                        style: t.body.copyWith(color: colors.textSecondary),
+                      ),
+                    ),
                   ],
                 ),
               ),
             for (final String p in tail)
               Padding(
                 padding: EdgeInsets.only(bottom: space.space3),
-                child: Text(p, style: t.body.copyWith(color: colors.textSecondary)),
+                child: Text(
+                  p,
+                  style: t.body.copyWith(color: colors.textSecondary),
+                ),
               ),
             SizedBox(height: space.space1),
           ],

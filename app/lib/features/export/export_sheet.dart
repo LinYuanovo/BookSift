@@ -2,10 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/icons.dart';
@@ -15,7 +13,12 @@ import '../../theme/app_radius.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
 import '../home/cards.dart';
-import '../share/share_service.dart' show ShareOutcome, ShareOutcomeKind, isMobileShareTarget;
+import '../share/share_service.dart'
+    show
+        ShareOutcome,
+        ShareOutcomeKind,
+        PlatformShareOperations,
+        isMobileShareTarget;
 import 'booklist_export.dart';
 
 /// 书单导出弹层（原型 §3.1 P2-4 · M3）：格式分段（Markdown/TXT）+ 前 20 行 mono 预览
@@ -36,17 +39,31 @@ abstract interface class TextFileSink {
   Future<ShareOutcome> save(String content, String fileName, String mimeType);
 
   /// 交系统分享面板；[origin] 供 iPad popover 锚定（share_plus 要求）。
-  Future<ShareOutcome> share(String content, String fileName, String mimeType, {String? text, Rect? origin});
+  Future<ShareOutcome> share(
+    String content,
+    String fileName,
+    String mimeType, {
+    String? text,
+    Rect? origin,
+  });
 }
 
 /// file_picker + share_plus + path_provider 实现（仿 [PlatformShareSink] 的 PNG 链路）。
 final class PlatformTextFileSink implements TextFileSink {
-  const PlatformTextFileSink();
+  const PlatformTextFileSink([
+    this.operations = const PlatformShareOperations(),
+  ]);
+
+  final PlatformShareOperations operations;
 
   /// 应用文档目录下的导出子目录名。
   static const String exportDirName = 'booksift_export';
 
-  Future<String> _writeTo(Directory dir, String fileName, Uint8List bytes) async {
+  Future<String> _writeTo(
+    Directory dir,
+    String fileName,
+    Uint8List bytes,
+  ) async {
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
@@ -55,16 +72,24 @@ final class PlatformTextFileSink implements TextFileSink {
     return file.path;
   }
 
-  Future<String> _writeDocuments(String fileName, Uint8List bytes) =>
-      getApplicationDocumentsDirectory().then((Directory d) => _writeTo(d, fileName, bytes));
+  Future<String> _writeDocuments(String fileName, Uint8List bytes) => operations
+      .getDocumentsDirectory()
+      .then((Directory d) => _writeTo(d, fileName, bytes));
 
-  Future<String> _writeTemp(String fileName, Uint8List bytes) =>
-      getTemporaryDirectory().then((Directory d) => _writeTo(d, fileName, bytes));
+  Future<String> _writeTemp(String fileName, Uint8List bytes) => operations
+      .getTemporaryDirectoryPath()
+      .then((Directory d) => _writeTo(d, fileName, bytes));
+
+  bool get _isMobile => operations.isMobile;
 
   @override
-  Future<ShareOutcome> save(String content, String fileName, String mimeType) async {
+  Future<ShareOutcome> save(
+    String content,
+    String fileName,
+    String mimeType,
+  ) async {
     final Uint8List bytes = Uint8List.fromList(utf8.encode(content));
-    if (isMobileShareTarget) {
+    if (_isMobile) {
       // 移动端无保存对话框：落应用文档目录，「存到文件」由分享面板承担。
       final String path = await _writeDocuments(fileName, bytes);
       return ShareOutcome(
@@ -75,12 +100,11 @@ final class PlatformTextFileSink implements TextFileSink {
     }
     try {
       final String extension = p.extension(fileName).replaceFirst('.', '');
-      final Uri? uri = await FilePicker.saveFile(
+      final Uri? uri = await operations.saveFile(
         dialogTitle: '保存书单',
         fileName: fileName,
         bytes: bytes,
         mimeType: mimeType,
-        type: FileType.custom,
         allowedExtensions: <String>[extension],
       );
       if (uri == null) {
@@ -112,7 +136,7 @@ final class PlatformTextFileSink implements TextFileSink {
     final Uint8List bytes = Uint8List.fromList(utf8.encode(content));
     try {
       final String path = await _writeTemp(fileName, bytes);
-      final ShareResult result = await SharePlus.instance.share(
+      final ShareResult result = await operations.shareFiles(
         ShareParams(
           files: <XFile>[XFile(path, mimeType: mimeType)],
           text: text,
@@ -120,7 +144,11 @@ final class PlatformTextFileSink implements TextFileSink {
         ),
       );
       if (result.status == ShareResultStatus.dismissed) {
-        return ShareOutcome(ShareOutcomeKind.cancelled, path: path, message: '已取消分享');
+        return ShareOutcome(
+          ShareOutcomeKind.cancelled,
+          path: path,
+          message: '已取消分享',
+        );
       }
       // unavailable = 平台不回传用户动作（Windows/Android 部分场景），视作已分享。
       return ShareOutcome(ShareOutcomeKind.shared, path: path);
@@ -147,9 +175,17 @@ class BooklistExportService {
 
   final TextFileSink sink;
 
-  Future<ShareOutcome> save(String content, BooklistFormat format, {DateTime? now}) async {
+  Future<ShareOutcome> save(
+    String content,
+    BooklistFormat format, {
+    DateTime? now,
+  }) async {
     try {
-      return await sink.save(content, defaultBooklistFileName(format, now: now), format.mimeType);
+      return await sink.save(
+        content,
+        defaultBooklistFileName(format, now: now),
+        format.mimeType,
+      );
     } on Object catch (error) {
       return ShareOutcome(ShareOutcomeKind.failed, message: '保存失败：$error');
     }
@@ -188,13 +224,18 @@ Future<void> showBooklistExportSheet(
     useSafeArea: true,
     showDragHandle: true,
     // 容器样式吃主题 bottomSheetTheme（raised 底 + 顶部 r24），不另传 backgroundColor。
-    builder: (BuildContext sheetContext) => BooklistExportSheet(doc: doc, service: service),
+    builder: (BuildContext sheetContext) =>
+        BooklistExportSheet(doc: doc, service: service),
   );
 }
 
 /// 导出弹层本体（格式分段 + 预览 + 保存/分享）。
 class BooklistExportSheet extends StatefulWidget {
-  const BooklistExportSheet({super.key, required this.doc, this.service = const BooklistExportService()});
+  const BooklistExportSheet({
+    super.key,
+    required this.doc,
+    this.service = const BooklistExportService(),
+  });
 
   final BooklistDoc doc;
 
@@ -210,7 +251,9 @@ class BooklistExportSheet extends StatefulWidget {
 
 class _BooklistExportSheetState extends State<BooklistExportSheet> {
   /// 「分享」按钮的屏幕矩形（iPad popover 锚点，share_plus 要求）。
-  final GlobalKey _shareButtonKey = GlobalKey(debugLabel: 'booklist-export-share-button');
+  final GlobalKey _shareButtonKey = GlobalKey(
+    debugLabel: 'booklist-export-share-button',
+  );
 
   BooklistFormat _format = BooklistFormat.markdown;
   bool _busy = false;
@@ -222,8 +265,11 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
 
   Future<void> _save() async {
     setState(() => _busy = true);
-    final ShareOutcome outcome =
-        await widget.service.save(_content, _format, now: widget.doc.generatedAt);
+    final ShareOutcome outcome = await widget.service.save(
+      _content,
+      _format,
+      now: widget.doc.generatedAt,
+    );
     if (!mounted) {
       return;
     }
@@ -248,7 +294,8 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
   }
 
   Rect? _shareOrigin() {
-    final RenderObject? object = _shareButtonKey.currentContext?.findRenderObject();
+    final RenderObject? object = _shareButtonKey.currentContext
+        ?.findRenderObject();
     if (object is! RenderBox || !object.hasSize) {
       return null;
     }
@@ -272,7 +319,10 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
   Widget build(BuildContext context) {
     final AppColors c = AppColors.of(context);
     final AppSpacing s = AppSpacing.of(context);
-    final double sheetHeight = (MediaQuery.sizeOf(context).height * 0.85).clamp(360.0, 860.0);
+    final double sheetHeight = (MediaQuery.sizeOf(context).height * 0.85).clamp(
+      360.0,
+      860.0,
+    );
     return SizedBox(
       height: sheetHeight,
       child: Column(
@@ -280,17 +330,24 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
           _header(),
           Expanded(
             child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(s.pagePadding, 0, s.pagePadding, s.space4),
+              padding: EdgeInsets.fromLTRB(
+                s.pagePadding,
+                0,
+                s.pagePadding,
+                s.space4,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   const SectionTitle(label: '格式'),
                   SegmentedPill<BooklistFormat>(
                     options: <(BooklistFormat, String)>[
-                      for (final BooklistFormat f in BooklistFormat.values) (f, f.label),
+                      for (final BooklistFormat f in BooklistFormat.values)
+                        (f, f.label),
                     ],
                     selected: _format,
-                    onChanged: (BooklistFormat v) => setState(() => _format = v),
+                    onChanged: (BooklistFormat v) =>
+                        setState(() => _format = v),
                   ),
                   const SectionTitle(label: '预览'),
                   _preview(c, s),
@@ -298,7 +355,9 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
                   Text(
                     '将导出: $_fileName',
                     style: AppTypography.tabular(
-                      AppTypography.of(context).caption.copyWith(color: c.textMuted),
+                      AppTypography.of(
+                        context,
+                      ).caption.copyWith(color: c.textMuted),
                     ),
                   ),
                 ],
@@ -328,7 +387,9 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
                   widget.doc.metaLine,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted)),
+                  style: AppTypography.tabular(
+                    t.caption.copyWith(color: c.textMuted),
+                  ),
                 ),
               ],
             ),
@@ -350,7 +411,9 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
     final AppTypography t = AppTypography.of(context);
     final List<String> lines = _content.split('\n');
     final bool truncated = lines.length > BooklistExportSheet.previewLineLimit;
-    final String body = lines.take(BooklistExportSheet.previewLineLimit).join('\n');
+    final String body = lines
+        .take(BooklistExportSheet.previewLineLimit)
+        .join('\n');
     final String text = truncated
         ? '$body\n……（共 ${lines.length} 行，导出文件包含全部内容）'
         : body;
@@ -364,25 +427,34 @@ class _BooklistExportSheetState extends State<BooklistExportSheet> {
       ),
       child: Text(
         text,
-        style: t.mono.copyWith(color: c.textSecondary, fontSize: 11, height: 1.7),
+        style: t.mono.copyWith(
+          color: c.textSecondary,
+          fontSize: 11,
+          height: 1.7,
+        ),
       ),
     );
   }
 
   Widget _actions(AppColors c, AppSpacing s) {
     return Container(
-      padding: EdgeInsets.fromLTRB(s.pagePadding, s.space3, s.pagePadding, s.space3),
+      padding: EdgeInsets.fromLTRB(
+        s.pagePadding,
+        s.space3,
+        s.pagePadding,
+        s.space3,
+      ),
       decoration: BoxDecoration(
         color: c.surface,
-        border: Border(top: BorderSide(color: c.border, width: AppMetrics.hairline)),
+        border: Border(
+          top: BorderSide(color: c.border, width: AppMetrics.hairline),
+        ),
       ),
       child: Row(
         children: <Widget>[
           Expanded(
             child: AppButton(
-              label: _busy
-                  ? '导出中…'
-                  : (isMobileShareTarget ? '存到文档目录' : '保存文件'),
+              label: _busy ? '导出中…' : (isMobileShareTarget ? '存到文档目录' : '保存文件'),
               kind: AppButtonKind.outline,
               onPressed: _busy ? null : _save,
             ),

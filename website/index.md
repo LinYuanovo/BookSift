@@ -17,7 +17,7 @@ hero:
       link: /guide/search
     - theme: alt
       text: GitHub
-      link: https://github.com/booksift-app/booksift
+      link: https://github.com/LinYuanovo/BookSift
 
 features:
   - icon: 📚

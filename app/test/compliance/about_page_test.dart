@@ -14,18 +14,27 @@ import '../support/fake_book_repository.dart';
 import '../support/harness.dart';
 import '../update/support.dart';
 
-const LocalVersion kKnownVersion = LocalVersion(version: '1.0.0', buildNumber: 100);
+const LocalVersion kKnownVersion = LocalVersion(
+  version: '1.0.0',
+  buildNumber: 100,
+);
 
 /// demoLibrary() 的 book_entries 最大日期（= dataCutoff 口径）。
 const String kDemoCutoff = '2025-04-28';
 
-Future<void> pumpAbout(WidgetTester tester, {LocalVersion local = kKnownVersion}) async {
+Future<void> pumpAbout(
+  WidgetTester tester, {
+  LocalVersion local = kKnownVersion,
+}) async {
   useTallSurface(tester);
   await tester.pumpWidget(
     testApp(
       FakeBookRepository(library: demoLibrary()),
       home: const AboutPage(),
-      extraOverrides: updateTestOverrides(adapter: ScriptedAdapter(<String, ScriptedResponse>{}), local: local),
+      extraOverrides: updateTestOverrides(
+        adapter: ScriptedAdapter(<String, ScriptedResponse>{}),
+        local: local,
+      ),
     ),
   );
   await tester.pumpAndSettle();
@@ -57,15 +66,17 @@ void main() {
   });
 
   group('块一 · 数据来源署名（原型 §11.3）', () {
-    testWidgets('版权归属 / 离线整理不商用 / 溯源口径 / 快照与数据截至日 / 删除通道', (WidgetTester tester) async {
+    testWidgets('版权归属 / 离线整理不商用 / 溯源口径 / 快照与数据截至日 / 删除通道', (
+      WidgetTester tester,
+    ) async {
       await pumpAbout(tester);
 
       expect(find.textContaining('百度贴吧各扫书相关吧'), findsOneWidget);
       expect(find.textContaining('版权归原作者与发帖人所有'), findsOneWidget);
-      expect(find.textContaining('供个人学习研究使用'), findsOneWidget);
+      expect(find.textContaining('供个人学习研究'), findsOneWidget);
       expect(find.textContaining('不商用、不声称拥有任何内容版权'), findsOneWidget);
       expect(find.textContaining('不提供原帖全文的批量导出'), findsOneWidget);
-      expect(find.textContaining('复制跳回贴吧溯源'), findsOneWidget);
+      expect(find.textContaining('复制链接跳回贴吧溯源'), findsOneWidget);
       expect(find.textContaining('原帖已不可溯源'), findsOneWidget);
       expect(find.textContaining('一次性快照'), findsOneWidget);
       expect(find.textContaining('数据截至 $kDemoCutoff'), findsOneWidget);
@@ -74,11 +85,13 @@ void main() {
   });
 
   group('块二 · 贴吧服务条款与使用提示（原型 §11.4）', () {
-    testWidgets('非官方逆向接口 / 不保证可用 / 三重频控 / 不压测不商用 / 风险自担', (WidgetTester tester) async {
+    testWidgets('非官方逆向接口 / 不保证可用 / 三重频控 / 不压测不商用 / 风险自担', (
+      WidgetTester tester,
+    ) async {
       await pumpAbout(tester);
 
       expect(find.textContaining('非官方逆向接口'), findsOneWidget);
-      expect(find.textContaining('违反贴吧服务条款的可能性存在'), findsOneWidget);
+      expect(find.textContaining('有可能违反贴吧服务条款'), findsOneWidget);
       expect(find.textContaining('接口随时可能变更或失效'), findsOneWidget);
       expect(find.textContaining('全局限速'), findsOneWidget);
       expect(find.textContaining('每日预算'), findsOneWidget);
@@ -90,25 +103,38 @@ void main() {
     testWidgets('频控数字由 scheduler 常量内插（改常量即改文案）', (WidgetTester tester) async {
       await pumpAbout(tester);
 
-      expect(find.textContaining('匿名档 1.5–3.0 秒、BDUSS 档 1.0–2.0 秒随机抖动'), findsOneWidget);
+      expect(
+        find.textContaining('匿名档为 1.5–3.0 秒，BDUSS 档为 1.0–2.0 秒，并在区间内随机抖动'),
+        findsOneWidget,
+      );
       expect(find.textContaining('每日最多 300 次请求'), findsOneWidget);
       expect(find.textContaining('账号档提高到 600 次'), findsOneWidget);
-      expect(find.textContaining('按 30 / 60 / 120 秒退避、最多重试 3 次'), findsOneWidget);
+      expect(
+        find.textContaining('按 30 / 60 / 120 秒退避，最多重试 3 次'),
+        findsOneWidget,
+      );
       expect(find.textContaining('连续失败 3 次进入 48 小时冷却'), findsOneWidget);
-      expect(find.textContaining('全局连续失败 3 次整轮暂停'), findsOneWidget);
+      expect(find.textContaining('全局连续失败 3 次会暂停整轮采集'), findsOneWidget);
       expect(find.textContaining('默认 2、上限 匿名 3 / BDUSS 档 4'), findsOneWidget);
     });
   });
 
   group('块三 · BDUSS 与隐私声明（原型 §11.2 / §8.10）', () {
-    testWidgets('凭证可选导入 / 仅本地加密 / 只管身份与配额 / 可清除 / 本地数据不出设备', (WidgetTester tester) async {
+    testWidgets('凭证可选导入 / 仅本地加密 / 只管身份与配额 / 可清除 / 本地数据不出设备', (
+      WidgetTester tester,
+    ) async {
       await pumpAbout(tester);
 
-      expect(find.textContaining('账号凭证（BDUSS）为可选'), findsOneWidget);
+      expect(find.textContaining('BDUSS 是可选的账号凭证'), findsOneWidget);
       expect(find.textContaining('不导入时全程匿名'), findsOneWidget);
       expect(find.textContaining('只填 BDUSS，不要填账号密码'), findsOneWidget);
       expect(find.textContaining('flutter_secure_storage'), findsOneWidget);
-      expect(find.textContaining('Android Keystore / iOS Keychain'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Windows 凭据管理器 / Android Keystore / Apple 平台 Keychain',
+        ),
+        findsOneWidget,
+      );
       expect(find.textContaining('不落明文、不写日志、不进数据库'), findsOneWidget);
       expect(find.textContaining('每日请求配额 300 → 600'), findsOneWidget);
       expect(find.textContaining('可随时在设置页一键清除'), findsOneWidget);
@@ -159,7 +185,7 @@ void main() {
       await pumpSettingsWithRouter(tester);
 
       expect(find.text('关于与合规'), findsOneWidget);
-      expect(find.text('数据来源署名 · 贴吧 ToS 提示 · BDUSS 与隐私'), findsOneWidget);
+      expect(find.text('数据来源署名 · 贴吧使用提示 · BDUSS 与隐私'), findsOneWidget);
 
       await tester.tap(find.text('关于与合规'));
       await tester.pumpAndSettle();
@@ -174,7 +200,10 @@ void main() {
       await pumpSettingsWithRouter(tester);
 
       expect(find.text('BDUSS 导入'), findsOneWidget);
-      expect(find.text('匿名模式 · 每日配额 300 · 导入后 600 · 详见「关于与合规」'), findsOneWidget);
+      expect(
+        find.text('匿名模式 · 每日配额 300 · 导入后 600 · 详见「关于与合规」'),
+        findsOneWidget,
+      );
     });
   });
 }

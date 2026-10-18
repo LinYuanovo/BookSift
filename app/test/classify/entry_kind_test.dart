@@ -7,6 +7,7 @@
 
 import 'package:booksift/classify/classifier.dart' show PostKind;
 import 'package:booksift/classify/src/engine.dart';
+import 'package:booksift/data/repo/queries.dart' show Queries;
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -16,6 +17,15 @@ void main() {
       expect(entryKindLabel(category: '排雷', flag: 1), kRecommendKind);
       expect(entryKindLabel(category: '扫书', flag: -1), PostKind.mine);
       expect(entryKindLabel(category: '求书', flag: -1), PostKind.mine);
+      expect(
+        entryKindLabel(
+          category: '排雷',
+          flag: -1,
+          bookGrade: '#FF0000',
+          title: '作者避雷不错',
+        ),
+        PostKind.mine,
+      );
     });
 
     test('无标记按标题：推书词 → 推书档（「明确是推书却显示为扫书」的修复点）', () {
@@ -45,11 +55,7 @@ void main() {
         kRecommendKind,
       );
       expect(
-        entryKindLabel(
-          category: '扫书',
-          flag: 0,
-          title: '个人向连载多女主文书单推荐，外加简扫',
-        ),
+        entryKindLabel(category: '扫书', flag: 0, title: '个人向连载多女主文书单推荐，外加简扫'),
         kRecommendKind,
       );
     });
@@ -63,6 +69,86 @@ void main() {
         entryKindLabel(category: '扫书', flag: 0, title: '避雷贴汇总'),
         PostKind.mine,
       );
+    });
+
+    test('避雷语境按评价对象区分推荐、元讨论与书籍排雷', () {
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '作者避雷不错'),
+        kRecommendKind,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '作者的避雷建议不靠谱'),
+        PostKind.mine,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '作者避雷不错个鬼'),
+        PostKind.mine,
+      );
+      expect(
+        entryKindLabel(category: '排雷', flag: -1, title: '作者的避雷建议不靠谱'),
+        PostKind.mine,
+      );
+      expect(
+        entryKindLabel(category: '排雷', flag: -1, title: '作者避雷不错'),
+        kRecommendKind,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '不是排雷，是推荐这本'),
+        kRecommendKind,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '不排雷，而是推荐这本'),
+        kRecommendKind,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '没有避雷，是来扫书的'),
+        PostKind.scan,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '反向避雷，安利这本'),
+        kRecommendKind,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '排雷？不存在的，推荐这本'),
+        kRecommendKind,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '《某书》不是很雷'),
+        PostKind.scan,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '作者避雷不错，但《某书》主角很雷'),
+        PostKind.mine,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '排雷《某书》主角降智，慎入'),
+        PostKind.mine,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '扫书合集'),
+        PostKind.scan,
+      );
+    });
+
+    test('SQL 聚合载荷沿用相同的语境分类结果', () {
+      expect(Queries.kindCountsOf('排雷\u001f-1\u001f作者避雷不错\u001f'), (0, 1, 0));
+      expect(Queries.kindCountsOf('扫书\u001f0\u001f排雷《某书》主角降智，慎入\u001f'), (
+        0,
+        0,
+        1,
+      ));
+      expect(Queries.kindCountsOf('扫书\u001f0\u001f作者的避雷建议不靠谱\u001f'), (
+        0,
+        0,
+        1,
+      ));
+      expect(Queries.kindCountsOf('扫书\u001f0\u001f作者避雷不错个鬼\u001f'), (0, 0, 1));
+      expect(Queries.kindCountsOf('扫书\u001f0\u001f扫书合集\u001f'), (1, 0, 0));
+      expect(Queries.kindCountsOf('排雷\u001f-1\u001f作者避雷不错\u001f#FF0000'), (
+        0,
+        0,
+        1,
+      ));
     });
 
     test('求书类别保留求书档；其余（含纯扫书 / 无标题）归扫书', () {

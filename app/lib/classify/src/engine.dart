@@ -37,7 +37,8 @@ List<String> extractBooknamesImpl(String text) {
   final Set<String> seen = <String>{};
   var i = 0;
   while (i < runes.length) {
-    if (runes[i] != 0x300A) { // 《
+    if (runes[i] != 0x300A) {
+      // 《
       i++;
       continue;
     }
@@ -46,11 +47,13 @@ List<String> extractBooknamesImpl(String text) {
     // 》 最远可在 i+41（40 个内容码点之后）
     for (var j = i + 1; j <= i + 41 && j < runes.length; j++) {
       final int r = runes[j];
-      if (r == 0x300B) { // 》
+      if (r == 0x300B) {
+        // 》
         end = j;
         break;
       }
-      if (r == 0x300A || r == 0x0D || r == 0x0A) { // 《 \r \n
+      if (r == 0x300A || r == 0x0D || r == 0x0A) {
+        // 《 \r \n
         bad = true;
         break;
       }
@@ -60,8 +63,9 @@ List<String> extractBooknamesImpl(String text) {
       i++;
       continue;
     }
-    final String name =
-        pyStrip(String.fromCharCodes(runes, i + 1, end)); // .strip()
+    final String name = pyStrip(
+      String.fromCharCodes(runes, i + 1, end),
+    ); // .strip()
     i = end + 1;
     if (name.isEmpty) continue;
     final String key = pyRemoveAllWs(name); // re.sub(r"\s+", "", name)
@@ -86,8 +90,11 @@ String _stripDefensive(String foldedText) {
 
 /// 返回第一个命中的 pattern（= _v2_first，行 932–940）。
 /// [skip] 内的 pattern 跳过（v3 G2：循环证据作废）。
-PyRegex? _firstHit(List<PyRegex> pats, String foldedText,
-    [Set<String> skip = const <String>{}]) {
+PyRegex? _firstHit(
+  List<PyRegex> pats,
+  String foldedText, [
+  Set<String> skip = const <String>{},
+]) {
   for (final PyRegex p in pats) {
     if (skip.contains(p.source)) continue;
     if (p.hasMatch(foldedText)) return p;
@@ -133,16 +140,18 @@ _MineOutcome _contentMine(
   final Set<String> skip = anchor
       ? const <String>{}
       : _v3CircularPats(
-          v3NormTextImpl('$rawTitle\n$rawFirstFloor'), dict.evidenceNames);
+          v3NormTextImpl('$rawTitle\n$rawFirstFloor'),
+          dict.evidenceNames,
+        );
   var deferred = '';
   // 行 977–980：四组证据按强度顺序
-  for (final (List<PyRegex> group, String tag, bool soft) in <
-      (List<PyRegex>, String, bool)>[
-    (v2MineTerms, '雷术语', true),
-    (v2MineTermsWeak, '弱雷术语', true),
-    (v2MineWords, '雷词', false),
-    (v2NegWords, '负评词', false),
-  ]) {
+  for (final (List<PyRegex> group, String tag, bool soft)
+      in <(List<PyRegex>, String, bool)>[
+        (v2MineTerms, '雷术语', true),
+        (v2MineTermsWeak, '弱雷术语', true),
+        (v2MineWords, '雷词', false),
+        (v2NegWords, '负评词', false),
+      ]) {
     final PyRegex? p = _firstHit(group, f, skip);
     if (p == null) continue;
     // 报告体让位（行 989–991）：软证据在冒号字段≥3 时让位给 2b——
@@ -239,8 +248,9 @@ int _questionMarks(String foldedText) {
 /// 仅在"锚点只来自词典"时调用（《》锚点帖沿用 v2 口径）。
 Set<String> _v3CircularPats(String textNorm, Set<String> evidenceNames) {
   if (evidenceNames.isEmpty) return const <String>{};
-  final List<String> mentioned =
-      evidenceNames.where(textNorm.contains).toList(growable: false);
+  final List<String> mentioned = evidenceNames
+      .where(textNorm.contains)
+      .toList(growable: false);
   if (mentioned.isEmpty) return const <String>{};
   final Set<String> bad = <String>{};
   for (final List<PyRegex> group in <List<PyRegex>>[
@@ -262,8 +272,12 @@ Set<String> _v3CircularPats(String textNorm, Set<String> evidenceNames) {
 // 两级分类核心（= _classify_core，行 1184–1310）
 // ============================================================================
 
-ClassifyResult _result(String? kind, List<String> hitRules,
-    List<String> booknames, String dictAnchor) {
+ClassifyResult _result(
+  String? kind,
+  List<String> hitRules,
+  List<String> booknames,
+  String dictAnchor,
+) {
   return ClassifyResult(
     kind: kind,
     flag: kind == null ? 0 : kindFlag[kind]!,
@@ -294,16 +308,21 @@ ClassifyResult _classifyCore(
   final bool meta = metaTitle || metaContent; // 行 1202
   final bool blocked = v2SeekTitleBlock.hasMatch(ft); // 行 1204
   final bool share = v2ShareTitle.hasMatch(ft); // 行 1206
-  final bool questionTitle =
-      v2TitleQuestion.hasMatch(pyRstrip(ft, titleRstripChars)); // 行 1208
+  final bool questionTitle = v2TitleQuestion.hasMatch(
+    pyRstrip(ft, titleRstripChars),
+  ); // 行 1208
   final String titleClean = _stripDefensive(ft); // 行 1209
 
   // ---------- 第一级：标题意图 ----------
   // 1A 标题起首排雷（最强，行 1213–1216）
   final Match? m1a = v2MineTitlePrefix.firstMatch(titleClean);
   if (m1a != null) {
-    return _result(PostKind.mine, <String>['T1a:标题起首~${m1a.group(1)}'],
-        booknames, dictAnchor);
+    return _result(
+      PostKind.mine,
+      <String>['T1a:标题起首~${m1a.group(1)}'],
+      booknames,
+      dictAnchor,
+    );
   }
 
   if (!metaTitle) {
@@ -326,16 +345,24 @@ ClassifyResult _classifyCore(
     // 1C 标题任意位置排雷（极性过滤后匹配；首中即返回，行 1234–1237）
     for (final Rule rule in v2MineTitleAny) {
       if (rule.hasMatch(titleClean)) {
-        return _result(PostKind.mine, <String>['T1c:标题含雷~${rule.name}'],
-            booknames, dictAnchor);
+        return _result(
+          PostKind.mine,
+          <String>['T1c:标题含雷~${rule.name}'],
+          booknames,
+          dictAnchor,
+        );
       }
     }
     if (!questionTitle) {
       // 1C 社区雷术语（疑问标题门控，行 1238–1242）
       for (final Rule rule in v2MineTitleTerms) {
         if (rule.hasMatch(titleClean)) {
-          return _result(PostKind.mine, <String>['T1c:标题雷术语~${rule.name}'],
-              booknames, dictAnchor);
+          return _result(
+            PostKind.mine,
+            <String>['T1c:标题雷术语~${rule.name}'],
+            booknames,
+            dictAnchor,
+          );
         }
       }
     }
@@ -356,8 +383,16 @@ ClassifyResult _classifyCore(
   final int nField = _scanFields(ff); // 行 1254
 
   // 2a 排雷（结构证据 或 (《》/指代锚点 或 v3 词典锚点) + 极性过滤后的雷/负评词）
-  final _MineOutcome mine =
-      _contentMine(ft, ff, title, firstFloor, metaContent, nField, dictHits, dict);
+  final _MineOutcome mine = _contentMine(
+    ft,
+    ff,
+    title,
+    firstFloor,
+    metaContent,
+    nField,
+    dictHits,
+    dict,
+  );
   if (mine.mine) {
     return _result(PostKind.mine, <String>[mine.rule], booknames, dictAnchor);
   }
@@ -373,22 +408,32 @@ ClassifyResult _classifyCore(
     final PyRegex? p = _firstHit(v2SeekContent, ff);
     if (p != null) {
       return _result(
-          PostKind.seek, <String>['T2c:首楼求书~${p.source}'], booknames, dictAnchor);
+        PostKind.seek,
+        <String>['T2c:首楼求书~${p.source}'],
+        booknames,
+        dictAnchor,
+      );
     }
   }
 
   // 2b弱 行首书名行≥2（行 1275–1277）
   if (tpl.weak && !metaTitle) {
-    return _result(PostKind.scan, <String>['T2b:行首书名行≥2'], booknames, dictAnchor);
+    return _result(
+      PostKind.scan,
+      <String>['T2b:行首书名行≥2'],
+      booknames,
+      dictAnchor,
+    );
   }
 
   // 2d 书名数≥阈值（意图门控，行 1279–1283）
   if (booknames.length >= v2BooknameMin) {
     return _result(
-        PostKind.scan,
-        <String>['T2d:书名数=${booknames.length}>=$v2BooknameMin'],
-        booknames,
-        dictAnchor);
+      PostKind.scan,
+      <String>['T2d:书名数=${booknames.length}>=$v2BooknameMin'],
+      booknames,
+      dictAnchor,
+    );
   }
 
   // 2e 单本正向分享（书名数≤2 + 《》起头或短标题 + 首楼无负评/雷证据，行 1285–1295）
@@ -398,8 +443,12 @@ ClassifyResult _classifyCore(
       !_hasNegative(ff)) {
     for (final PyRegex cue in v2SingleShareCue) {
       if (cue.hasMatch(ff)) {
-        return _result(PostKind.scan, <String>['T2e:单本正向分享~${cue.source}'],
-            booknames, dictAnchor);
+        return _result(
+          PostKind.scan,
+          <String>['T2e:单本正向分享~${cue.source}'],
+          booknames,
+          dictAnchor,
+        );
       }
     }
   }
@@ -411,18 +460,30 @@ ClassifyResult _classifyCore(
       _questionMarks(ff) >= v2QuestionMinMarks &&
       v2QuestionTokens.hasMatch(ff)) {
     return _result(
-        PostKind.seek, <String>['T2f:短首楼疑问句'], booknames, dictAnchor);
+      PostKind.seek,
+      <String>['T2f:短首楼疑问句'],
+      booknames,
+      dictAnchor,
+    );
   }
 
   // G4 回流：仅词典锚点 + 术语级软证据在 2b~2f 都没接管时，仍按排雷入库（行 1305–1308）
   if (mine.deferred.isNotEmpty) {
     return _result(
-        PostKind.mine, <String>[mine.deferred], booknames, dictAnchor);
+      PostKind.mine,
+      <String>[mine.deferred],
+      booknames,
+      dictAnchor,
+    );
   }
 
   // 闲聊（行 1310）
   return _result(
-      null, <String>['闲聊:无命中(书名数=${booknames.length})'], booknames, dictAnchor);
+    null,
+    <String>['闲聊:无命中(书名数=${booknames.length})'],
+    booknames,
+    dictAnchor,
+  );
 }
 
 /// 条目三分类型（扫书 / 推书 / 排雷）：书卡「x扫书 x推荐 x排雷」计数与条目徽标共用。
@@ -434,27 +495,104 @@ ClassifyResult _classifyCore(
 ///   ③ 标题排雷词 → 排雷档（无标记的排雷帖条目靠这条归位）；
 ///   ④ 标题推书词 → 推书档（「推荐/推书/安利…」，修复「明确是推书仍显示为扫书」）；
 ///   ⑤ 类别=求书  → 求书（保留灰徽标语义）；⑥ 其余 → 扫书。
+final RegExp _entryAvoidanceReview = RegExp(
+  r'(?:作者|楼主|书友|读者)[^，,。！？!?；;]{0,6}(?:排雷|避雷)'
+  r'(?:建议|说明|提醒|说法)?[^，,。！？!?；;]{0,6}'
+  r'(?:不错|很好|挺好|很棒|靠谱|到位|专业|有用|准确|及时|负责|细致|不靠谱|不好|不行|不准确|不恰当|没用|无用|错误|太差|很差|离谱)',
+);
+
+final RegExp _entryPositiveAvoidanceReview = RegExp(
+  r'(?:作者|楼主|书友|读者)[^，,。！？!?；;]{0,6}(?:排雷|避雷)'
+  r'(?:建议|说明|提醒|说法)?[^，,。！？!?；;]{0,6}'
+  r'(?:不错|很好|挺好|很棒|靠谱|到位|专业|有用|准确|及时|负责|细致)',
+);
+
+final RegExp _entryNegativeAvoidanceReview = RegExp(
+  r'(?:作者|楼主|书友|读者)[^，,。！？!?；;]{0,6}(?:排雷|避雷)'
+  r'(?:建议|说明|提醒|说法)?[^，,。！？!?；;]{0,6}'
+  r'(?:不靠谱|不好|不行|不准确|不恰当|没用|无用|错误|太差|很差|离谱)',
+);
+
+final RegExp _entrySarcasticReview = RegExp(
+  r'(?:不错|很好|挺好|很棒|靠谱|到位|专业|有用|准确|推荐|安利)[^，,。！？!?；;]{0,6}'
+  r'(?:个鬼|才怪|才不是|才没有|别信|假的|呵呵|笑死)',
+);
+
+final RegExp _entryNegatedMineMention = RegExp(
+  r'(?:并没有|没有|不是|并非|不算|无需|不需要|没必要|不打算|不想|不做|别|不必|不用|不|没|未)'
+  r'[^，,。！？!?；;]{0,4}(?:排雷|避雷|踩雷|扫雷)(?:建议|帖|贴)?'
+  r'|(?:排雷|避雷|踩雷|扫雷)[？?，,]?[^，,。！？!?；;]{0,6}'
+  r'(?:才怪|才不是|才没有|不存在|是假的|都是假的)',
+);
+
+final RegExp _entryNonBookMineMention = RegExp(
+  r'(?:反向|反着)(?:排雷|避雷|踩雷|扫雷)'
+  r'|(?:作者|楼主|书友|读者)[^，,。！？!?；;]{0,6}'
+  r'(?:排雷|避雷|踩雷|扫雷)(?:建议|说明|提醒|说法|清单|帖|贴)?'
+  r'|(?:排雷|避雷|踩雷|扫雷)(?:这位|这个|该)?(?:作者|楼主|书友|读者)',
+);
+
+final RegExp _entryBookNegativeEvaluation = RegExp(
+  r'(?:《[^》]{1,40}》|这本(?:书)?|本书|这部(?:小说|作品))'
+  r'[^，,。！？!?；;]{0,12}(?:很|太|真|有点|非常|实在|简直)?'
+  r'(?:雷|毒|烂|降智|恶心|难绷|难蚌|垃圾|劝退)(?:啊|了|至极)?',
+);
+
+final RegExp _entryNegatedBookNegativeEvaluation = RegExp(
+  r'(?:《[^》]{1,40}》|这本(?:书)?|本书|这部(?:小说|作品))'
+  r'[^，,。！？!?；;]{0,12}(?:不是|并非|不算|没那么|不怎么|不太)'
+  r'(?:很|太|真|有点|非常|实在|简直)?'
+  r'(?:雷|毒|烂|降智|恶心|难绷|难蚌|垃圾|劝退)',
+);
+
 String entryKindLabel({
   required String category,
   required int flag,
   String? title,
+  String? bookGrade,
 }) {
   if (flag == 1) {
     return kRecommendKind;
   }
-  if (flag == -1) {
+  final String ft = foldText(title ?? '');
+  final String titleClean = _stripDefensive(ft);
+  final bool avoidanceMeta =
+      _entryAvoidanceReview.hasMatch(ft) ||
+      _entryNegatedMineMention.hasMatch(ft) ||
+      _entryNonBookMineMention.hasMatch(ft);
+  final bool negativeAvoidanceReview =
+      _entryNegativeAvoidanceReview.hasMatch(ft) ||
+      (_entrySarcasticReview.hasMatch(ft) && avoidanceMeta);
+  if (negativeAvoidanceReview) {
     return PostKind.mine;
   }
-  final String ft = foldText(title ?? '');
+  if (flag == -1 && (bookGrade == '#FF0000' || !avoidanceMeta)) {
+    return PostKind.mine;
+  }
   if (ft.isNotEmpty) {
-    final String titleClean = _stripDefensive(ft);
-    if (v2MineTitlePrefix.hasMatch(titleClean)) {
+    // 避雷词可能在评价「作者的避雷建议」，或被否定/反向表达；先剔除这类
+    // 非书籍排雷语境，再判断剩下的线索，避免一个词盖过标题里的真正对象。
+    final String mineProbe = titleClean
+        .replaceAll(_entryAvoidanceReview, '')
+        .replaceAll(_entryNegatedMineMention, '')
+        .replaceAll(_entryNonBookMineMention, '');
+    final String bookReviewProbe = titleClean.replaceAll(
+      _entryNegatedBookNegativeEvaluation,
+      '',
+    );
+    final bool hasBookNegative = _entryBookNegativeEvaluation.hasMatch(
+      bookReviewProbe,
+    );
+    if (hasBookNegative || v2MineTitlePrefix.hasMatch(mineProbe)) {
       return PostKind.mine;
     }
     for (final Rule rule in v2MineTitleAny) {
-      if (rule.hasMatch(titleClean)) {
+      if (rule.hasMatch(mineProbe)) {
         return PostKind.mine;
       }
+    }
+    if (_entryPositiveAvoidanceReview.hasMatch(ft)) {
+      return kRecommendKind;
     }
     for (final Rule rule in recommendTitlePatterns) {
       if (rule.hasMatch(ft)) {

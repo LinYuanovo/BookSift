@@ -10,6 +10,13 @@ tools/*
 !tools/run_tests_safe.ps1
 !tools/make_release.ps1
 !tools/make_release_linux.sh
+!tools/pack_classifier_sources.ps1
+!tools/classifier_pack/
+tools/classifier_pack/*
+!tools/classifier_pack/README.md
+!tools/classifier_pack/test/
+tools/classifier_pack/test/*
+!tools/classifier_pack/test/entry_kind_smoke.dart
 
 # ---- 构建产物与缓存 ----
 app/build/
