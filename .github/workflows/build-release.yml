@@ -1,0 +1,455 @@
+# 扫书汇 BookSift —— 五平台 release 打包 + GitHub Release 发布
+#
+# 触发：
+#   - 推送 v* tag（如 v1.0.0）：最常见的发布路径
+#   - Actions 页面手动触发并填版本号（不带 v）；tag 不存在时由 action 基于当前提交创建
+#
+# 产物（命名与 tools/make_release.ps1 / make_release_linux.sh、App 内更新检查契约一致）：
+#   android-v<版本>.apk          + .sha256        Android（minSdk 24）
+#   ios-v<版本>.ipa              + .sha256        iOS（未签名，需接收者自行签名）
+#   windows-x64-v<版本>.zip      + .sha256        Windows 10/11 x64
+#   macos-universal-v<版本>.zip  + .sha256        macOS（arm64 + x86_64，未签名）
+#   linux-x64-v<版本>.tar.gz     + .sha256        Linux x64（Ubuntu 22.04+，GTK3 / libsecret）
+#
+# Release 的 tag 必须是 v<版本> 且与 app/pubspec.yaml 的 version 一致：
+# App 的更新检查用 GitHub Releases 的 tag_name 与本地 versionName 比对，对不上会判不出新版本。
+#
+# Android release 签名：配置 4 个 Secrets（ANDROID_KEYSTORE_BASE64 / ANDROID_STORE_PASSWORD /
+# ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD）即自动签名；未配置时按 app/android/app/build.gradle.kts
+# 的既有约定回退 debug 签名（能装、不能分发）。
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（不带 v，如 1.0.0；须与 app/pubspec.yaml 的 version 一致）'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# 同一 tag / 分支同时只跑一条发布流水线；进行中的不取消，避免产物与 Release 半途而废
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: 解析并校验版本号
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析 tag / 输入，并与 pubspec.yaml 对齐
+        id: resolve
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          raw="${INPUT_VERSION:-${GITHUB_REF_NAME}}"
+          version="${raw#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::版本号格式非法：$raw（期望 v1.0.0 或 1.0.0）"
+            exit 1
+          fi
+          pubspec="$(sed -n 's/^version:[[:space:]]*\([^+ ]*\).*/\1/p' app/pubspec.yaml | head -n1)"
+          if [ "$pubspec" != "$version" ]; then
+            echo "::error::版本不一致：tag/输入为 $version，app/pubspec.yaml 为 $pubspec。应用产物版本由 pubspec 决定，只改 tag 会让 App 更新检查失效。"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "版本 $version（与 app/pubspec.yaml 一致）"
+
+  android:
+    name: Android APK
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      # 空串 = 未配置签名 Secrets，走 debug 签名回退
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: 写入 release 签名配置（已配置 Secrets 时）
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        working-directory: app/android
+        env:
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          # key.properties 由 android/ 读取；storeFile 相对 android/app/ 解析（见 build.gradle.kts）
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/booksift-release.jks
+          cat > key.properties <<EOF
+          storeFile=booksift-release.jks
+          storePassword=$ANDROID_STORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
+      - name: flutter build apk --release
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: 组装产物（契约文件名 + sha256）
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp app/build/app/outputs/flutter-apk/app-release.apk "dist/android-v${VERSION}.apk"
+          (cd dist && sha256sum "android-v${VERSION}.apk" | cut -d' ' -f1 > "android-v${VERSION}.apk.sha256")
+          ls -l dist
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows zip
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      - name: Enable Windows desktop
+        run: flutter config --enable-windows-desktop
+
+      - name: flutter pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: flutter build windows --release
+        working-directory: app
+        run: flutter build windows --release
+
+      - name: 打包 zip + sha256
+        shell: pwsh
+        run: |
+          $pkg = "windows-x64-v$env:VERSION"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path app/build/windows/x64/runner/Release/* -DestinationPath "dist/$pkg.zip"
+          $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$pkg.zip").Hash.ToLower()
+          Set-Content -LiteralPath "dist/$pkg.zip.sha256" -Value $sha -Encoding ascii
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    name: Linux tar.gz
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      - name: 安装 Linux 桌面构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config lld binutils \
+            libgtk-3-dev libsecret-1-dev liblzma-dev libstdc++-12-dev
+
+      - name: flutter pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: flutter build linux --release
+        working-directory: app
+        run: flutter build linux --release
+
+      - name: 产物闸门 + 打包 tar.gz + sha256
+        run: |
+          set -euo pipefail
+          bundle=app/build/linux/x64/release/bundle
+          test -x "$bundle/booksift" || { echo "::error::缺可执行文件 $bundle/booksift"; exit 1; }
+          test -f "$bundle/lib/libsqlite3.so" || { echo "::error::缺 $bundle/lib/libsqlite3.so（sqlite3 native assets 未产出）"; exit 1; }
+          test -d "$bundle/data/flutter_assets" || { echo "::error::缺 $bundle/data/flutter_assets"; exit 1; }
+          pkg="linux-x64-v${VERSION}"
+          mkdir -p dist
+          tar -czf "dist/$pkg.tar.gz" -C app/build/linux/x64/release --transform "s,^bundle,$pkg," bundle
+          sha256sum "dist/$pkg.tar.gz" | cut -d' ' -f1 > "dist/$pkg.tar.gz.sha256"
+          tar -tzf "dist/$pkg.tar.gz" | head -n 5
+          ls -l dist
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tarball
+          path: dist/*
+          if-no-files-found: error
+
+  ios:
+    name: iOS unsigned IPA
+    needs: version
+    runs-on: macos-14
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      - name: flutter pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: flutter build ios --release --no-codesign
+        working-directory: app
+        run: flutter build ios --release --no-codesign
+
+      - name: 组装未签名 IPA + sha256
+        run: |
+          set -euo pipefail
+          app_path="app/build/ios/iphoneos/Runner.app"
+          test -d "$app_path" || { echo "::error::缺 iOS 构建产物 $app_path"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ios-package/Payload" dist
+          ditto "$app_path" "$RUNNER_TEMP/ios-package/Payload/Runner.app"
+          (cd "$RUNNER_TEMP/ios-package" && ditto -c -k --sequesterRsrc --keepParent Payload "$GITHUB_WORKSPACE/dist/ios-v${VERSION}.ipa")
+          shasum -a 256 "dist/ios-v${VERSION}.ipa" | awk '{print tolower($1)}' > "dist/ios-v${VERSION}.ipa.sha256"
+          ls -l dist
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa
+          path: dist/ios-v*
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal zip
+    needs: version
+    runs-on: macos-14
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.41.9'
+          channel: stable
+          cache: true
+
+      - name: Enable macOS desktop
+        run: flutter config --enable-macos-desktop
+
+      - name: Generate macOS Runner in the CI checkout
+        working-directory: app
+        run: |
+          if [ ! -f macos/Runner.xcodeproj/project.pbxproj ]; then
+            flutter create --platforms macos --org com.linyuan.booksift --project-name booksift .
+          fi
+          test -f macos/Runner/Configs/AppInfo.xcconfig || { echo "::error::缺 macOS AppInfo.xcconfig"; exit 1; }
+          perl -0pi -e 's/^PRODUCT_NAME = .*$/PRODUCT_NAME = 扫书汇/m; s/^PRODUCT_BUNDLE_IDENTIFIER = .*$/PRODUCT_BUNDLE_IDENTIFIER = com.linyuan.booksift.macos/m' macos/Runner/Configs/AppInfo.xcconfig
+          grep -Fx 'PRODUCT_NAME = 扫书汇' macos/Runner/Configs/AppInfo.xcconfig
+          grep -Fx 'PRODUCT_BUNDLE_IDENTIFIER = com.linyuan.booksift.macos' macos/Runner/Configs/AppInfo.xcconfig
+
+      - name: flutter pub get
+        working-directory: app
+        run: flutter pub get
+
+      - name: flutter build macos --release
+        working-directory: app
+        env:
+          FLUTTER_XCODE_CODE_SIGNING_ALLOWED: 'NO'
+          FLUTTER_XCODE_CODE_SIGNING_REQUIRED: 'NO'
+          FLUTTER_XCODE_CODE_SIGN_IDENTITY: ''
+          FLUTTER_XCODE_PRODUCT_NAME: 扫书汇
+          FLUTTER_XCODE_PRODUCT_BUNDLE_IDENTIFIER: com.linyuan.booksift.macos
+        run: flutter build macos --release
+
+      - name: 验证 universal app，打包 zip + sha256
+        run: |
+          set -euo pipefail
+          products="app/build/macos/Build/Products/Release"
+          app_path="$(find "$products" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          test -n "$app_path" && test -d "$app_path" || { echo "::error::Release 目录中没有 .app：$products"; exit 1; }
+          bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_path/Contents/Info.plist")"
+          test "$bundle_id" = 'com.linyuan.booksift.macos' || { echo "::error::Bundle ID 异常：$bundle_id"; exit 1; }
+          bundle_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$app_path/Contents/Info.plist")"
+          test "$bundle_name" = '扫书汇' || { echo "::error::应用名称异常：$bundle_name"; exit 1; }
+          executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app_path/Contents/Info.plist")"
+          binary="$app_path/Contents/MacOS/$executable"
+          test -f "$binary" || { echo "::error::缺 macOS 可执行文件 $binary"; exit 1; }
+          while IFS= read -r -d '' candidate; do
+            if /usr/bin/file -b "$candidate" | /usr/bin/grep -q 'Mach-O'; then
+              archs="$(lipo -archs "$candidate")"
+              echo "$candidate: $archs"
+              [[ " $archs " == *" arm64 "* ]] || { echo "::error::缺 arm64 架构：$candidate"; exit 1; }
+              [[ " $archs " == *" x86_64 "* ]] || { echo "::error::缺 x86_64 架构：$candidate"; exit 1; }
+            fi
+          done < <(find "$app_path" -type f -print0)
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/macos-universal-v${VERSION}.zip"
+          shasum -a 256 "dist/macos-universal-v${VERSION}.zip" | awk '{print tolower($1)}' > "dist/macos-universal-v${VERSION}.zip.sha256"
+          ls -l dist
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-universal-zip
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: 创建 GitHub Release
+    needs: [version, android, windows, linux, ios, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载全部产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 生成带真实摘要的 version.json
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          version_code="$(sed -nE 's/^version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\+([0-9]+).*$/\1/p' app/pubspec.yaml | head -n1)"
+          [ -n "$version_code" ] || { echo "::error::无法从 app/pubspec.yaml 解析 version_code"; exit 1; }
+          sha_for() {
+            local file="$1"
+            local value
+            value="$(tr -d '[:space:]\r\n' < "artifacts/$file.sha256")"
+            [[ "$value" =~ ^[0-9a-fA-F]{64}$ ]] || {
+              echo "::error::摘要文件格式异常：artifacts/$file.sha256"
+              exit 1
+            }
+            printf '%s' "${value,,}"
+          }
+          apk_sha="$(sha_for "android-v${VERSION}.apk")"
+          ios_sha="$(sha_for "ios-v${VERSION}.ipa")"
+          windows_sha="$(sha_for "windows-x64-v${VERSION}.zip")"
+          macos_sha="$(sha_for "macos-universal-v${VERSION}.zip")"
+          linux_sha="$(sha_for "linux-x64-v${VERSION}.tar.gz")"
+          cat > artifacts/version.json <<JSON
+          {
+            "app": {
+              "version": "${VERSION}",
+              "version_code": ${version_code},
+              "notes": "",
+              "min_force": "",
+              "apk_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/android-v${VERSION}.apk",
+              "apk_sha256": "${apk_sha}",
+              "ios_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/ios-v${VERSION}.ipa",
+              "ios_sha256": "${ios_sha}",
+              "windows_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/windows-x64-v${VERSION}.zip",
+              "windows_sha256": "${windows_sha}",
+              "macos_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/macos-universal-v${VERSION}.zip",
+              "macos_sha256": "${macos_sha}",
+              "linux_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/linux-x64-v${VERSION}.tar.gz",
+              "linux_sha256": "${linux_sha}"
+            }
+          }
+          JSON
+          python3 -m json.tool artifacts/version.json >/dev/null
+          cat artifacts/version.json
+
+      - name: 组装 Release 说明（下载说明 + CHANGELOG 对应小节）
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## 下载"
+            echo
+            echo "| 平台 | 文件 | 说明 |"
+            echo "| --- | --- | --- |"
+            echo "| Android | \`android-v${VERSION}.apk\` | 直接安装（Android 7.0+），需允许安装未知应用 |"
+            echo "| iOS | \`ios-v${VERSION}.ipa\` | 未签名包；需使用 Apple Team、证书和描述文件签名后才能安装 |"
+            echo "| Windows | \`windows-x64-v${VERSION}.zip\` | 完整解压后运行 \`booksift.exe\`（Windows 10/11 64 位） |"
+            echo "| macOS | \`macos-universal-v${VERSION}.zip\` | arm64 + x86_64 通用包，未签名/公证；Gatekeeper 可能阻止打开 |"
+            echo "| Linux | \`linux-x64-v${VERSION}.tar.gz\` | 解压后运行 \`booksift\`（Ubuntu 22.04+，需 GTK3 / libsecret） |"
+            echo
+            echo "每个平台包都附同名 \`.sha256\`（一行 64 位十六进制摘要），下载后建议核对。"
+            echo "iOS 与 macOS 产物不包含 Apple 签名、provisioning profile 或公证；请在分发安装前自行完成相应签名流程。"
+            echo
+            echo "## 更新内容"
+            echo
+          } > release_notes.md
+          if [ -f CHANGELOG.md ] && awk -v v="v${VERSION}" \
+            '$0 ~ "^## " v "[ \t]*$" {hit=1; next} hit && /^## / {exit} hit {print}' \
+            CHANGELOG.md > changelog_section.md && [ -s changelog_section.md ]; then
+            cat changelog_section.md >> release_notes.md
+          else
+            echo "- 详见仓库 \`CHANGELOG.md\`。" >> release_notes.md
+          fi
+          cat release_notes.md
+          ls -l artifacts
+
+      - name: 创建 Release 并附加产物
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: 扫书汇 v${{ needs.version.outputs.version }}
+          body_path: release_notes.md
+          files: artifacts/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -22,7 +22,8 @@ Future<UpdateCheckState> waitStatus(
   while (DateTime.now().isBefore(deadline)) {
     final UpdateCheckState state = container.read(updateControllerProvider);
     if (state.status == expected) return state;
-    if (state.status != UpdateStatus.idle && state.status != UpdateStatus.checking) {
+    if (state.status != UpdateStatus.idle &&
+        state.status != UpdateStatus.checking) {
       fail(
         '状态落入 ${state.status}（期望 $expected）：'
         'primary=${state.result?.primaryFailure} fallback=${state.result?.fallbackFailure}',
@@ -30,13 +31,19 @@ Future<UpdateCheckState> waitStatus(
     }
     await Future<void>.delayed(const Duration(milliseconds: 2));
   }
-  fail('等待状态 $expected 超时；当前 ${container.read(updateControllerProvider).status}');
+  fail(
+    '等待状态 $expected 超时；当前 ${container.read(updateControllerProvider).status}',
+  );
 }
 
 void main() {
   test('初始化 = idle，build() 无副作用（不自行发请求/起检查）', () {
-    final ScriptedAdapter adapter = ScriptedAdapter(<String, ScriptedResponse>{});
-    final ProviderContainer container = ProviderContainer(overrides: updateTestOverrides(adapter: adapter));
+    final ScriptedAdapter adapter = ScriptedAdapter(
+      <String, ScriptedResponse>{},
+    );
+    final ProviderContainer container = ProviderContainer(
+      overrides: updateTestOverrides(adapter: adapter),
+    );
     addTearDown(container.dispose);
     expect(container.read(updateControllerProvider).status, UpdateStatus.idle);
     expect(container.read(updateAvailableProvider), isNull);
@@ -45,16 +52,25 @@ void main() {
 
   test('启动静默检查：ensureStartupCheckScheduled 幂等，零延迟后落 updateAvailable', () async {
     final ScriptedAdapter adapter = ScriptedAdapter(<String, ScriptedResponse>{
-      kControllerGithubUrl: ScriptedResponse(githubReleaseJson(withSha256Asset: false)),
+      kControllerGithubUrl: ScriptedResponse(
+        githubReleaseJson(withSha256Asset: false),
+      ),
     });
-    final ProviderContainer container = ProviderContainer(overrides: updateTestOverrides(adapter: adapter));
+    final ProviderContainer container = ProviderContainer(
+      overrides: updateTestOverrides(adapter: adapter),
+    );
     addTearDown(container.dispose);
 
-    final UpdateController controller = container.read(updateControllerProvider.notifier);
+    final UpdateController controller = container.read(
+      updateControllerProvider.notifier,
+    );
     controller.ensureStartupCheckScheduled();
     controller.ensureStartupCheckScheduled(); // 幂等：第二次 no-op（不会双份请求）
 
-    final UpdateCheckState state = await waitStatus(container, UpdateStatus.updateAvailable);
+    final UpdateCheckState state = await waitStatus(
+      container,
+      UpdateStatus.updateAvailable,
+    );
     expect(state.info?.version, '1.1.0');
     expect(state.info?.source, UpdateSourceKind.github);
     expect(container.read(updateAvailableProvider)?.version, '1.1.0');
@@ -66,26 +82,43 @@ void main() {
       ..values[kUpdateFallbackUrlKey] = kTestFallbackUrl;
     final ScriptedAdapter adapter = ScriptedAdapter(<String, ScriptedResponse>{
       kControllerGithubUrl: ScriptedResponse.networkError(),
-      kTestFallbackUrl: const ScriptedResponse('{"message":"gone"}', status: 404),
+      kTestFallbackUrl: const ScriptedResponse(
+        '{"message":"gone"}',
+        status: 404,
+      ),
     });
     final ProviderContainer container = ProviderContainer(
       overrides: updateTestOverrides(adapter: adapter, store: store),
     );
     addTearDown(container.dispose);
 
-    container.read(updateControllerProvider.notifier).ensureStartupCheckScheduled();
-    final UpdateCheckState state = await waitStatus(container, UpdateStatus.failed);
+    container
+        .read(updateControllerProvider.notifier)
+        .ensureStartupCheckScheduled();
+    final UpdateCheckState state = await waitStatus(
+      container,
+      UpdateStatus.failed,
+    );
     expect(state.result?.primaryFailure?.kind, UpdateFetchFailureKind.network);
-    expect(state.result?.fallbackFailure?.kind, UpdateFetchFailureKind.notFound);
+    expect(
+      state.result?.fallbackFailure?.kind,
+      UpdateFetchFailureKind.notFound,
+    );
     expect(container.read(updateAvailableProvider), isNull);
-    expect(adapter.requestedUrls, <String>[kControllerGithubUrl, kTestFallbackUrl]);
+    expect(adapter.requestedUrls, <String>[
+      kControllerGithubUrl,
+      kTestFallbackUrl,
+    ]);
   });
 
   test('主源 403 + 已配置备源 200 → 静默检查自动切源成功', () async {
     final InMemoryUpdateSettingsStore store = InMemoryUpdateSettingsStore()
       ..values[kUpdateFallbackUrlKey] = kTestFallbackUrl;
     final ScriptedAdapter adapter = ScriptedAdapter(<String, ScriptedResponse>{
-      kControllerGithubUrl: const ScriptedResponse('{"message":"rate limit"}', status: 403),
+      kControllerGithubUrl: const ScriptedResponse(
+        '{"message":"rate limit"}',
+        status: 403,
+      ),
       kTestFallbackUrl: ScriptedResponse(versionJson()),
     });
     final ProviderContainer container = ProviderContainer(
@@ -93,8 +126,13 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    container.read(updateControllerProvider.notifier).ensureStartupCheckScheduled();
-    final UpdateCheckState state = await waitStatus(container, UpdateStatus.updateAvailable);
+    container
+        .read(updateControllerProvider.notifier)
+        .ensureStartupCheckScheduled();
+    final UpdateCheckState state = await waitStatus(
+      container,
+      UpdateStatus.updateAvailable,
+    );
     expect(state.info?.source, UpdateSourceKind.staticJson);
     expect(state.info?.versionCode, 120);
   });
@@ -103,24 +141,37 @@ void main() {
     final ScriptedAdapter adapter = ScriptedAdapter(<String, ScriptedResponse>{
       kControllerGithubUrl: ScriptedResponse.networkError(),
     });
-    final ProviderContainer container = ProviderContainer(overrides: updateTestOverrides(adapter: adapter));
+    final ProviderContainer container = ProviderContainer(
+      overrides: updateTestOverrides(adapter: adapter),
+    );
     addTearDown(container.dispose);
 
-    final UpdateCheckResult result = await container.read(updateControllerProvider.notifier).manualCheck();
+    final UpdateCheckResult result = await container
+        .read(updateControllerProvider.notifier)
+        .manualCheck();
     expect(result.outcome, UpdateOutcome.failed);
     expect(result.fallbackFailure, isNull);
     expect(adapter.requestedUrls, <String>[kControllerGithubUrl]);
-    expect(container.read(updateControllerProvider).status, UpdateStatus.failed);
+    expect(
+      container.read(updateControllerProvider).status,
+      UpdateStatus.failed,
+    );
   });
 
   test('manualCheck 返回结果（upToDate 口径：tag == 本地版本）', () async {
     final ScriptedAdapter adapter = ScriptedAdapter(<String, ScriptedResponse>{
-      kControllerGithubUrl: ScriptedResponse(githubReleaseJson(tag: 'v1.0.0', withSha256Asset: false)),
+      kControllerGithubUrl: ScriptedResponse(
+        githubReleaseJson(tag: 'v1.0.0', withSha256Asset: false),
+      ),
     });
-    final ProviderContainer container = ProviderContainer(overrides: updateTestOverrides(adapter: adapter));
+    final ProviderContainer container = ProviderContainer(
+      overrides: updateTestOverrides(adapter: adapter),
+    );
     addTearDown(container.dispose);
 
-    final UpdateCheckResult result = await container.read(updateControllerProvider.notifier).manualCheck();
+    final UpdateCheckResult result = await container
+        .read(updateControllerProvider.notifier)
+        .manualCheck();
     expect(result.outcome, UpdateOutcome.upToDate);
     expect(result.info?.version, '1.0.0');
     expect(container.read(updateAvailableProvider), isNull);

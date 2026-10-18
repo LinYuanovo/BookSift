@@ -37,6 +37,9 @@ class FlutterWindow : public Win32Window {
   // 注册 `booksift/window` 通道（最小化 / 最大化切换 / 关闭 / 最大化态）。
   void SetupWindowChannel();
 
+  /// 注册 `booksift/update` 通道：启动退出后替换更新助手。
+  void SetupUpdateChannel();
+
   // 最大化态变化推给 Dart（WM_SIZE 后调用）。
   void NotifyMaximizedChanged();
 
@@ -55,6 +58,10 @@ class FlutterWindow : public Win32Window {
   // 窗口控制通道（Dart → native 调用 + native → Dart 最大化态推送）。
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
       window_channel_;
+
+  // 更新通道（桌面安装包替换）。
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>>
+      update_channel_;
 
   // 首帧显示时是否直接最大化（= 上次关闭时的状态）。
   bool start_maximized_ = false;

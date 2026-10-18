@@ -6,9 +6,12 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private var pendingFontPermissionResult: MethodChannel.Result? = null
@@ -30,6 +33,18 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_FONT_CHANNEL).setMethodCallHandler { call, result ->
             if (call.method == "requestReadPermission") {
                 requestReadFontsPermission(result)
+            } else {
+                result.notImplemented()
+            }
+        }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, UPDATE_CHANNEL).setMethodCallHandler { call, result ->
+            if (call.method == "installApk") {
+                val path = call.argument<String>("path")
+                if (path.isNullOrBlank()) {
+                    result.error("bad_args", "path missing", null)
+                } else {
+                    installApk(path, result)
+                }
             } else {
                 result.notImplemented()
             }
@@ -93,10 +108,69 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun installApk(path: String, result: MethodChannel.Result) {
+        try {
+            val file = validatedUpdateFile(path)
+            if (!file.name.endsWith(".apk", ignoreCase = true)) {
+                result.error("bad_args", "update file is not an APK", null)
+                return
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !packageManager.canRequestPackageInstalls()
+            ) {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:$packageName"),
+                    ),
+                )
+                result.error(
+                    "permission_required",
+                    "allow unknown app installs, then open the update package again",
+                    null,
+                )
+                return
+            }
+            val uri = FileProvider.getUriForFile(this, "$packageName.update-files", file)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, APK_MIME_TYPE)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(intent)
+            result.success(true)
+        } catch (e: SecurityException) {
+            result.error("invalid_path", e.message ?: "update file path is not allowed", null)
+        } catch (e: ActivityNotFoundException) {
+            result.error("no_installer", "no Android package installer is available", null)
+        } catch (e: IllegalArgumentException) {
+            result.error("invalid_path", e.message ?: "update file path is not allowed", null)
+        } catch (e: Exception) {
+            result.error("install_failed", e.message ?: "unable to start APK installer", null)
+        }
+    }
+
+    private fun validatedUpdateFile(path: String): File {
+        val file = File(path).canonicalFile
+        val allowedRoots = listOf(
+            File(filesDir, UPDATE_DIRECTORY).canonicalFile,
+            File(cacheDir, UPDATE_DIRECTORY).canonicalFile,
+        )
+        val allowed = allowedRoots.any { root ->
+            file.path == root.path || file.path.startsWith(root.path + File.separator)
+        }
+        if (!allowed || !file.isFile || !file.canRead()) {
+            throw SecurityException("update file must be a readable file under the app update directory")
+        }
+        return file
+    }
+
     private companion object {
         const val CHANNEL = "booksift/external_launch"
         const val SYSTEM_FONT_CHANNEL = "booksift/system_fonts"
+        const val UPDATE_CHANNEL = "booksift/update"
         const val FONT_PERMISSION_REQUEST_CODE = 4107
+        const val UPDATE_DIRECTORY = "update-cache"
+        const val APK_MIME_TYPE = "application/vnd.android.package-archive"
 
         /** 官方贴吧 + 贴吧 Lite（huanchengfly 版）包名，按优先级排列。 */
         val TIEBA_PACKAGES = listOf("com.baidu.tieba", "com.huanchengfly.tieba.post")

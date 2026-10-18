@@ -61,7 +61,10 @@ UpdateFetchException toUpdateFetchException(Object error) {
     return const UpdateFetchException(UpdateFetchFailureKind.timeout, '请求超时');
   }
   if (error is FormatException) {
-    return UpdateFetchException(UpdateFetchFailureKind.badPayload, '响应不是合法 JSON：${error.message}');
+    return UpdateFetchException(
+      UpdateFetchFailureKind.badPayload,
+      '响应不是合法 JSON：${error.message}',
+    );
   }
   if (error is DioException) {
     switch (error.type) {
@@ -69,22 +72,46 @@ UpdateFetchException toUpdateFetchException(Object error) {
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
       case DioExceptionType.transformTimeout:
-        return const UpdateFetchException(UpdateFetchFailureKind.timeout, '请求超时');
+        return const UpdateFetchException(
+          UpdateFetchFailureKind.timeout,
+          '请求超时',
+        );
       case DioExceptionType.badResponse:
         final int? code = error.response?.statusCode;
         return switch (code) {
-          403 => const UpdateFetchException(UpdateFetchFailureKind.forbidden, '403（匿名限流或禁止访问）'),
-          429 => const UpdateFetchException(UpdateFetchFailureKind.rateLimited, '429 限流'),
-          404 => const UpdateFetchException(UpdateFetchFailureKind.notFound, '404 不存在'),
-          _ => UpdateFetchException(UpdateFetchFailureKind.http, 'HTTP ${code ?? '?'}'),
+          403 => const UpdateFetchException(
+            UpdateFetchFailureKind.forbidden,
+            '403（匿名限流或禁止访问）',
+          ),
+          429 => const UpdateFetchException(
+            UpdateFetchFailureKind.rateLimited,
+            '429 限流',
+          ),
+          404 => const UpdateFetchException(
+            UpdateFetchFailureKind.notFound,
+            '404 不存在',
+          ),
+          _ => UpdateFetchException(
+            UpdateFetchFailureKind.http,
+            'HTTP ${code ?? '?'}',
+          ),
         };
       case DioExceptionType.connectionError:
-        return UpdateFetchException(UpdateFetchFailureKind.network, '连接失败：${error.message ?? error.error}');
+        return UpdateFetchException(
+          UpdateFetchFailureKind.network,
+          '连接失败：${error.message ?? error.error}',
+        );
       case DioExceptionType.badCertificate:
-        return const UpdateFetchException(UpdateFetchFailureKind.network, 'TLS 证书校验失败');
+        return const UpdateFetchException(
+          UpdateFetchFailureKind.network,
+          'TLS 证书校验失败',
+        );
       case DioExceptionType.cancel:
       case DioExceptionType.unknown:
-        return UpdateFetchException(UpdateFetchFailureKind.network, '网络异常：${error.message ?? error.error}');
+        return UpdateFetchException(
+          UpdateFetchFailureKind.network,
+          '网络异常：${error.message ?? error.error}',
+        );
     }
   }
   return UpdateFetchException(UpdateFetchFailureKind.network, '未知异常：$error');
@@ -112,6 +139,13 @@ final class UpdateInfo {
     this.apkUrl,
     this.apkSha256,
     this.iosUrl,
+    this.iosSha256,
+    this.windowsUrl,
+    this.windowsSha256,
+    this.macosUrl,
+    this.macosSha256,
+    this.linuxUrl,
+    this.linuxSha256,
     this.minForce,
   });
 
@@ -124,15 +158,36 @@ final class UpdateInfo {
   /// 更新日志（GitHub = release body；version.json = app.notes）。
   final String notes;
 
-  /// Android APK 直链（GitHub = assets 里 `app-v{version}.apk` 约定名；§10.2 浏览器下载）。
+  /// Android APK 直链（GitHub = assets 里 `android-v{version}.apk` 约定名；§10.2 浏览器下载）。
   final String? apkUrl;
 
   /// APK sha256 公示值（§11.1 缺陷 #7 对策；GitHub 源 best-effort 取 `.apk.sha256` 资产，
   /// 取不到 = null，不因此失败）。
   final String? apkSha256;
 
-  /// iOS 商店页（§10.3：iOS 不提供 APK 通道，仅跳转 App Store）。
+  /// iOS 安装包 URL（GitHub Release）或 version.json `ios_url`。
   final String? iosUrl;
+
+  /// iOS IPA 的 SHA256；GitHub 源 best-effort 解析 `.ipa.sha256` 资产。
+  final String? iosSha256;
+
+  /// Windows ZIP URL（GitHub Release）或 version.json `windows_url`。
+  final String? windowsUrl;
+
+  /// Windows ZIP 的 SHA256；GitHub 源 best-effort 解析 `.zip.sha256` 资产。
+  final String? windowsSha256;
+
+  /// macOS universal ZIP URL（GitHub Release）或 version.json `macos_url`。
+  final String? macosUrl;
+
+  /// macOS ZIP 的 SHA256；GitHub 源 best-effort 解析 `.zip.sha256` 资产。
+  final String? macosSha256;
+
+  /// Linux tar.gz URL（GitHub Release）或 version.json `linux_url`。
+  final String? linuxUrl;
+
+  /// Linux tar.gz 的 SHA256；GitHub 源 best-effort 解析 `.tar.gz.sha256` 资产。
+  final String? linuxSha256;
 
   /// 强更阈值（version.json `app.min_force`）：本地版本 < 该值 → 强制更新。
   final String? minForce;
@@ -219,10 +274,8 @@ int? _intOrNull(Object? v) => switch (v) {
 
 /// 主源：GitHub Releases API（匿名，无 token）。
 ///
-/// 解析约定（§10.1）：`tag_name` → 版本；`body` → 更新日志；`assets` 按
-/// `app-v{version}.apk` / `app-v{version}.apk.sha256` 约定名取 APK 直链与校验值
-/// （约定名未命中 → 退而取第一个 `.apk` 资产；sha256 资产取内容首个 64 位 hex，
-/// best-effort：二次请求失败只丢 sha256 不失败整检查）。
+/// 解析约定：`tag_name` → 版本；`body` → 更新日志；五个平台资产按固定名称匹配，
+/// 对应 `.sha256` 文件 best-effort 取内容首个 64 位 hex。缺失的资产保持 null，互不回退。
 final class GithubReleaseSource implements UpdateSource {
   GithubReleaseSource({
     required this.owner,
@@ -240,19 +293,25 @@ final class GithubReleaseSource implements UpdateSource {
   UpdateSourceKind get kind => UpdateSourceKind.github;
 
   /// latest release 端点（公开仓库匿名可访问）。
-  Uri get latestUri => Uri.https('api.github.com', '/repos/$owner/$repo/releases/latest');
+  Uri get latestUri =>
+      Uri.https('api.github.com', '/repos/$owner/$repo/releases/latest');
 
   @override
   Future<UpdateInfo> fetch() async {
     final Map<String, Object?> data = await _getJson(latestUri.toString());
     final String? tag = _strOrNull(data['tag_name']);
     if (tag == null) {
-      throw const UpdateFetchException(UpdateFetchFailureKind.badPayload, 'release 缺 tag_name');
+      throw const UpdateFetchException(
+        UpdateFetchFailureKind.badPayload,
+        'release 缺 tag_name',
+      );
     }
     final String version = tag.startsWith('v') ? tag.substring(1) : tag;
     final String notes = _strOrNull(data['body']) ?? '';
 
-    final List<Object?> assets = data['assets'] is List ? data['assets']! as List<Object?> : const <Object?>[];
+    final List<Object?> assets = data['assets'] is List
+        ? data['assets']! as List<Object?>
+        : const <Object?>[];
     String? assetUrl(String name) {
       for (final Object? a in assets) {
         if (a is Map && _strOrNull(a['name']) == name) {
@@ -263,32 +322,50 @@ final class GithubReleaseSource implements UpdateSource {
       return null;
     }
 
-    final String conventionName = 'app-v$version.apk';
-    String? apkUrl = assetUrl(conventionName);
-    String? apkAssetName = apkUrl != null ? conventionName : null;
-    if (apkUrl == null) {
-      // 约定名未命中 → 第一个 .apk 资产兜底。
-      for (final Object? a in assets) {
-        if (a is Map) {
-          final String? name = _strOrNull(a['name']);
-          final String? url = _strOrNull(a['browser_download_url']);
-          if (name != null && url != null && name.endsWith('.apk')) {
-            apkUrl = url;
-            apkAssetName = name;
-            break;
-          }
-        }
-      }
-    }
-    final String? sha256 = apkAssetName == null ? null : await _fetchSha256Asset(assetUrl('$apkAssetName.sha256'));
+    final String apkAssetName = 'android-v$version.apk';
+    final String iosAssetName = 'ios-v$version.ipa';
+    final String windowsAssetName = 'windows-x64-v$version.zip';
+    final String macosAssetName = 'macos-universal-v$version.zip';
+    final String linuxAssetName = 'linux-x64-v$version.tar.gz';
+
+    final String? apkUrl = assetUrl(apkAssetName);
+    final String? iosUrl = assetUrl(iosAssetName);
+    final String? windowsUrl = assetUrl(windowsAssetName);
+    final String? macosUrl = assetUrl(macosAssetName);
+    final String? linuxUrl = assetUrl(linuxAssetName);
+
+    final List<String?> hashes = await Future.wait<String?>(<Future<String?>>[
+      _fetchSha256Asset(
+        apkUrl == null ? null : assetUrl('$apkAssetName.sha256'),
+      ),
+      _fetchSha256Asset(
+        iosUrl == null ? null : assetUrl('$iosAssetName.sha256'),
+      ),
+      _fetchSha256Asset(
+        windowsUrl == null ? null : assetUrl('$windowsAssetName.sha256'),
+      ),
+      _fetchSha256Asset(
+        macosUrl == null ? null : assetUrl('$macosAssetName.sha256'),
+      ),
+      _fetchSha256Asset(
+        linuxUrl == null ? null : assetUrl('$linuxAssetName.sha256'),
+      ),
+    ]);
 
     return UpdateInfo(
       version: version,
       source: kind,
       notes: notes,
       apkUrl: apkUrl,
-      apkSha256: sha256,
-      // GitHub 源不提供 iOS 商店链接与 version_code/min_force（iOS 与强更走 version.json 备源）。
+      apkSha256: hashes[0],
+      iosUrl: iosUrl,
+      iosSha256: hashes[1],
+      windowsUrl: windowsUrl,
+      windowsSha256: hashes[2],
+      macosUrl: macosUrl,
+      macosSha256: hashes[3],
+      linuxUrl: linuxUrl,
+      linuxSha256: hashes[4],
     );
   }
 
@@ -299,7 +376,9 @@ final class GithubReleaseSource implements UpdateSource {
       final Response<String> res = await _dio
           .get<String>(url, options: Options(responseType: ResponseType.plain))
           .timeout(timeout);
-      final RegExpMatch? m = RegExp(r'[0-9a-fA-F]{64}').firstMatch(res.data ?? '');
+      final RegExpMatch? m = RegExp(
+        r'[0-9a-fA-F]{64}',
+      ).firstMatch(res.data ?? '');
       return m?[0]?.toLowerCase();
     } catch (_) {
       return null;
@@ -313,7 +392,8 @@ final class GithubReleaseSource implements UpdateSource {
           .get<String>(
             url,
             options: Options(
-              responseType: ResponseType.plain, // 手动 jsonDecode：不依赖对端 content-type 正确性
+              responseType:
+                  ResponseType.plain, // 手动 jsonDecode：不依赖对端 content-type 正确性
               headers: <String, String>{
                 'Accept': 'application/vnd.github+json',
                 'X-GitHub-Api-Version': '2022-11-28',
@@ -332,7 +412,10 @@ final class GithubReleaseSource implements UpdateSource {
       throw toUpdateFetchException(e);
     }
     if (decoded is! Map) {
-      throw const UpdateFetchException(UpdateFetchFailureKind.badPayload, '响应不是 JSON 对象');
+      throw const UpdateFetchException(
+        UpdateFetchFailureKind.badPayload,
+        '响应不是 JSON 对象',
+      );
     }
     return decoded.cast<String, Object?>();
   }
@@ -340,10 +423,16 @@ final class GithubReleaseSource implements UpdateSource {
 
 /// 备源：静态 version.json（可配置 URL；出厂缺省未配置 → 不参与检查）。
 ///
-/// 结构（§10.1）：`{"app": {"version","version_code","notes","min_force",
-/// "apk_url","apk_sha256","ios_url"}, "seed": {...}}` —— seed.* 属种子包分发，本服务忽略。
+/// 结构：`{"app": {"version","version_code","notes","min_force",
+/// "apk_url","apk_sha256","ios_url","ios_sha256","windows_url","windows_sha256",
+/// "macos_url","macos_sha256","linux_url","linux_sha256"}, "seed": {...}}`
+/// —— seed.* 属种子包分发，本服务忽略。
 final class StaticJsonSource implements UpdateSource {
-  StaticJsonSource({required this.url, required Dio dio, this.timeout = const Duration(seconds: 10)}) : _dio = dio;
+  StaticJsonSource({
+    required this.url,
+    required Dio dio,
+    this.timeout = const Duration(seconds: 10),
+  }) : _dio = dio;
 
   final String url;
   final Dio _dio;
@@ -369,15 +458,24 @@ final class StaticJsonSource implements UpdateSource {
       throw toUpdateFetchException(e);
     }
     if (decoded is! Map) {
-      throw const UpdateFetchException(UpdateFetchFailureKind.badPayload, 'version.json 不是 JSON 对象');
+      throw const UpdateFetchException(
+        UpdateFetchFailureKind.badPayload,
+        'version.json 不是 JSON 对象',
+      );
     }
     final Object? app = decoded['app'];
     if (app is! Map) {
-      throw const UpdateFetchException(UpdateFetchFailureKind.badPayload, 'version.json 缺 app 对象');
+      throw const UpdateFetchException(
+        UpdateFetchFailureKind.badPayload,
+        'version.json 缺 app 对象',
+      );
     }
     final String? version = _strOrNull(app['version']);
     if (version == null) {
-      throw const UpdateFetchException(UpdateFetchFailureKind.badPayload, 'version.json app.version 缺失');
+      throw const UpdateFetchException(
+        UpdateFetchFailureKind.badPayload,
+        'version.json app.version 缺失',
+      );
     }
     return UpdateInfo(
       version: version,
@@ -387,6 +485,13 @@ final class StaticJsonSource implements UpdateSource {
       apkUrl: _strOrNull(app['apk_url']),
       apkSha256: _strOrNull(app['apk_sha256'])?.toLowerCase(),
       iosUrl: _strOrNull(app['ios_url']),
+      iosSha256: _strOrNull(app['ios_sha256'])?.toLowerCase(),
+      windowsUrl: _strOrNull(app['windows_url']),
+      windowsSha256: _strOrNull(app['windows_sha256'])?.toLowerCase(),
+      macosUrl: _strOrNull(app['macos_url']),
+      macosSha256: _strOrNull(app['macos_sha256'])?.toLowerCase(),
+      linuxUrl: _strOrNull(app['linux_url']),
+      linuxSha256: _strOrNull(app['linux_sha256'])?.toLowerCase(),
       minForce: _strOrNull(app['min_force']),
     );
   }
@@ -399,10 +504,22 @@ enum UpdateOutcome { updateAvailable, upToDate, failed }
 
 /// 一次检查的结果（failed 携带双源各自的失败归类，供诊断/手动检查文案）。
 final class UpdateCheckResult {
-  const UpdateCheckResult(this.outcome, {this.info, this.forced = false, this.primaryFailure, this.fallbackFailure});
+  const UpdateCheckResult(
+    this.outcome, {
+    this.info,
+    this.forced = false,
+    this.primaryFailure,
+    this.fallbackFailure,
+  });
 
-  factory UpdateCheckResult.failed({UpdateFetchException? primaryFailure, UpdateFetchException? fallbackFailure}) =>
-      UpdateCheckResult(UpdateOutcome.failed, primaryFailure: primaryFailure, fallbackFailure: fallbackFailure);
+  factory UpdateCheckResult.failed({
+    UpdateFetchException? primaryFailure,
+    UpdateFetchException? fallbackFailure,
+  }) => UpdateCheckResult(
+    UpdateOutcome.failed,
+    primaryFailure: primaryFailure,
+    fallbackFailure: fallbackFailure,
+  );
 
   final UpdateOutcome outcome;
 
@@ -423,7 +540,11 @@ final class UpdateCheckResult {
 /// 双源切换状态机：主源任何失败（不可达/403/限流/超时/载荷非法）→ 切备源；
 /// 备源也失败或未配置 → [UpdateCheckResult.failed]（调用方静默，不打扰）。
 final class UpdateChecker {
-  const UpdateChecker({required this.primary, required this.local, this.fallback});
+  const UpdateChecker({
+    required this.primary,
+    required this.local,
+    this.fallback,
+  });
 
   final UpdateSource primary;
 
@@ -438,7 +559,9 @@ final class UpdateChecker {
     } on Object catch (e) {
       final UpdateFetchException primaryFailure = toUpdateFetchException(e);
       final UpdateSource? fb = fallback;
-      if (fb == null) return UpdateCheckResult.failed(primaryFailure: primaryFailure);
+      if (fb == null) {
+        return UpdateCheckResult.failed(primaryFailure: primaryFailure);
+      }
       try {
         // 备源命中也携带主源失败归类（诊断切源原因）。
         return _evaluate(await fb.fetch(), primaryFailure: primaryFailure);
@@ -451,7 +574,10 @@ final class UpdateChecker {
     }
   }
 
-  UpdateCheckResult _evaluate(UpdateInfo info, {UpdateFetchException? primaryFailure}) {
+  UpdateCheckResult _evaluate(
+    UpdateInfo info, {
+    UpdateFetchException? primaryFailure,
+  }) {
     if (isNewerThan(info, local)) {
       return UpdateCheckResult(
         UpdateOutcome.updateAvailable,
@@ -460,6 +586,10 @@ final class UpdateChecker {
         primaryFailure: primaryFailure,
       );
     }
-    return UpdateCheckResult(UpdateOutcome.upToDate, info: info, primaryFailure: primaryFailure);
+    return UpdateCheckResult(
+      UpdateOutcome.upToDate,
+      info: info,
+      primaryFailure: primaryFailure,
+    );
   }
 }

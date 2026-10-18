@@ -14,12 +14,14 @@
 
   更新检查契约（只读对齐 app/lib/core/update/update_service.dart，勿改）：
     GitHub tag        = v{version}
-    APK 资产名        = app-v{version}.apk
-    sha256 资产名     = app-v{version}.apk.sha256（App 侧取内容中首个 64 位 hex）
-    主源 owner/repo   = booksift-app/booksift
-                        （app/lib/core/update/update_controller.dart 的 kUpdateGithubOwner/Repo；
-                         ⚠ 发布前必须改成实际公开仓库，否则主源恒 404 → 静默失败）
-    备源 version.json = {"app":{version,version_code,notes,min_force,apk_url,apk_sha256,ios_url},
+    APK 资产名        = android-v{version}.apk
+    sha256 资产名     = android-v{version}.apk.sha256（App 侧取内容中首个 64 位 hex）
+    主源 owner/repo   = LinYuanovo/BookSift
+                        （以 app/lib/core/update/update_controller.dart 的 kUpdateGithubOwner/Repo 为准，
+                         两处需同步）
+    备源 version.json = {"app":{version,version_code,notes,min_force,apk_url,apk_sha256,ios_url,
+                                   ios_sha256,windows_url,windows_sha256,macos_url,macos_sha256,
+                                   linux_url,linux_sha256},
                          "seed":{basic_version,full_version,full_urls,full_size,full_sha256,lanzou_backup}}
 
   本脚本**不做**：不创建远程仓库、不 push、不打 tag、不改 pubspec 版本号。
@@ -118,7 +120,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
   Write-Error "版本号不一致：-Version=$Version 但 app/pubspec.yaml 为 $SpecVersion+$SpecBuild。`nAPK 内 versionName/versionCode 由 pubspec 决定，改名不改实会破坏更新检查契约。`n请先改 pubspec.yaml 再重跑，或省略 -Version。"
   exit 2
 }
-Write-Host "  版本 $Version  versionCode $BuildNumber  →  tag v$Version / app-v$Version.apk"
+Write-Host "  版本 $Version  versionCode $BuildNumber  →  tag v$Version / android-v$Version.apk"
 
 # ── 2. preflight ────────────────────────────────────────────────────────
 Write-Step '2/6 preflight'
@@ -259,7 +261,7 @@ Write-Host "  ✓ 权限闸门：INTERNET 已声明" -ForegroundColor Green
 
 # ── 5. 组装 dist_release ────────────────────────────────────────────────
 Write-Step '5/6 组装 dist_release/'
-$apkName  = "app-v$Version.apk"
+$apkName  = "android-v$Version.apk"
 $apkDest  = Join-Path $DistDir $apkName
 Copy-Item -LiteralPath $builtApk -Destination $apkDest -Force
 Write-Sha256File $apkDest
@@ -289,7 +291,8 @@ if ($SkipSeed) {
 }
 
 # version.json 备源：结构照 update_service.dart 的 StaticJsonSource 解析口径还原。
-# apk_url / seed.full_urls 用 .invalid 占位 —— 必然解析失败，避免误当真链接部署；发布时替换。
+# 平台下载 URL 均指向本项目 GitHub Releases 对应版本的固定命名资产。
+# 本脚本只在本机生成 Android 包；其他平台的资产由对应构建 job 生成。
 $notesPath = Join-Path $DistDir 'RELEASE_NOTES.md'
 $notesLine = ''
 if (Test-Path -LiteralPath $notesPath) {
@@ -302,20 +305,27 @@ if (Test-Path -LiteralPath $notesPath) {
 }
 
 $versionJson = [ordered]@{
-  _note = '发布时把 apk_url / seed.full_urls 的 REPLACE-ME.*.invalid 占位换成真实直链；min_force 留空 = 不强制更新；ios_url 留空 = 不展示 iOS 入口。'
+  _note = '平台下载 URL 均为本项目 GitHub Releases 真实直链；苹果包未签名；min_force 留空 = 不强制更新；lanzou_backup 留空 = 不展示对应入口。'
   app   = [ordered]@{
     version      = $Version
     version_code = $BuildNumber
     notes        = $notesLine
     min_force    = ''
-    apk_url      = "https://REPLACE-ME.github.invalid/booksift-app/booksift/releases/download/v$Version/$apkName"
+    apk_url      = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/$apkName"
     apk_sha256   = $apkSha
-    ios_url      = ''
+    ios_url      = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/ios-v$Version.ipa"
+    ios_sha256   = ''
+    windows_url  = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/windows-x64-v$Version.zip"
+    windows_sha256 = ''
+    macos_url    = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/macos-universal-v$Version.zip"
+    macos_sha256 = ''
+    linux_url    = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/linux-x64-v$Version.tar.gz"
+    linux_sha256 = ''
   }
   seed  = [ordered]@{
     basic_version = 1
     full_version  = 1
-    full_urls     = @("https://REPLACE-ME.github.invalid/booksift-app/booksift/releases/download/seed-v1/seed_pack_v1.zip")
+    full_urls     = @("https://github.com/LinYuanovo/BookSift/releases/download/seed-v1/seed_pack_v1.zip")
     full_size     = $SeedFullSize
     full_sha256   = $SeedFullSha256
     lanzou_backup = ''
@@ -323,7 +333,11 @@ $versionJson = [ordered]@{
 }
 $vjPath = Join-Path $DistDir 'version.json'
 $versionJson | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $vjPath -Encoding utf8
-Write-Host "  ✓ version.json（app.version=$Version / version_code=$BuildNumber / apk_sha256 已填真值）" -ForegroundColor Green
+Write-Host "  ✓ version.json（app.version=$Version / version_code=$BuildNumber / apk_sha256 已填真值 / 五个平台 URL 已填写）" -ForegroundColor Green
+
+# 分类规则源码与回归测试单独随包分发，便于审查和独立复跑。
+Write-Step '分类规则源码与回归测试包'
+& (Join-Path $PSScriptRoot 'pack_classifier_sources.ps1') -Version $Version -DistDir $DistDir
 
 # ── 6. 清单 ─────────────────────────────────────────────────────────────
 Write-Step '6/6 dist_release 清单'
@@ -333,10 +347,9 @@ Get-ChildItem -LiteralPath $DistDir -File | Sort-Object Name | ForEach-Object {
 }
 Write-Host ''
 Write-Host "  下一步（发布）：" -ForegroundColor Cyan
-Write-Host "    1. 改 app/lib/core/update/update_controller.dart 的 kUpdateGithubOwner/Repo 为实际仓库"
-Write-Host "    2. 建 repo → push → git tag v$Version → git push origin v$Version"
-Write-Host "    3. gh release create v$Version dist_release/* --title `"扫书汇 v$Version`" --notes-file dist_release/RELEASE_NOTES.md"
-Write-Host "    4. 部署 version.json 到静态托管（替换 REPLACE-ME 占位），设置页填该 URL 作备源"
+Write-Host "    1. 建 repo → push → git tag v$Version → git push origin v$Version（也可由 GitHub Actions（.github/workflows/build-release.yml）在 tag 推送时自动打包发布）"
+Write-Host "    2. gh release create v$Version dist_release/* --title `"扫书汇 v$Version`" --notes-file dist_release/RELEASE_NOTES.md"
+Write-Host "    3. 部署 version.json 到静态托管（五个平台 URL 均指向 v$Version Release 资产），设置页填该 URL 作备源"
 Write-Host "    完整步骤见 docs/发布指南.md"
 
 # ── 可选发布 ────────────────────────────────────────────────────────────
@@ -349,7 +362,7 @@ if ($Publish) {
     if ([string]::IsNullOrWhiteSpace($remote)) {
       Write-Host "  ✗ 本仓库没有 git remote origin —— 拒绝发布。" -ForegroundColor Red
       Write-Host "    先建远程仓库并关联（见 docs/发布指南.md §4）：" -ForegroundColor Yellow
-      Write-Host "      gh repo create booksift --public --source=. --remote=origin"
+      Write-Host "      gh repo create BookSift --public --source=. --remote=origin"
       Write-Host "      git push -u origin main && git tag v$Version && git push origin v$Version"
       exit 5
     }
@@ -357,7 +370,7 @@ if ($Publish) {
     if (-not (Test-Path -LiteralPath $GhExe)) { Write-Error "gh 不在预期路径: $GhExe"; exit 5 }
     & $GhExe auth status 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Error 'gh 未登录，先 gh auth login'; exit 5 }
-    # 只上传更新契约需要的资产；RELEASE_NOTES.md 作 --notes-file，version.json 属静态托管（含占位符，勿当 release 资产）
+    # 只上传更新契约需要的资产；RELEASE_NOTES.md 作 --notes-file，version.json 属静态托管（勿当 release 资产）
     $assets = @(Get-ChildItem -LiteralPath $DistDir -File | Where-Object { $_.Name -notin @('RELEASE_NOTES.md', 'version.json') } | ForEach-Object { $_.FullName })
     Write-Host "  上传 $($assets.Count) 个资产 → tag v$Version"
     & $GhExe release create "v$Version" @assets --title "扫书汇 v$Version" --notes-file $notesPath

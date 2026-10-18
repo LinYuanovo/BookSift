@@ -5,12 +5,65 @@
 #include <windowsx.h>
 
 #include <cstdlib>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
 
 namespace {
+
+std::wstring QuoteArgument(const std::wstring& value) {
+  std::wstring quoted = L"\"";
+  for (wchar_t ch : value) {
+    if (ch == L'"') {
+      quoted += L'\\';
+    }
+    quoted += ch;
+  }
+  quoted += L'"';
+  return quoted;
+}
+
+bool StartUpdateHelper(const std::string& archive, const std::string& bundle) {
+  std::error_code error;
+  std::vector<wchar_t> executable_path(32768);
+  const DWORD length = GetModuleFileNameW(
+      nullptr, executable_path.data(), static_cast<DWORD>(executable_path.size()));
+  if (length == 0 || length >= executable_path.size()) {
+    return false;
+  }
+  const std::filesystem::path executable =
+      std::filesystem::path(std::wstring(executable_path.data(), length))
+          .parent_path();
+  const std::filesystem::path script = executable / L"data" / L"update" /
+                                       L"booksift_updater.ps1";
+  if (!std::filesystem::is_regular_file(script, error)) {
+    return false;
+  }
+  const std::wstring command =
+      L"powershell.exe -NoProfile -ExecutionPolicy Bypass -File " +
+      QuoteArgument(script.wstring()) + L" -Archive " +
+      QuoteArgument(std::filesystem::path(archive).wstring()) + L" -Bundle " +
+      QuoteArgument(std::filesystem::path(bundle).wstring()) + L" -ExeName " +
+      QuoteArgument(L"booksift.exe") + L" -AppPid " +
+      std::to_wstring(GetCurrentProcessId());
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESHOWWINDOW;
+  startup.wShowWindow = SW_HIDE;
+  PROCESS_INFORMATION process{};
+  const BOOL created = CreateProcessW(
+      nullptr, const_cast<wchar_t*>(command.c_str()), nullptr, nullptr, FALSE,
+      CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+  if (!created) {
+    return false;
+  }
+  CloseHandle(process.hThread);
+  CloseHandle(process.hProcess);
+  return true;
+}
 
 // 自绘标题栏几何（**逻辑 px**，命中测试时按窗口 DPI 换算成物理 px）。
 // 必须与 Dart 侧 core/window/window_frame.dart 的 WindowFrameMetrics 一致，
@@ -274,6 +327,7 @@ bool FlutterWindow::OnCreate() {
   });
 
   SetupWindowChannel();
+  SetupUpdateChannel();
 
   // Win11：圆角交给 DWM（去系统标题栏后仍要圆角窗口）。
   const int corner_preference = DWMWCP_ROUND;
@@ -292,6 +346,10 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (update_channel_) {
+    update_channel_->SetMethodCallHandler(nullptr);
+    update_channel_ = nullptr;
+  }
   if (window_channel_) {
     window_channel_->SetMethodCallHandler(nullptr);
     window_channel_ = nullptr;
@@ -338,6 +396,46 @@ void FlutterWindow::NotifyMaximizedChanged() {
   window_channel_->InvokeMethod(
       "maximizedChanged",
       std::make_unique<flutter::EncodableValue>(IsZoomed(GetHandle()) != 0));
+}
+
+void FlutterWindow::SetupUpdateChannel() {
+  update_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "booksift/update",
+          &flutter::StandardMethodCodec::GetInstance());
+  update_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        if (call.method_name() != "installPackage") {
+          result->NotImplemented();
+          return;
+        }
+        const auto* arguments =
+            std::get_if<flutter::EncodableMap>(call.arguments());
+        if (arguments == nullptr) {
+          result->Error("bad_args", "update arguments missing");
+          return;
+        }
+        auto path_it = arguments->find(flutter::EncodableValue("path"));
+        auto bundle_it = arguments->find(flutter::EncodableValue("bundle"));
+        if (path_it == arguments->end() || bundle_it == arguments->end()) {
+          result->Error("bad_args", "path or bundle missing");
+          return;
+        }
+        const auto* path = std::get_if<std::string>(&path_it->second);
+        const auto* bundle = std::get_if<std::string>(&bundle_it->second);
+        if (path == nullptr || bundle == nullptr) {
+          result->Error("bad_args", "path or bundle invalid");
+          return;
+        }
+        if (!StartUpdateHelper(*path, *bundle)) {
+          result->Error("update_failed", "could not start update helper");
+          return;
+        }
+        result->Success(flutter::EncodableValue(true));
+        PostMessage(GetHandle(), WM_CLOSE, 0, 0);
+      });
 }
 
 void FlutterWindow::ApplySavedPlacement() {

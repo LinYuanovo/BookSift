@@ -17,28 +17,47 @@ void main() {
     final DriftUpdateSettingsStore store = DriftUpdateSettingsStore(db);
 
     expect(await store.read(kUpdateFallbackUrlKey), isNull); // 出厂缺省 = 未配置
-    await store.write(kUpdateFallbackUrlKey, 'https://cdn.example.com/version.json');
-    expect(await store.read(kUpdateFallbackUrlKey), 'https://cdn.example.com/version.json');
+    await store.write(
+      kUpdateFallbackUrlKey,
+      'https://cdn.example.com/version.json',
+    );
+    expect(
+      await store.read(kUpdateFallbackUrlKey),
+      'https://cdn.example.com/version.json',
+    );
     await store.write(kUpdateFallbackUrlKey, ''); // 覆盖写 = 恢复缺省
     expect(await store.read(kUpdateFallbackUrlKey), '');
   });
 
-  test('UpdateSettingsController.setFallbackUrl：trim 后写 store + invalidate 读取侧', () async {
-    final InMemoryUpdateSettingsStore store = InMemoryUpdateSettingsStore();
-    final ProviderContainer container = ProviderContainer(
-      overrides: <Override>[updateSettingsStoreProvider.overrideWithValue(store)],
-    );
-    addTearDown(container.dispose);
+  test(
+    'UpdateSettingsController.setFallbackUrl：trim 后写 store + invalidate 读取侧',
+    () async {
+      final InMemoryUpdateSettingsStore store = InMemoryUpdateSettingsStore();
+      final ProviderContainer container = ProviderContainer(
+        overrides: <Override>[
+          updateSettingsStoreProvider.overrideWithValue(store),
+        ],
+      );
+      addTearDown(container.dispose);
 
-    expect(await container.read(updateFallbackUrlProvider.future), '');
+      expect(await container.read(updateFallbackUrlProvider.future), '');
 
-    await container.read(updateSettingsControllerProvider).setFallbackUrl('  https://a.example/version.json ');
-    expect(store.values[kUpdateFallbackUrlKey], 'https://a.example/version.json');
-    expect(await container.read(updateFallbackUrlProvider.future), 'https://a.example/version.json');
+      await container
+          .read(updateSettingsControllerProvider)
+          .setFallbackUrl('  https://a.example/version.json ');
+      expect(
+        store.values[kUpdateFallbackUrlKey],
+        'https://a.example/version.json',
+      );
+      expect(
+        await container.read(updateFallbackUrlProvider.future),
+        'https://a.example/version.json',
+      );
 
-    await container.read(updateSettingsControllerProvider).setFallbackUrl('');
-    expect(await container.read(updateFallbackUrlProvider.future), '');
-  });
+      await container.read(updateSettingsControllerProvider).setFallbackUrl('');
+      expect(await container.read(updateFallbackUrlProvider.future), '');
+    },
+  );
 
   test('isValidFallbackUrl：空 = 合法（恢复缺省）；http(s) 绝对 = 合法；其余非法', () {
     expect(isValidFallbackUrl(''), isTrue);

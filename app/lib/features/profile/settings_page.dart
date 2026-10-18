@@ -10,6 +10,9 @@ import '../../core/icons.dart';
 import '../../core/nav/center_slot.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../core/update/update_controller.dart';
+import '../../core/update/update_download_controller.dart';
+import '../../core/update/update_downloader.dart';
+import '../../core/update/update_platform.dart';
 import '../../core/update/update_service.dart';
 import '../../theme/app_accent.dart';
 import '../../theme/app_colors.dart';
@@ -32,9 +35,8 @@ import 'font_manage_page.dart';
 /// M2：主题模式分段（跟随系统/浅色/深色）与减弱动效开关已实装
 /// （theme/appearance_settings.dart；settings 表 theme / reduce_motion 键，app.dart 顶层联动）。
 /// 其余设置项不在 M1-④ 范围（M1-④ = 五维搜索 / 分类手风琴 / 富文本渲染 / 书签收藏历史）。
-/// TODO(M2)：数据包管理 + 采集并发/仅 WiFi + BDUSS 加密存储，
-/// 落 settings 表 KV（键名已备于 core/constants.dart: SettingsKeys）；
-/// 见 docs/开发路线图.md Phase 4、设计系统 v1.2 §3 #07、原型 §5.10 设置项清单。
+/// 采集并发 / 仅 WiFi / BDUSS 已实装（落 settings 表 KV，键名见 core/constants.dart: SettingsKeys）；
+/// 数据包管理仍未实装，见 docs/开发路线图.md Phase 4、原型 §5.10 设置项清单。
 class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
 
@@ -45,14 +47,16 @@ class SettingsPage extends ConsumerWidget {
       PageRouteBuilder<void>(
         transitionDuration: motion.transition.duration,
         reverseTransitionDuration: motion.transition.duration,
-        pageBuilder: (context, animation, secondaryAnimation) => const FontManagePage(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) => SharedAxisTransition(
-          animation: animation,
-          secondaryAnimation: secondaryAnimation,
-          transitionType: SharedAxisTransitionType.vertical,
-          fillColor: AppColors.of(context).canvas,
-          child: child,
-        ),
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const FontManagePage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+            SharedAxisTransition(
+              animation: animation,
+              secondaryAnimation: secondaryAnimation,
+              transitionType: SharedAxisTransitionType.vertical,
+              fillColor: AppColors.of(context).canvas,
+              child: child,
+            ),
       ),
     );
   }
@@ -70,7 +74,12 @@ class SettingsPage extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
-        padding: EdgeInsets.fromLTRB(space.pagePadding, space.space4, space.pagePadding, space.space8),
+        padding: EdgeInsets.fromLTRB(
+          space.pagePadding,
+          space.space4,
+          space.pagePadding,
+          space.space8,
+        ),
         children: <Widget>[
           Padding(
             padding: EdgeInsets.only(bottom: space.space3),
@@ -80,9 +89,18 @@ class SettingsPage extends ConsumerWidget {
             child: ListTile(
               // 设计 sprite 无字体/排版专属资产；字体管理属「外观」小节 → 取 i-palette（外观定制）最贴。
               leading: AppIcon('palette', size: 20, color: colors.accent),
-              title: Text('字体管理', style: t.bodyStrong.copyWith(color: colors.text)),
-              subtitle: Text(fontSummary, style: t.caption.copyWith(color: colors.textMuted)),
-              trailing: RotatedBox(quarterTurns: 3, child: AppIcon('chev', size: 16, color: colors.textMuted)),
+              title: Text(
+                '字体管理',
+                style: t.bodyStrong.copyWith(color: colors.text),
+              ),
+              subtitle: Text(
+                fontSummary,
+                style: t.caption.copyWith(color: colors.textMuted),
+              ),
+              trailing: RotatedBox(
+                quarterTurns: 3,
+                child: AppIcon('chev', size: 16, color: colors.textMuted),
+              ),
               onTap: () => _openFontManage(context),
             ),
           ),
@@ -147,7 +165,8 @@ class _ThemeModeSection extends ConsumerWidget {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing space = AppSpacing.of(context);
     final AppearanceSettings settings =
-        ref.watch(appearanceSettingsProvider).value ?? const AppearanceSettings();
+        ref.watch(appearanceSettingsProvider).value ??
+        const AppearanceSettings();
     return Card(
       child: Padding(
         padding: EdgeInsets.all(space.cardPadding),
@@ -163,8 +182,11 @@ class _ThemeModeSection extends ConsumerWidget {
                 (ThemeMode.dark, '深色'),
               ],
               selected: settings.themeMode,
-              onChanged: (ThemeMode v) =>
-                  _writeAppearance(context, ref, (AppearanceSettingsController c) => c.setThemeMode(v)),
+              onChanged: (ThemeMode v) => _writeAppearance(
+                context,
+                ref,
+                (AppearanceSettingsController c) => c.setThemeMode(v),
+              ),
             ),
             SizedBox(height: space.space2),
             Text(
@@ -190,7 +212,8 @@ class _ReduceMotionSection extends ConsumerWidget {
     final AppColors colors = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
     final AppearanceSettings settings =
-        ref.watch(appearanceSettingsProvider).value ?? const AppearanceSettings();
+        ref.watch(appearanceSettingsProvider).value ??
+        const AppearanceSettings();
     return Card(
       child: ListTile(
         leading: AppIcon('motion', color: colors.textMuted),
@@ -201,8 +224,11 @@ class _ReduceMotionSection extends ConsumerWidget {
         ),
         trailing: Switch(
           value: settings.reduceMotion,
-          onChanged: (bool v) =>
-              _writeAppearance(context, ref, (AppearanceSettingsController c) => c.setReduceMotion(v)),
+          onChanged: (bool v) => _writeAppearance(
+            context,
+            ref,
+            (AppearanceSettingsController c) => c.setReduceMotion(v),
+          ),
         ),
       ),
     );
@@ -214,7 +240,11 @@ class _ReduceMotionSection extends ConsumerWidget {
 class _CollectSection extends ConsumerWidget {
   const _CollectSection();
 
-  Future<void> _write(BuildContext context, WidgetRef ref, Future<void> Function(CollectSettingsController) action) async {
+  Future<void> _write(
+    BuildContext context,
+    WidgetRef ref,
+    Future<void> Function(CollectSettingsController) action,
+  ) async {
     try {
       await action(ref.read(collectSettingsControllerProvider));
     } catch (_) {
@@ -229,7 +259,8 @@ class _CollectSection extends ConsumerWidget {
     final AppColors colors = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
     final AppSpacing space = AppSpacing.of(context);
-    final CollectSettings settings = ref.watch(collectSettingsProvider).value ?? const CollectSettings();
+    final CollectSettings settings =
+        ref.watch(collectSettingsProvider).value ?? const CollectSettings();
     // 需求 5：并发上限按档位（匿名 3 / BDUSS 档 4）；读 effective（已失效 → 匿名口径）。
     final bool bdussImported =
         (ref.watch(effectiveBdussProvider).value ?? '').isNotEmpty;
@@ -245,15 +276,25 @@ class _CollectSection extends ConsumerWidget {
           children: <Widget>[
             ListTile(
               leading: AppIcon('wifi', color: colors.textMuted),
-              title: Text('仅 WiFi 采集', style: t.bodyStrong.copyWith(color: colors.text)),
+              title: Text(
+                '仅 WiFi 采集',
+                style: t.bodyStrong.copyWith(color: colors.text),
+              ),
               trailing: Switch(
                 value: settings.wifiOnly,
-                onChanged: (bool v) => _write(context, ref, (CollectSettingsController c) => c.setWifiOnly(v)),
+                onChanged: (bool v) => _write(
+                  context,
+                  ref,
+                  (CollectSettingsController c) => c.setWifiOnly(v),
+                ),
               ),
             ),
             ListTile(
               leading: AppIcon('collect', color: colors.textMuted),
-              title: Text('跨吧并发数', style: t.bodyStrong.copyWith(color: colors.text)),
+              title: Text(
+                '跨吧并发数',
+                style: t.bodyStrong.copyWith(color: colors.text),
+              ),
               subtitle: Text(
                 '默认 2 · 上限 $maxConcurrency（${bdussImported ? 'BDUSS 档' : '匿名档'}）· 提高并发有风控风险',
                 style: t.caption.copyWith(color: colors.textMuted),
@@ -263,16 +304,26 @@ class _CollectSection extends ConsumerWidget {
                   for (int i = 2; i <= maxConcurrency; i++) (i, '$i'),
                 ],
                 selected: concurrent,
-                onChanged: (int v) => _write(context, ref, (CollectSettingsController c) => c.setConcurrentForums(v)),
+                onChanged: (int v) => _write(
+                  context,
+                  ref,
+                  (CollectSettingsController c) => c.setConcurrentForums(v),
+                ),
               ),
             ),
             Padding(
-              padding: EdgeInsets.fromLTRB(space.pagePadding, 0, space.pagePadding, space.space2),
+              padding: EdgeInsets.fromLTRB(
+                space.pagePadding,
+                0,
+                space.pagePadding,
+                space.space2,
+              ),
               child: Text(
-                // §8.8 风险说明原文（设置页并发配置项旁明示；上限数字按档位内插）。
-                '并发提高 = 单位时间请求数提高 = 触发风控（429/110xxx/冷却）概率提高；'
-                '调到上限（匿名 $kMaxConcurrencyAnonymous / BDUSS 档 $kMaxConcurrencyBduss）风险自担，'
-                '且任吧连续失败 ≥3 仍触发全局暂停。',
+                // §8.8 风险说明（设置页并发配置项旁明示；上限数字按档位内插）。
+                '并发调得越高，单位时间内的请求就越多，触发风控的概率也越高。'
+                '调到上限（匿名 $kMaxConcurrencyAnonymous / BDUSS 档 $kMaxConcurrencyBduss）风险自担。'
+                '另外，同一吧连续失败 $kForumFailureCooldown 次会进入 '
+                '${kForumCooldownDuration.inHours} 小时冷却，全局连续失败 $kGlobalFailurePause 次会暂停整轮采集。',
                 style: t.caption.copyWith(color: colors.textMuted),
               ),
             ),
@@ -336,7 +387,10 @@ class _BdussTileState extends ConsumerState<_BdussTile> {
           ],
         ),
         actions: <Widget>[
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(controller.text),
             child: const Text('保存'),
@@ -365,8 +419,9 @@ class _BdussTileState extends ConsumerState<_BdussTile> {
     if (_testing) return;
     setState(() => _testing = true);
     try {
-      final TiebaAccountProbeResult r =
-          await ref.read(tiebaAccountProbeProvider).check(bduss);
+      final TiebaAccountProbeResult r = await ref
+          .read(tiebaAccountProbeProvider)
+          .check(bduss);
       if (!mounted) return;
       final String message = switch (r.kind) {
         TiebaAccountProbeKind.ok =>
@@ -406,19 +461,23 @@ class _BdussTileState extends ConsumerState<_BdussTile> {
     return ListTile(
       leading: AppIcon('key', color: colors.textMuted),
       title: Text(
-          invalid ? 'BDUSS 已失效' : (bduss == null ? 'BDUSS 导入' : 'BDUSS 已导入'),
-          style: t.bodyStrong.copyWith(color: colors.text)),
+        invalid ? 'BDUSS 已失效' : (bduss == null ? 'BDUSS 导入' : 'BDUSS 已导入'),
+        style: t.bodyStrong.copyWith(color: colors.text),
+      ),
       subtitle: Text(
         bduss == null
             ? '匿名模式 · 每日配额 $kDailyBudgetAnonymous · 导入后 $kDailyBudgetBduss · 详见「关于与合规」'
             : (invalid
-                ? '已失效 · 请重新导入（当前按匿名档运行）'
-                : '${maskBduss(bduss)} · 每日配额 $kDailyBudgetBduss · 仅存本机加密存储'),
+                  ? '已失效 · 请重新导入（当前按匿名档运行）'
+                  : '${maskBduss(bduss)} · 每日配额 $kDailyBudgetBduss · 仅存本机加密存储'),
         style: t.caption.copyWith(color: colors.textMuted),
       ),
       // 已导入：行尾给「测试 / 清除」；点行本身 = 重新导入（替换）。
       trailing: bduss == null
-          ? RotatedBox(quarterTurns: 3, child: AppIcon('chev', size: 16, color: colors.textMuted))
+          ? RotatedBox(
+              quarterTurns: 3,
+              child: AppIcon('chev', size: 16, color: colors.textMuted),
+            )
           : Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
@@ -432,7 +491,10 @@ class _BdussTileState extends ConsumerState<_BdussTile> {
                     ),
                   )
                 else
-                  TextButton(onPressed: () => _test(bduss), child: const Text('测试')),
+                  TextButton(
+                    onPressed: () => _test(bduss),
+                    child: const Text('测试'),
+                  ),
                 TextButton(
                   onPressed: _testing ? null : _clear,
                   child: const Text('清除'),
@@ -477,19 +539,26 @@ class _AccentSectionState extends ConsumerState<_AccentSection> {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing space = AppSpacing.of(context);
     final AppMotionTheme motion = AppMotionTheme.of(context);
-    final AppAccentTheme current = ref.watch(accentThemeProvider).value ?? AppAccentTheme.defaults;
+    final AppAccentTheme current =
+        ref.watch(accentThemeProvider).value ?? AppAccentTheme.defaults;
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           ListTile(
             onTap: () => setState(() => _expanded = !_expanded),
-            title: Text('主题色', style: t.bodyStrong.copyWith(color: colors.text)),
+            title: Text(
+              '主题色',
+              style: t.bodyStrong.copyWith(color: colors.text),
+            ),
             // 收起态摘要 = 当前色名（如「陶土珊瑚」），免展开即知现状。
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                Text(current.label, style: t.caption.copyWith(color: colors.textMuted)),
+                Text(
+                  current.label,
+                  style: t.caption.copyWith(color: colors.textMuted),
+                ),
                 SizedBox(width: space.space2),
                 // chev 旋转指示（˅ 收起 / ˄ 展开）：时长走 motion-fast 档（手风琴 + chevron 旋转）。
                 AnimatedRotation(
@@ -503,7 +572,12 @@ class _AccentSectionState extends ConsumerState<_AccentSection> {
           ),
           AnimatedCrossFade(
             firstChild: Padding(
-              padding: EdgeInsets.fromLTRB(space.cardPadding, 0, space.cardPadding, space.cardPadding),
+              padding: EdgeInsets.fromLTRB(
+                space.cardPadding,
+                0,
+                space.cardPadding,
+                space.cardPadding,
+              ),
               child: Wrap(
                 spacing: space.space3, // 设计 605：.cmp-row gap = space-3
                 runSpacing: space.space3,
@@ -519,7 +593,9 @@ class _AccentSectionState extends ConsumerState<_AccentSection> {
               ),
             ),
             secondChild: const SizedBox(width: double.infinity, height: 0),
-            crossFadeState: _expanded ? CrossFadeState.showFirst : CrossFadeState.showSecond,
+            crossFadeState: _expanded
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
             duration: motion.exit.duration,
             reverseDuration: motion.enter.duration,
             firstCurve: motion.standard,
@@ -536,7 +612,12 @@ class _AccentSectionState extends ConsumerState<_AccentSection> {
 /// 44px 圆片（seed 原色）· 选中 = outline 2px text 色 offset 3px（外框 54 = 44+2×(3+2)）
 /// + 内 18px 白勾 · hover scale 1.08（motion-instant + spring，设计 560/563）。
 class _AccentSwatch extends StatefulWidget {
-  const _AccentSwatch({super.key, required this.accent, required this.selected, required this.onTap});
+  const _AccentSwatch({
+    super.key,
+    required this.accent,
+    required this.selected,
+    required this.onTap,
+  });
 
   final AppAccentTheme accent;
   final bool selected;
@@ -554,11 +635,14 @@ class _AccentSwatchState extends State<_AccentSwatch> {
   Widget build(BuildContext context) {
     final AppColors colors = AppColors.of(context);
     final AppMotionTheme motion = AppMotionTheme.of(context);
-    final String label = widget.selected ? '${widget.accent.label}（当前）' : widget.accent.label;
+    final String label = widget.selected
+        ? '${widget.accent.label}（当前）'
+        : widget.accent.label;
     return Semantics(
       button: true,
       selected: widget.selected,
-      label: label, // 设计 aria-label（「陶土珊瑚（当前）」等）；不挂 Tooltip（hover timer 会污染 widget 测试假时钟区）。
+      label:
+          label, // 设计 aria-label（「陶土珊瑚（当前）」等）；不挂 Tooltip（hover timer 会污染 widget 测试假时钟区）。
       child: MouseRegion(
         onEnter: (_) => setState(() => _hover = true),
         onExit: (_) => setState(() => _hover = false),
@@ -578,7 +662,9 @@ class _AccentSwatchState extends State<_AccentSwatch> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
-                  color: widget.selected ? colors.text : colors.text.withValues(alpha: 0),
+                  color: widget.selected
+                      ? colors.text
+                      : colors.text.withValues(alpha: 0),
                   width: 2, // 设计 560：outline 2px
                 ),
               ),
@@ -592,7 +678,10 @@ class _AccentSwatchState extends State<_AccentSwatch> {
                   child: Container(
                     width: 44, // 设计 558：.swatch 44×44 圆
                     height: 44,
-                    decoration: BoxDecoration(shape: BoxShape.circle, color: widget.accent.seed),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: widget.accent.seed,
+                    ),
                     child: widget.selected
                         ? Center(
                             // 设计 566：内勾 18px stroke 2.2 白 #FFFDF8 —— 取 -s 档（stroke 2）
@@ -622,8 +711,7 @@ class _AccentSwatchState extends State<_AccentSwatch> {
 /// 关于区（M3 §10.1）：当前版本 + 检查更新（GitHub 主源 → 静态 version.json 备源，
 /// 主源不可达/403/限流自动切源；双源失败静默「检查失败」）+ 备源 URL 编辑
 /// （settings 键 `update_fallback_url`）+ 关于与合规入口（Phase 5，路由 `/about`）。
-/// 更新卡片只复制下载链接（§10.2 浏览器下载 /
-/// §10.3 iOS 跳商店都在应用外完成），不做应用内安装。
+/// 更新卡片保留「前往下载」复制链接，同时提供应用内断点下载与平台动作。
 class _AboutSection extends ConsumerWidget {
   const _AboutSection();
 
@@ -634,7 +722,9 @@ class _AboutSection extends ConsumerWidget {
   /// 手动检查（§10.1 检查时机之二）：三态分流 —— 有新版弹更新卡片；
   /// 已最新 / 失败走 SnackBar（失败不打扰原则只约束静默路径，手动检查必须给反馈）。
   Future<void> _manualCheck(BuildContext context, WidgetRef ref) async {
-    final UpdateCheckResult result = await ref.read(updateControllerProvider.notifier).manualCheck();
+    final UpdateCheckResult result = await ref
+        .read(updateControllerProvider.notifier)
+        .manualCheck();
     if (!context.mounted) return;
     switch (result.outcome) {
       case UpdateOutcome.updateAvailable:
@@ -650,67 +740,91 @@ class _AboutSection extends ConsumerWidget {
   }
 
   /// 更新卡片（版本号 + 更新日志 + 按钮；强更 = min_force 高于本地 → 禁点遮罩、无「稍后」）。
-  Future<void> _showUpdateCard(BuildContext pageContext, UpdateInfo info, {required bool forced}) {
+  Future<void> _showUpdateCard(
+    BuildContext pageContext,
+    UpdateInfo info, {
+    required bool forced,
+  }) {
     return showDialog<void>(
       context: pageContext,
       barrierDismissible: !forced,
       builder: (BuildContext dialogContext) {
-        final AppColors colors = AppColors.of(dialogContext);
-        final AppTypography t = AppTypography.of(dialogContext);
-        final AppSpacing space = AppSpacing.of(dialogContext);
-        return AlertDialog(
-          title: const Text('发现新版本'),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 320),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Text('v${info.version}', style: t.title.copyWith(color: colors.text)),
-                  SizedBox(height: space.space1),
-                  Text('来源 ${info.source.label}', style: t.caption.copyWith(color: colors.textMuted)),
-                  if (forced)
-                    Padding(
-                      padding: EdgeInsets.only(top: space.space2),
-                      child: Text(
-                        '低于 v${info.minForce} 的版本需强制更新',
-                        style: t.caption.copyWith(color: colors.danger),
-                      ),
-                    ),
-                  if (info.notes.isNotEmpty)
-                    Padding(
-                      padding: EdgeInsets.only(top: space.space3),
-                      child: Text(info.notes, style: t.body.copyWith(color: colors.text)),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          actions: <Widget>[
-            if (!forced)
-              TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('稍后')),
-            FilledButton(
-              onPressed: () {
+        return PopScope<void>(
+          canPop: !forced,
+          child: UpdateDialog(
+            info: info,
+            forced: forced,
+            onCopy: (bool close) {
+              if (close && dialogContext.mounted) {
                 Navigator.of(dialogContext).pop();
-                _copyDownloadLink(pageContext, info);
-              },
-              child: const Text('前往下载'),
-            ),
-          ],
+              }
+              _copyDownloadLink(pageContext, info);
+            },
+            onDownload: (WidgetRef ref) =>
+                _downloadUpdate(dialogContext, ref, info),
+          ),
         );
       },
     );
   }
 
-  /// [前往下载] = 平台分流复制链接（Android → apk_url / iOS → ios_url，§10.2/§10.3）
-  /// + SnackBar；缺对应链接时按 apk→ios 顺序兜底，都没有则如实提示。
+  Future<void> _downloadUpdate(
+    BuildContext dialogContext,
+    WidgetRef ref,
+    UpdateInfo info,
+  ) async {
+    final TargetPlatform target = defaultTargetPlatform;
+    final UpdateDownloadController controller = ref.read(
+      updateDownloadControllerProvider.notifier,
+    );
+    final UpdateDownloadState current = ref.read(
+      updateDownloadControllerProvider,
+    );
+    final String key = updateDownloadResourceKey(info, target);
+    if (current.resourceKey != key) {
+      await controller.download(info, target: target);
+    } else if (current.status == UpdateDownloadStatus.downloading) {
+      controller.cancel();
+      return;
+    } else if (current.status != UpdateDownloadStatus.ready) {
+      await controller.download(info, target: target);
+    }
+    if (!dialogContext.mounted) return;
+    final UpdateDownloadState state = ref.read(
+      updateDownloadControllerProvider,
+    );
+    if (state.status != UpdateDownloadStatus.ready || state.result == null) {
+      return;
+    }
+    try {
+      final bool opened = await ref
+          .read(updatePlatformProvider)
+          .installDownloadedFile(state.result!.file.path, target);
+      if (!opened && dialogContext.mounted) {
+        _snack(dialogContext, '更新包已下载，请手动打开文件');
+      }
+    } on UpdatePlatformException catch (error) {
+      if (dialogContext.mounted) _snack(dialogContext, error.message);
+    } on Object {
+      if (dialogContext.mounted) {
+        _snack(dialogContext, '更新包已下载，但无法自动打开');
+      }
+    }
+  }
+
+  /// [前往下载] = 按当前平台复制下载链接；缺少本平台链接时如实提示。
   /// 平台判定用 defaultTargetPlatform 而非 Theme.platform —— 后者被静态
   /// BookTheme.light 缓存，测试注入 debugDefaultTargetPlatformOverride 不生效。
   void _copyDownloadLink(BuildContext context, UpdateInfo info) {
     if (!context.mounted) return;
-    final bool ios = defaultTargetPlatform == TargetPlatform.iOS;
-    final String? url = (ios ? info.iosUrl : info.apkUrl) ?? info.apkUrl ?? info.iosUrl;
+    final String? url = switch (defaultTargetPlatform) {
+      TargetPlatform.android => info.apkUrl,
+      TargetPlatform.iOS => info.iosUrl,
+      TargetPlatform.windows => info.windowsUrl,
+      TargetPlatform.macOS => info.macosUrl,
+      TargetPlatform.linux => info.linuxUrl,
+      TargetPlatform.fuchsia => null,
+    };
     if (url == null || url.isEmpty) {
       _snack(context, '该版本未提供下载链接');
       return;
@@ -720,11 +834,17 @@ class _AboutSection extends ConsumerWidget {
   }
 
   /// 备源 URL 编辑：留空 = 恢复出厂缺省（未配置，仅主源）；非空须为绝对 http(s)。
-  Future<void> _editFallbackUrl(BuildContext context, WidgetRef ref, String current) async {
+  Future<void> _editFallbackUrl(
+    BuildContext context,
+    WidgetRef ref,
+    String current,
+  ) async {
     final AppColors colors = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
     final AppSpacing space = AppSpacing.of(context);
-    final TextEditingController controller = TextEditingController(text: current);
+    final TextEditingController controller = TextEditingController(
+      text: current,
+    );
     final String? submitted = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
@@ -734,8 +854,8 @@ class _AboutSection extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              '静态 version.json 地址；GitHub 主源不可达 / 403 / 限流时自动切换。'
-              '留空 = 恢复出厂缺省。',
+              '静态 version.json 地址；GitHub 主源不可达、被限流或返回 403 时自动切换。'
+              '留空则恢复默认设置。',
               style: t.caption.copyWith(color: colors.textMuted),
             ),
             SizedBox(height: space.space3),
@@ -752,7 +872,10 @@ class _AboutSection extends ConsumerWidget {
           ],
         ),
         actions: <Widget>[
-          TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
           FilledButton(
             onPressed: () => Navigator.of(dialogContext).pop(controller.text),
             child: const Text('保存'),
@@ -770,7 +893,7 @@ class _AboutSection extends ConsumerWidget {
     }
     try {
       await ref.read(updateSettingsControllerProvider).setFallbackUrl(url);
-      if (context.mounted) _snack(context, url.isEmpty ? '已恢复出厂缺省' : '备源已保存');
+      if (context.mounted) _snack(context, url.isEmpty ? '已恢复默认设置' : '备源已保存');
     } catch (_) {
       if (context.mounted) _snack(context, '保存失败');
     }
@@ -794,7 +917,7 @@ class _AboutSection extends ConsumerWidget {
         : 'v${local.version} (${local.buildNumber})';
     final bool checking = check.status == UpdateStatus.checking;
     final String checkHint = switch (check.status) {
-      UpdateStatus.idle => 'GitHub 主源 + 静态备源 · 主源失败自动切换',
+      UpdateStatus.idle => 'GitHub 主源和静态备源 · 主源失败时自动切换',
       UpdateStatus.checking => '检查中…',
       UpdateStatus.updateAvailable => '发现新版本 v${check.info?.version ?? ''}',
       UpdateStatus.upToDate => '已是最新版本',
@@ -806,44 +929,72 @@ class _AboutSection extends ConsumerWidget {
         children: <Widget>[
           ListTile(
             leading: AppIcon('info', color: colors.textMuted),
-            title: Text('当前版本', style: t.bodyStrong.copyWith(color: colors.text)),
-            subtitle: Text(versionText, style: t.caption.copyWith(color: colors.textMuted)),
+            title: Text(
+              '当前版本',
+              style: t.bodyStrong.copyWith(color: colors.text),
+            ),
+            subtitle: Text(
+              versionText,
+              style: t.caption.copyWith(color: colors.textMuted),
+            ),
           ),
           ListTile(
             leading: AppIcon('refresh', color: colors.textMuted),
-            title: Text('检查更新', style: t.bodyStrong.copyWith(color: colors.text)),
+            title: Text(
+              '检查更新',
+              style: t.bodyStrong.copyWith(color: colors.text),
+            ),
             subtitle: Text(
               checkHint,
-              style: t.caption.copyWith(color: checking ? colors.accentStrong : colors.textMuted),
+              style: t.caption.copyWith(
+                color: checking ? colors.accentStrong : colors.textMuted,
+              ),
             ),
             trailing: checking
                 ? SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: colors.accent),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: colors.accent,
+                    ),
                   )
-                : RotatedBox(quarterTurns: 3, child: AppIcon('chev', size: 16, color: colors.textMuted)),
+                : RotatedBox(
+                    quarterTurns: 3,
+                    child: AppIcon('chev', size: 16, color: colors.textMuted),
+                  ),
             enabled: !checking,
             onTap: () => _manualCheck(context, ref),
           ),
           ListTile(
             leading: AppIcon('external', color: colors.textMuted),
-            title: Text('更新备源', style: t.bodyStrong.copyWith(color: colors.text)),
+            title: Text(
+              '更新备源',
+              style: t.bodyStrong.copyWith(color: colors.text),
+            ),
             subtitle: Text(
-              fallbackUrl.isEmpty ? '未配置 · 出厂缺省（仅主源）' : fallbackUrl,
+              fallbackUrl.isEmpty ? '默认设置 · 仅检查 GitHub 主源' : fallbackUrl,
               style: t.caption.copyWith(color: colors.textMuted),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            trailing: RotatedBox(quarterTurns: 3, child: AppIcon('chev', size: 16, color: colors.textMuted)),
+            trailing: RotatedBox(
+              quarterTurns: 3,
+              child: AppIcon('chev', size: 16, color: colors.textMuted),
+            ),
             onTap: () => _editFallbackUrl(context, ref, fallbackUrl),
           ),
           Padding(
-            padding: EdgeInsets.fromLTRB(space.pagePadding, 0, space.pagePadding, space.space2),
+            padding: EdgeInsets.fromLTRB(
+              space.pagePadding,
+              0,
+              space.pagePadding,
+              space.space2,
+            ),
             child: Text(
               // §10.1 免 token 双源口径（与并发风险说明同款：设置页明示，不做黑盒）。
-              '免 token 双源检查：主源 GitHub Releases API 匿名访问，备源为可自定义的'
-              '静态 version.json；双源均失败时静默，不打扰。',
+              '检查更新无需 token：优先访问 GitHub Releases API，失败时切换到自定义的'
+              '静态 version.json 地址。两个源都不可用时保持静默，不打扰你。',
               style: t.caption.copyWith(color: colors.textMuted),
             ),
           ),
@@ -851,16 +1002,296 @@ class _AboutSection extends ConsumerWidget {
           // Phase 5 合规文案入口（原型 §11.3/§11.4：关于页固定署名区 + 免责声明全文页）。
           ListTile(
             leading: AppIcon('alert', color: colors.textMuted),
-            title: Text('关于与合规', style: t.bodyStrong.copyWith(color: colors.text)),
+            title: Text(
+              '关于与合规',
+              style: t.bodyStrong.copyWith(color: colors.text),
+            ),
             subtitle: Text(
-              '数据来源署名 · 贴吧 ToS 提示 · BDUSS 与隐私',
+              '数据来源署名 · 贴吧使用提示 · BDUSS 与隐私',
               style: t.caption.copyWith(color: colors.textMuted),
             ),
-            trailing: RotatedBox(quarterTurns: 3, child: AppIcon('chev', size: 16, color: colors.textMuted)),
+            trailing: RotatedBox(
+              quarterTurns: 3,
+              child: AppIcon('chev', size: 16, color: colors.textMuted),
+            ),
             onTap: () => openCenterPage(context, const AboutPage()),
           ),
         ],
       ),
+    );
+  }
+}
+
+final class UpdateDialog extends ConsumerWidget {
+  const UpdateDialog({
+    super.key,
+    required this.info,
+    required this.forced,
+    required this.onCopy,
+    required this.onDownload,
+  });
+
+  final UpdateInfo info;
+  final bool forced;
+  final void Function(bool close) onCopy;
+  final Future<void> Function(WidgetRef ref) onDownload;
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
+  String _downloadHint(UpdateDownloadState state, AppColors colors) {
+    final UpdateDownloadProgress? progress = state.progress;
+    return switch (state.status) {
+      UpdateDownloadStatus.idle => '下载到应用缓存，支持断点续传',
+      UpdateDownloadStatus.downloading =>
+        progress == null
+            ? '下载中…'
+            : progress.totalBytes <= 0
+            ? '正在接收数据 · ${_formatBytes(progress.downloadedBytes)}'
+            : '已完成 ${(progress.fraction! * 100).round()}%',
+      UpdateDownloadStatus.ready =>
+        '更新包已就绪 · ${_formatBytes(state.result?.bytes ?? 0)}',
+      UpdateDownloadStatus.failed => '下载失败 · ${state.error ?? '请重试'}',
+      UpdateDownloadStatus.canceled => '已取消下载 · 缓存已保留',
+    };
+  }
+
+  String _downloadLabel(UpdateDownloadState state, TargetPlatform target) =>
+      switch (state.status) {
+        UpdateDownloadStatus.downloading => '取消下载',
+        UpdateDownloadStatus.ready => switch (target) {
+          TargetPlatform.android => '安装更新',
+          TargetPlatform.iOS => '打开文件位置',
+          TargetPlatform.windows || TargetPlatform.linux => '安装更新',
+          TargetPlatform.macOS => '打开更新包',
+          TargetPlatform.fuchsia => '当前平台不支持',
+        },
+        UpdateDownloadStatus.failed || UpdateDownloadStatus.canceled => '重新下载',
+        UpdateDownloadStatus.idle => '下载更新',
+      };
+
+  String _platformName(TargetPlatform target) => switch (target) {
+    TargetPlatform.android => 'Android',
+    TargetPlatform.iOS => 'iOS',
+    TargetPlatform.windows => 'Windows',
+    TargetPlatform.macOS => 'macOS',
+    TargetPlatform.linux => 'Linux',
+    TargetPlatform.fuchsia => '当前平台',
+  };
+
+  String _readyAction(TargetPlatform target) => switch (target) {
+    TargetPlatform.android => '将唤起系统安装器；首次安装需允许“安装未知应用”',
+    TargetPlatform.iOS => '将打开系统文件面板；IPA 仍需自行签名安装',
+    TargetPlatform.windows => '将自动解压、备份并替换当前安装，然后重新启动',
+    TargetPlatform.macOS => '将打开 macOS 程序包；未签名包可能被 Gatekeeper 拦截',
+    TargetPlatform.linux => '将自动解压、备份并替换当前安装，然后重新启动',
+    TargetPlatform.fuchsia => '当前平台不支持自动打开更新包',
+  };
+
+  Widget _downloadStatus(
+    BuildContext context,
+    TargetPlatform target,
+    UpdatePlatformAsset asset,
+    UpdateDownloadState state,
+    AppColors colors,
+    AppTypography t,
+    AppSpacing space,
+  ) {
+    final UpdateDownloadProgress? progress = state.progress;
+    final double? fraction = state.status == UpdateDownloadStatus.downloading
+        ? progress?.fraction
+        : null;
+    final Color statusColor = switch (state.status) {
+      UpdateDownloadStatus.failed => colors.danger,
+      UpdateDownloadStatus.ready => colors.recommend,
+      UpdateDownloadStatus.downloading => colors.accentStrong,
+      _ => colors.textMuted,
+    };
+    final double statusRadius = 8;
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(space.space3),
+      decoration: BoxDecoration(
+        color: colors.surfaceSunken,
+        borderRadius: BorderRadius.circular(statusRadius),
+        border: Border.all(
+          color: state.status == UpdateDownloadStatus.failed
+              ? colors.danger
+              : colors.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  '${_platformName(target)} · ${asset.fileName}',
+                  style: t.bodyStrong.copyWith(color: colors.text),
+                ),
+              ),
+              Text(
+                state.status == UpdateDownloadStatus.ready ? '已校验' : 'SHA-256',
+                style: t.caption.copyWith(color: colors.textMuted),
+              ),
+            ],
+          ),
+          SizedBox(height: space.space2),
+          Text(
+            _downloadHint(state, colors),
+            style: t.bodyStrong.copyWith(color: statusColor),
+          ),
+          SizedBox(height: space.space1),
+          Text(
+            state.status == UpdateDownloadStatus.ready
+                ? _readyAction(target)
+                : '支持断点续传 · 完成后校验文件完整性',
+            style: t.caption.copyWith(color: colors.textMuted),
+          ),
+          if (state.status == UpdateDownloadStatus.downloading) ...<Widget>[
+            SizedBox(height: space.space2),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(statusRadius),
+              child: LinearProgressIndicator(
+                value: fraction,
+                minHeight: 6,
+                backgroundColor: colors.border,
+                color: colors.accent,
+              ),
+            ),
+            SizedBox(height: space.space1),
+            Text(
+              progress == null || progress.totalBytes <= 0
+                  ? _formatBytes(progress?.downloadedBytes ?? 0)
+                  : '${_formatBytes(progress.downloadedBytes)} / ${_formatBytes(progress.totalBytes)}'
+                        ' · ${progress.completedChunks}/${progress.totalChunks} 分块'
+                        ' · ${progress.activeChunks} 路并发',
+              style: AppTypography.tabular(
+                t.caption,
+              ).copyWith(color: colors.textSecondary),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final AppColors colors = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    final AppSpacing space = AppSpacing.of(context);
+    final TargetPlatform target = defaultTargetPlatform;
+    final UpdatePlatformAsset? asset = platformAsset(info, target);
+    final String key = updateDownloadResourceKey(info, target);
+    final UpdateDownloadState rawState = ref.watch(
+      updateDownloadControllerProvider,
+    );
+    final UpdateDownloadState state = rawState.resourceKey == key
+        ? rawState
+        : const UpdateDownloadState.idle();
+    final String actionLabel = _downloadLabel(state, target);
+    final String actionTooltip = switch (state.status) {
+      UpdateDownloadStatus.ready => switch (target) {
+        TargetPlatform.android => '安装更新',
+        TargetPlatform.iOS => '打开文件位置',
+        TargetPlatform.windows || TargetPlatform.linux => '安装更新',
+        TargetPlatform.macOS => '打开更新包',
+        TargetPlatform.fuchsia => '当前平台不支持',
+      },
+      UpdateDownloadStatus.downloading => '取消下载',
+      _ => '下载更新',
+    };
+
+    return AlertDialog(
+      title: const Text('发现新版本'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 440),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                'v${info.version}',
+                style: t.title.copyWith(color: colors.text),
+              ),
+              SizedBox(height: space.space1),
+              Text(
+                '来源 ${info.source.label}',
+                style: t.caption.copyWith(color: colors.textMuted),
+              ),
+              if (forced)
+                Padding(
+                  padding: EdgeInsets.only(top: space.space2),
+                  child: Text(
+                    '低于 v${info.minForce} 的版本需强制更新',
+                    style: t.caption.copyWith(color: colors.danger),
+                  ),
+                ),
+              if (info.notes.isNotEmpty)
+                Padding(
+                  padding: EdgeInsets.only(top: space.space3),
+                  child: Text(
+                    info.notes,
+                    style: t.body.copyWith(color: colors.text),
+                  ),
+                ),
+              Padding(
+                padding: EdgeInsets.only(top: space.space3),
+                child: asset == null
+                    ? Text(
+                        '该版本未提供当前平台下载链接',
+                        style: t.caption.copyWith(color: colors.textMuted),
+                      )
+                    : _downloadStatus(
+                        context,
+                        target,
+                        asset,
+                        state,
+                        colors,
+                        t,
+                        space,
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        if (!forced)
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('稍后'),
+          ),
+        TextButton.icon(
+          onPressed: () => onCopy(!forced),
+          icon: AppIcon('external', size: 16, color: colors.textSecondary),
+          label: const Text('前往下载'),
+        ),
+        Tooltip(
+          message: actionTooltip,
+          child: FilledButton.icon(
+            onPressed: asset == null ? null : () => onDownload(ref),
+            icon: AppIcon(
+              state.status == UpdateDownloadStatus.downloading
+                  ? 'close'
+                  : state.status == UpdateDownloadStatus.ready
+                  ? 'external'
+                  : 'refresh',
+              size: 16,
+            ),
+            label: Text(actionLabel),
+          ),
+        ),
+      ],
     );
   }
 }

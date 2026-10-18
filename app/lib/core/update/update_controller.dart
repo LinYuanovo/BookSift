@@ -23,9 +23,9 @@ import 'update_service.dart';
 const String kUpdateFallbackUrlKey = 'update_fallback_url';
 
 /// GitHub 主源 `{owner}/{repo}`（§10.1：公开发布仓库，匿名访问）。
-/// ⚠ 集成者 TODO：发布前替换为实际公开仓库；替换前主源必 404 → 走静默失败口径。
-const String kUpdateGithubOwner = 'booksift-app';
-const String kUpdateGithubRepo = 'booksift';
+/// 现状：`LinYuanovo/BookSift` 即本项目公开发布仓库，Releases 为正式分发源。
+const String kUpdateGithubOwner = 'LinYuanovo';
+const String kUpdateGithubRepo = 'BookSift';
 
 /// 启动静默检查延迟（§10.1「启动后 5s」；widget 测试 override 为零避免 pending timer）。
 final Provider<Duration> updateStartupDelayProvider = Provider<Duration>(
@@ -60,42 +60,53 @@ final class DriftUpdateSettingsStore implements UpdateSettingsStore {
 
   @override
   Future<String?> read(String key) async {
-    final Setting? row =
-        await (_db.select(_db.settings)..where((Settings t) => t.key.equals(key))).getSingleOrNull();
+    final Setting? row = await (_db.select(
+      _db.settings,
+    )..where((Settings t) => t.key.equals(key))).getSingleOrNull();
     return row?.value;
   }
 
   @override
-  Future<void> write(String key, String value) =>
-      _db.into(_db.settings).insertOnConflictUpdate(SettingsCompanion.insert(key: key, value: value));
+  Future<void> write(String key, String value) => _db
+      .into(_db.settings)
+      .insertOnConflictUpdate(SettingsCompanion.insert(key: key, value: value));
 }
 
-final Provider<UpdateSettingsStore> updateSettingsStoreProvider = Provider<UpdateSettingsStore>(
-  (Ref ref) => DriftUpdateSettingsStore(ref.watch(appDatabaseProvider)),
-);
+final Provider<UpdateSettingsStore> updateSettingsStoreProvider =
+    Provider<UpdateSettingsStore>(
+      (Ref ref) => DriftUpdateSettingsStore(ref.watch(appDatabaseProvider)),
+    );
 
 /// 备源 URL（'' = 出厂缺省未配置 → 单主源）。
 /// 读取失败（widget 测试的 appDatabaseProvider 哨兵 / 首启竞态）回落 ''，不阻断 UI
 /// ——与 collectSettingsProvider 同口径。
-final FutureProvider<String> updateFallbackUrlProvider = FutureProvider<String>((Ref ref) async {
-  try {
-    final String? value = await ref.watch(updateSettingsStoreProvider).read(kUpdateFallbackUrlKey);
-    return (value ?? '').trim();
-  } catch (_) {
-    return '';
-  }
-});
+final FutureProvider<String> updateFallbackUrlProvider = FutureProvider<String>(
+  (Ref ref) async {
+    try {
+      final String? value = await ref
+          .watch(updateSettingsStoreProvider)
+          .read(kUpdateFallbackUrlKey);
+      return (value ?? '').trim();
+    } catch (_) {
+      return '';
+    }
+  },
+);
 
 /// 本地版本（package_info_plus 平台通道）。异常/测试环境回落 [LocalVersion.unknown]
 /// → 检查永不判新（静默），UI 显示「版本未知」。
-final FutureProvider<LocalVersion> localVersionProvider = FutureProvider<LocalVersion>((Ref ref) async {
-  try {
-    final PackageInfo info = await PackageInfo.fromPlatform();
-    return LocalVersion(version: info.version, buildNumber: int.tryParse(info.buildNumber));
-  } catch (_) {
-    return LocalVersion.unknown;
-  }
-});
+final FutureProvider<LocalVersion> localVersionProvider =
+    FutureProvider<LocalVersion>((Ref ref) async {
+      try {
+        final PackageInfo info = await PackageInfo.fromPlatform();
+        return LocalVersion(
+          version: info.version,
+          buildNumber: int.tryParse(info.buildNumber),
+        );
+      } catch (_) {
+        return LocalVersion.unknown;
+      }
+    });
 
 /// UI 五态（service 三态 [UpdateOutcome] + idle/checking 两个 UI 前置态）。
 enum UpdateStatus { idle, checking, updateAvailable, upToDate, failed }
@@ -103,16 +114,16 @@ enum UpdateStatus { idle, checking, updateAvailable, upToDate, failed }
 /// 检查状态快照（设置页「关于」区三态文案 + 更新卡片消费）。
 final class UpdateCheckState {
   const UpdateCheckState.idle() : status = UpdateStatus.idle, result = null;
-  const UpdateCheckState.checking() : status = UpdateStatus.checking, result = null;
+  const UpdateCheckState.checking()
+    : status = UpdateStatus.checking,
+      result = null;
 
-  factory UpdateCheckState.done(UpdateCheckResult result) => UpdateCheckState._(
-    switch (result.outcome) {
-      UpdateOutcome.updateAvailable => UpdateStatus.updateAvailable,
-      UpdateOutcome.upToDate => UpdateStatus.upToDate,
-      UpdateOutcome.failed => UpdateStatus.failed,
-    },
-    result,
-  );
+  factory UpdateCheckState.done(UpdateCheckResult result) =>
+      UpdateCheckState._(switch (result.outcome) {
+        UpdateOutcome.updateAvailable => UpdateStatus.updateAvailable,
+        UpdateOutcome.upToDate => UpdateStatus.upToDate,
+        UpdateOutcome.failed => UpdateStatus.failed,
+      }, result);
 
   const UpdateCheckState._(this.status, this.result);
 
@@ -173,26 +184,40 @@ class UpdateController extends Notifier<UpdateCheckState> {
     try {
       final Dio dio = ref.read(updateDioProvider);
       final LocalVersion local = await ref.read(localVersionProvider.future);
-      final String fallbackUrl = await ref.read(updateFallbackUrlProvider.future);
+      final String fallbackUrl = await ref.read(
+        updateFallbackUrlProvider.future,
+      );
       return await UpdateChecker(
-        primary: GithubReleaseSource(owner: kUpdateGithubOwner, repo: kUpdateGithubRepo, dio: dio),
+        primary: GithubReleaseSource(
+          owner: kUpdateGithubOwner,
+          repo: kUpdateGithubRepo,
+          dio: dio,
+        ),
         // 备源 URL 未配置（出厂缺省）→ 单主源；配置后主源任何失败自动切换。
-        fallback: fallbackUrl.isEmpty ? null : StaticJsonSource(url: fallbackUrl, dio: dio),
+        fallback: fallbackUrl.isEmpty
+            ? null
+            : StaticJsonSource(url: fallbackUrl, dio: dio),
         local: local,
       ).check();
     } on Object catch (e) {
       // 兜底：源层之外的装配/设置读取异常也收敛为 failed（静默口径，绝不向启动路径抛）。
-      return UpdateCheckResult.failed(primaryFailure: toUpdateFetchException(e));
+      return UpdateCheckResult.failed(
+        primaryFailure: toUpdateFetchException(e),
+      );
     }
   }
 }
 
-final NotifierProvider<UpdateController, UpdateCheckState> updateControllerProvider =
-    NotifierProvider<UpdateController, UpdateCheckState>(UpdateController.new);
+final NotifierProvider<UpdateController, UpdateCheckState>
+updateControllerProvider = NotifierProvider<UpdateController, UpdateCheckState>(
+  UpdateController.new,
+);
 
 /// 有新版本时非 null（全局挂载点；本轮 UI 消费方 = 设置页「关于」区，
 /// 集成者可在 app_shell 级 listen 本 provider 做启动弹窗）。
-final Provider<UpdateInfo?> updateAvailableProvider = Provider<UpdateInfo?>((Ref ref) {
+final Provider<UpdateInfo?> updateAvailableProvider = Provider<UpdateInfo?>((
+  Ref ref,
+) {
   final UpdateCheckState state = ref.watch(updateControllerProvider);
   return state.status == UpdateStatus.updateAvailable ? state.info : null;
 });
@@ -205,7 +230,9 @@ class UpdateSettingsController {
 
   /// url.trim()；空串 = 恢复出厂缺省（未配置）。
   Future<void> setFallbackUrl(String url) async {
-    await _ref.read(updateSettingsStoreProvider).write(kUpdateFallbackUrlKey, url.trim());
+    await _ref
+        .read(updateSettingsStoreProvider)
+        .write(kUpdateFallbackUrlKey, url.trim());
     _ref.invalidate(updateFallbackUrlProvider);
   }
 }
@@ -218,5 +245,7 @@ bool isValidFallbackUrl(String url) {
   final String trimmed = url.trim();
   if (trimmed.isEmpty) return true;
   final Uri? parsed = Uri.tryParse(trimmed);
-  return parsed != null && parsed.isAbsolute && (parsed.scheme == 'http' || parsed.scheme == 'https');
+  return parsed != null &&
+      parsed.isAbsolute &&
+      (parsed.scheme == 'http' || parsed.scheme == 'https');
 }

@@ -1,11 +1,108 @@
 #include "my_application.h"
 
+#include <flutter/method_channel.h>
+#include <flutter/standard_method_codec.h>
 #include <flutter_linux/flutter_linux.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+
+void HandleUpdateMethodCall(
+    FlMethodChannel* channel, FlMethodCall* method_call, gpointer user_data) {
+  g_autoptr(FlMethodResponse) response = nullptr;
+  if (strcmp(fl_method_call_get_name(method_call), "installPackage") != 0) {
+    response = FL_METHOD_RESPONSE(fl_method_not_implemented_response_new());
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  FlValue* arguments = fl_method_call_get_args(method_call);
+  if (fl_value_get_type(arguments) != FL_VALUE_TYPE_MAP) {
+    response = FL_METHOD_RESPONSE(
+        fl_method_error_response_new("bad_args", "arguments missing", nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  FlValue* path_value = fl_value_lookup_string(arguments, "path");
+  if (path_value == nullptr ||
+      fl_value_get_type(path_value) != FL_VALUE_TYPE_STRING) {
+    response = FL_METHOD_RESPONSE(
+        fl_method_error_response_new("bad_args", "path missing", nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  const gchar* archive = fl_value_get_string(path_value);
+  g_autoptr(GError) temp_error = nullptr;
+  g_autofree gchar* temp_dir =
+      g_dir_make_tmp("booksift-update.XXXXXX", &temp_error);
+  if (temp_dir == nullptr) {
+    response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "update_failed",
+        temp_error != nullptr ? temp_error->message : "temp dir failed",
+        nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  g_autofree gchar* executable =
+      g_file_read_link("/proc/self/exe", nullptr);
+  if (executable == nullptr) {
+    response = FL_METHOD_RESPONSE(
+        fl_method_error_response_new("update_failed", "bundle missing", nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  g_autofree gchar* bundle = g_path_get_dirname(executable);
+  g_autofree gchar* script =
+      g_build_filename(bundle, "data", "update", "booksift_updater.sh", nullptr);
+  if (!g_file_test(script, G_FILE_TEST_IS_REGULAR)) {
+    response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "update_failed", "update helper missing", nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  g_autofree gchar* helper =
+      g_build_filename(temp_dir, "booksift_updater.sh", nullptr);
+  g_autofree gchar* script_contents = nullptr;
+  g_autoptr(GError) copy_error = nullptr;
+  if (!g_file_get_contents(script, &script_contents, nullptr, &copy_error) ||
+      !g_file_set_contents(helper, script_contents, -1, &copy_error)) {
+    response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "update_failed",
+        copy_error != nullptr ? copy_error->message : "helper copy failed",
+        nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  if (chmod(helper, 0755) != 0) {
+    response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "update_failed", "helper permission failed", nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  g_autofree gchar* pid = g_strdup_printf("%d", getpid());
+  const gchar* argv[] = {"/bin/sh", helper, archive, bundle, pid, nullptr};
+  g_autoptr(GError) error = nullptr;
+  if (!g_spawn_async(bundle, const_cast<gchar**>(argv), nullptr,
+                     G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_SEARCH_PATH, nullptr,
+                     nullptr, nullptr, &error)) {
+    response = FL_METHOD_RESPONSE(fl_method_error_response_new(
+        "update_failed", error != nullptr ? error->message : "spawn failed",
+        nullptr));
+    fl_method_call_respond(method_call, response, nullptr);
+    return;
+  }
+  response = FL_METHOD_RESPONSE(fl_method_success_response_new(
+      fl_value_new_bool(TRUE)));
+  fl_method_call_respond(method_call, response, nullptr);
+  g_application_quit(G_APPLICATION(user_data));
+}
+
+}  // namespace
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -75,7 +172,15 @@ static void my_application_activate(GApplication* application) {
                            self);
   gtk_widget_realize(GTK_WIDGET(view));
 
-  fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  FlPluginRegistry* registry = FL_PLUGIN_REGISTRY(view);
+  fl_register_plugins(registry);
+  FlEngine* engine = fl_view_get_engine(view);
+  FlMethodChannel* update_channel = fl_method_channel_new(
+      fl_engine_get_binary_messenger(engine), "booksift/update",
+      FL_METHOD_CODEC(fl_standard_method_codec_new()));
+  g_object_ref_sink(update_channel);
+  fl_method_channel_set_method_call_handler(
+      update_channel, HandleUpdateMethodCall, self, nullptr);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

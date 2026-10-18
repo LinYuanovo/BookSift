@@ -21,33 +21,40 @@ import 'package:booksift/core/update/update_service.dart';
 
 // ── 常量（service 层测试 owner/repo = o/r；controller/widget 层走生产常量） ──
 
-const String kTestGithubUrl = 'https://api.github.com/repos/o/r/releases/latest';
+const String kTestGithubUrl =
+    'https://api.github.com/repos/o/r/releases/latest';
 
 /// UpdateController 生产常量（kUpdateGithubOwner/kUpdateGithubRepo）拼出的 latest 端点：
 /// controller/widget 级测试必须脚本化这个 URL（controller 内部自建 source）。
 final String kControllerGithubUrl =
     'https://api.github.com/repos/$kUpdateGithubOwner/$kUpdateGithubRepo/releases/latest';
 
-const String kTestApkUrl = 'https://github.com/o/r/releases/download/v1.1.0/app-v1.1.0.apk';
-const String kTestSha256AssetUrl = 'https://github.com/o/r/releases/download/v1.1.0/app-v1.1.0.apk.sha256';
-const String kTestSha256 = 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
+const String kTestApkUrl =
+    'https://github.com/o/r/releases/download/v1.1.0/android-v1.1.0.apk';
+const String kTestSha256AssetUrl =
+    'https://github.com/o/r/releases/download/v1.1.0/android-v1.1.0.apk.sha256';
+const String kTestSha256 =
+    'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const String kTestFallbackUrl = 'https://cdn.example.com/booksift/version.json';
 
 /// GitHub latest-release 端点（owner=o / repo=r，与测试常量一致）。
-GithubReleaseSource testGithubSource(Dio dio) => GithubReleaseSource(owner: 'o', repo: 'r', dio: dio);
+GithubReleaseSource testGithubSource(Dio dio) =>
+    GithubReleaseSource(owner: 'o', repo: 'r', dio: dio);
 
 // ── 脚本化 dio ──────────────────────────────────────────────────────────
 
 /// 单条脚本：status+body，或注入 [DioExceptionType]（模拟不可达/超时，无真实等待）；
 /// [delay] = 响应前等待（widget 测试用假时钟 Timer 定格「检查中」态；plain 测试为真实短等）。
 final class ScriptedResponse {
-  const ScriptedResponse(this.body, {this.status = 200, this.delay}) : errorType = null;
+  const ScriptedResponse(this.body, {this.status = 200, this.delay})
+    : errorType = null;
 
-  const ScriptedResponse.networkError([DioExceptionType type = DioExceptionType.connectionError])
-    : body = '',
-      status = 0,
-      delay = null,
-      errorType = type;
+  const ScriptedResponse.networkError([
+    DioExceptionType type = DioExceptionType.connectionError,
+  ]) : body = '',
+       status = 0,
+       delay = null,
+       errorType = type;
 
   final String body;
   final int status;
@@ -62,7 +69,8 @@ final class ScriptedAdapter implements HttpClientAdapter {
   final Map<String, ScriptedResponse> routes;
   final List<RequestOptions> requests = <RequestOptions>[];
 
-  List<String> get requestedUrls => requests.map((RequestOptions r) => r.uri.toString()).toList();
+  List<String> get requestedUrls =>
+      requests.map((RequestOptions r) => r.uri.toString()).toList();
 
   @override
   Future<ResponseBody> fetch(
@@ -81,7 +89,11 @@ final class ScriptedAdapter implements HttpClientAdapter {
     }
     final DioExceptionType? errorType = scripted.errorType;
     if (errorType != null) {
-      throw DioException(requestOptions: options, type: errorType, error: errorType.name);
+      throw DioException(
+        requestOptions: options,
+        type: errorType,
+        error: errorType.name,
+      );
     }
     final Duration? delay = scripted.delay;
     if (delay != null) {
@@ -101,17 +113,16 @@ final class ScriptedAdapter implements HttpClientAdapter {
 }
 
 /// 生产同款超时配置的 dio + 脚本化 adapter（覆盖真实传输层，不触 socket）。
-Dio scriptedDio(ScriptedAdapter adapter) =>
-    Dio(
-      BaseOptions(
-        connectTimeout: const Duration(seconds: 8),
-        receiveTimeout: const Duration(seconds: 8),
-      ),
-    )..httpClientAdapter = adapter;
+Dio scriptedDio(ScriptedAdapter adapter) => Dio(
+  BaseOptions(
+    connectTimeout: const Duration(seconds: 8),
+    receiveTimeout: const Duration(seconds: 8),
+  ),
+)..httpClientAdapter = adapter;
 
 // ── fixture JSON（§10.1 结构） ──────────────────────────────────────────
 
-/// GitHub latest release 响应；资产名走 `app-v{version}.apk[.sha256]` 约定。
+/// GitHub latest release 响应；资产名走 `android-v{version}.apk[.sha256]` 约定。
 String githubReleaseJson({
   String tag = 'v1.1.0',
   String body = '修复若干问题',
@@ -122,9 +133,16 @@ String githubReleaseJson({
   'name': tag,
   'body': body,
   'assets': <Map<String, Object?>>[
-    if (withApk) <String, Object?>{'name': 'app-$tag.apk', 'browser_download_url': kTestApkUrl},
+    if (withApk)
+      <String, Object?>{
+        'name': 'android-$tag.apk',
+        'browser_download_url': kTestApkUrl,
+      },
     if (withSha256Asset)
-      <String, Object?>{'name': 'app-$tag.apk.sha256', 'browser_download_url': kTestSha256AssetUrl},
+      <String, Object?>{
+        'name': 'android-$tag.apk.sha256',
+        'browser_download_url': kTestSha256AssetUrl,
+      },
   ],
 });
 
@@ -134,9 +152,13 @@ String versionJson({
   int versionCode = 120,
   String notes = '备源更新日志',
   String? minForce,
-  String apkUrl = 'https://cdn.example.com/app-v1.2.0.apk',
+  String apkUrl = 'https://cdn.example.com/android-v1.2.0.apk',
   String apkSha256 = kTestSha256,
   String iosUrl = 'https://apps.apple.com/app/id123456',
+  String? iosSha256,
+  String? windowsSha256,
+  String? macosSha256,
+  String? linuxSha256,
 }) => jsonEncode(<String, Object?>{
   'app': <String, Object?>{
     'version': version,
@@ -146,6 +168,10 @@ String versionJson({
     'apk_url': apkUrl,
     'apk_sha256': apkSha256,
     'ios_url': iosUrl,
+    'ios_sha256': ?iosSha256,
+    'windows_sha256': ?windowsSha256,
+    'macos_sha256': ?macosSha256,
+    'linux_sha256': ?linuxSha256,
   },
   'seed': <String, Object?>{
     'basic_version': 3,
@@ -176,7 +202,9 @@ List<Override> updateTestOverrides({
 }) => <Override>[
   updateDioProvider.overrideWithValue(scriptedDio(adapter)),
   localVersionProvider.overrideWith((Ref ref) async => local),
-  updateSettingsStoreProvider.overrideWithValue(store ?? InMemoryUpdateSettingsStore()),
+  updateSettingsStoreProvider.overrideWithValue(
+    store ?? InMemoryUpdateSettingsStore(),
+  ),
   // 启动静默延迟归零：widget 测试不留 5s pending timer（TESTING.md §1/§3.5）。
   updateStartupDelayProvider.overrideWithValue(Duration.zero),
 ];
@@ -193,12 +221,18 @@ void useTallSurface(WidgetTester tester) {
 /// mock 系统剪贴板通道（Clipboard.setData 走 SystemChannels.platform），返回调用记录。
 List<MethodCall> mockClipboard(WidgetTester tester) {
   final List<MethodCall> calls = <MethodCall>[];
-  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (MethodCall call) async {
-    calls.add(call);
-    return null;
-  });
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (MethodCall call) async {
+      calls.add(call);
+      return null;
+    },
+  );
   addTearDown(
-    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null),
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
   );
   return calls;
 }
@@ -206,5 +240,8 @@ List<MethodCall> mockClipboard(WidgetTester tester) {
 /// 取全部 Clipboard.setData 的 text 参数。
 List<String> clipboardTexts(List<MethodCall> calls) => calls
     .where((MethodCall c) => c.method == 'Clipboard.setData')
-    .map((MethodCall c) => (c.arguments! as Map<Object?, Object?>)['text']! as String)
+    .map(
+      (MethodCall c) =>
+          (c.arguments! as Map<Object?, Object?>)['text']! as String,
+    )
     .toList();
