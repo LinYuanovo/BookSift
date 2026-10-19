@@ -14,6 +14,7 @@ import 'data/repo/queries_providers.dart';
 import 'features/content/content_detail_page.dart';
 import 'features/content/detail_slot.dart';
 import 'features/content/online_post_page.dart';
+import 'theme/app_motion.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_radius.dart';
 import 'theme/app_spacing.dart';
@@ -737,33 +738,101 @@ class _DetailSlot extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final int? onlineTid = ref.watch(onlinePostDetailProvider);
+    final PostSelection? selection = ref.watch(detailSelectionProvider);
+    final AppMotionTheme motion = AppMotionTheme.of(context);
+    final Widget content;
     if (onlineTid != null) {
-      return OnlinePostPage(
-        key: ValueKey<int>(onlineTid),
+      content = OnlinePostPage(
+        key: ValueKey<String>('online:$onlineTid'),
         tid: onlineTid,
         onClose: () => ref.read(onlinePostDetailProvider.notifier).state = null,
       );
-    }
-    final PostSelection? selection = ref.watch(detailSelectionProvider);
-    if (selection != null) {
-      return ContentDetailPage(
-        key: ValueKey<int>(selection.postId),
+    } else if (selection != null) {
+      content = ContentDetailPage(
+        key: ValueKey<String>('post:${selection.postId}'),
         selection: selection,
         embedded: true,
       );
+    } else {
+      final AppColors colors = AppColors.of(context);
+      final AppTypography typography = AppTypography.of(context);
+      content = ConstrainedContent(
+        key: const ValueKey<String>('detail-empty'),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            AppIcon('book', size: AppMetrics.emptyStateIconSize, color: colors.accent),
+            SizedBox(height: AppSpacing.of(context).space4),
+            Text('选择左侧内容查看详情', style: typography.secondary.copyWith(color: colors.textMuted)),
+          ],
+        ),
+      );
     }
-    final AppColors colors = AppColors.of(context);
-    final AppTypography typography = AppTypography.of(context);
-    return ConstrainedContent(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          // 空态规格（§4）：线稿 accent · 64px。阅读语义 → 设计稿 i-book。
-          AppIcon('book', size: AppMetrics.emptyStateIconSize, color: colors.accent),
-          SizedBox(height: AppSpacing.of(context).space4),
-          Text('选择左侧内容查看详情', style: typography.secondary.copyWith(color: colors.textMuted)),
-        ],
-      ),
+    return DetailSlotSwitcher(motion: motion, child: content);
+  }
+}
+
+/// 详情槽切换器（独立出来让 widget 测试可验证转场隔离与弱动效退化）。
+class DetailSlotSwitcher extends StatefulWidget {
+  const DetailSlotSwitcher({
+    super.key,
+    required this.motion,
+    required this.child,
+  });
+
+  final AppMotionTheme motion;
+  final Widget child;
+
+  @override
+  State<DetailSlotSwitcher> createState() => _DetailSlotSwitcherState();
+}
+
+class _DetailSlotSwitcherState extends State<DetailSlotSwitcher> {
+  @override
+  Widget build(BuildContext context) {
+    final AppMotionTheme motion = widget.motion;
+    final Widget child = widget.child;
+    return AnimatedSwitcher(
+      key: const ValueKey<String>('right-detail-slot'),
+      duration: motion.enter.duration,
+      reverseDuration: motion.exit.duration,
+      switchInCurve: motion.enter.curve,
+      switchOutCurve: motion.exit.curve,
+      layoutBuilder: buildDetailSlotLayout,
+      transitionBuilder: (Widget child, Animation<double> animation) {
+        final Widget fade = FadeTransition(
+          key: const ValueKey<String>('detail-slot-fade'),
+          opacity: animation,
+          child: child,
+        );
+        if (motion.reduceMotion) return fade;
+        return ScaleTransition(
+          key: const ValueKey<String>('detail-slot-scale'),
+          scale: Tween<double>(begin: 0.98, end: 1).animate(animation),
+          child: fade,
+        );
+      },
+      child: child,
     );
   }
 }
+
+Widget buildDetailSlotLayout(Widget? currentChild, List<Widget> previousChildren) =>
+    Stack(
+      fit: StackFit.expand,
+      alignment: Alignment.center,
+      children: <Widget>[
+        for (final Widget child in previousChildren)
+          IgnorePointer(
+            key: const ValueKey<String>('detail-slot-outgoing'),
+            child: ExcludeFocus(
+              key: const ValueKey<String>('detail-slot-outgoing-focus'),
+              child: ExcludeSemantics(
+                key: const ValueKey<String>('detail-slot-outgoing-semantics'),
+                child: child,
+              ),
+            ),
+          ),
+        ?currentChild,
+      ],
+    );

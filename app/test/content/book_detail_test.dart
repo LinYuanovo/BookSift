@@ -383,7 +383,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final ContentDetailPage detail = tester.widget(find.byType(ContentDetailPage));
-      expect(detail.selection.postId, 18293);
+      expect(detail.selection.postId, 8);
       expect(detail.selection.initialFloorSeq, isNull);
     });
 

@@ -13,6 +13,7 @@ import 'core/widgets/window_title_bar.dart';
 import 'core/window/window_frame.dart';
 import 'data/seed_import_providers.dart';
 import 'theme/app_accent.dart';
+import 'theme/app_motion.dart';
 import 'theme/appearance_settings.dart';
 import 'theme/book_theme.dart';
 
@@ -42,10 +43,11 @@ class BookSiftApp extends ConsumerStatefulWidget {
   ConsumerState<BookSiftApp> createState() => _BookSiftAppState();
 }
 
-class _BookSiftAppState extends ConsumerState<BookSiftApp> {
+class _BookSiftAppState extends ConsumerState<BookSiftApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // 静默检查接线：首帧后幂等调度（ensureStartupCheckScheduled 内部 5s Timer）。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -58,11 +60,27 @@ class _BookSiftAppState extends ConsumerState<BookSiftApp> {
   }
 
   @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAccessibilityFeatures() {
+    setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     final FontFamilySet families = applySystemDefaultFont(ref.watch(fontServiceProvider).families);
     final AppAccentTheme accent = ref.watch(accentThemeProvider).value ?? AppAccentTheme.defaults;
     final AppearanceSettings appearance =
         ref.watch(appearanceSettingsProvider).value ?? const AppearanceSettings();
+    final bool systemReduceMotion =
+        WidgetsBinding.instance.platformDispatcher.accessibilityFeatures.disableAnimations;
+    final AppMotionTheme motion = appearance.reduceMotion || systemReduceMotion
+        ? AppMotionTheme.reducedTokens
+        : AppMotionTheme.standardTokens;
     return MaterialApp.router(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
@@ -73,6 +91,8 @@ class _BookSiftAppState extends ConsumerState<BookSiftApp> {
       theme: BookTheme.of(Brightness.light, families, accent, appearance.reduceMotion),
       darkTheme: BookTheme.of(Brightness.dark, families, accent, appearance.reduceMotion),
       themeMode: appearance.themeMode,
+      themeAnimationDuration: motion.transition.duration,
+      themeAnimationCurve: motion.transition.curve,
       // Windows 自绘标题栏：顶部条挂在 Navigator 之上（Toast 的根 Overlay 仍在下方），
       // 窗口拖动/双击最大化由 runner 的 HTCAPTION 命中交给系统（见 core/window/window_frame.dart）。
       builder: (BuildContext context, Widget? child) {

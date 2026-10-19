@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../core/icons.dart';
+import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../collector/collect_controller.dart';
 import '../../collector/collect_state.dart';
@@ -107,6 +108,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      sheetAnimationStyle: overlayAnimationStyle(context),
       builder: (BuildContext sheetContext) => SafeArea(
         child: ListView(
           shrinkWrap: true,
@@ -361,6 +363,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      sheetAnimationStyle: overlayAnimationStyle(context),
       builder: (BuildContext sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -741,6 +744,7 @@ void _showRandomSheet(BuildContext context, WidgetRef ref) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
+    sheetAnimationStyle: overlayAnimationStyle(context),
     // 固定高度面板（用户口径：70% 高、不随滑动改变）：不要拖拽手柄、禁用拖动，
     // 点遮罩 / 系统返回仍可关闭；无手柄时面板总高 = SizedBox 高度（有手柄会再叠加 48dp）。
     showDragHandle: false,

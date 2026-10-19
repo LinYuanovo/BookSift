@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/nav/overlay_motion.dart';
 import '../../data/repo/queries.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
@@ -116,6 +117,7 @@ void _pickDimension(
   showModalBottomSheet<void>(
     context: context,
     showDragHandle: true,
+    sheetAnimationStyle: overlayAnimationStyle(context),
     builder: (BuildContext sheetContext) => SafeArea(
       child: Consumer(
         builder: (BuildContext context, WidgetRef ref, Widget? child) {

@@ -114,6 +114,7 @@ class _AppToastViewState extends State<_AppToastView> with SingleTickerProviderS
   Timer? _holdTimer;
   bool _started = false;
   bool _notified = false;
+  bool _reduceMotion = false;
 
   @override
   void initState() {
@@ -125,10 +126,6 @@ class _AppToastViewState extends State<_AppToastView> with SingleTickerProviderS
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_started) {
-      return;
-    }
-    _started = true;
     final AppMotionTheme motion = AppMotionTheme.of(context);
     // 淡入 = fast 档时长（app_motion §6.2 语义：Toast/Snackbar 滑入 = `--motion-fast`）
     // + enter 方向曲线；淡出 = exit 语义键（fast + accelerate，exit-faster-than-enter）。
@@ -136,6 +133,18 @@ class _AppToastViewState extends State<_AppToastView> with SingleTickerProviderS
     // 退化为 ≤100ms —— 本组件无需另设开关。
     final MotionSpec inSpec = (duration: motion.fast, curve: motion.enter.curve);
     final MotionSpec outSpec = motion.exit;
+    if (_started) {
+      _fade
+        ..duration = inSpec.duration
+        ..reverseDuration = outSpec.duration;
+      if (motion.reduceMotion && !_reduceMotion && _fade.isAnimating) {
+        _fade.value = _fade.status == AnimationStatus.reverse ? 0 : 1;
+      }
+      _reduceMotion = motion.reduceMotion;
+      return;
+    }
+    _started = true;
+    _reduceMotion = motion.reduceMotion;
     _opacity = CurvedAnimation(parent: _fade, curve: inSpec.curve, reverseCurve: outSpec.curve);
     _fade
       ..duration = inSpec.duration
@@ -217,7 +226,10 @@ class _AppToastViewState extends State<_AppToastView> with SingleTickerProviderS
                 // 用户反馈的「toast 底部莫名黄线」即此）。
                 child: DefaultTextStyle(
                   style: t.body.copyWith(color: c.text),
-                  child: Text(widget.message, textAlign: TextAlign.center),
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(widget.message, textAlign: TextAlign.center),
+                  ),
                 ),
               ),
           ),

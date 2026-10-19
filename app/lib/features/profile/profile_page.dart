@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
 import '../../core/icons.dart';
+import '../../core/nav/overlay_motion.dart';
 import '../../data/db/app_database.dart';
 import '../../data/repo/queries.dart';
 import '../../data/repo/queries_providers.dart';
@@ -36,6 +37,7 @@ class ProfilePage extends ConsumerWidget {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      sheetAnimationStyle: overlayAnimationStyle(context),
       builder: (BuildContext sheetContext) => SafeArea(
         child: Padding(
           padding: EdgeInsets.fromLTRB(

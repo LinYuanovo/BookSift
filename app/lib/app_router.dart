@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'app_shell.dart';
+import 'core/nav/page_transition.dart';
 import 'features/collect/collect_page.dart';
 import 'features/content/book_detail_page.dart';
 import 'features/content/content_detail_page.dart';
@@ -15,8 +16,6 @@ import 'features/profile/profile_page.dart';
 import 'features/profile/settings_page.dart';
 import 'features/rank/rank_page.dart';
 import 'features/search/search_page.dart';
-import 'theme/app_colors.dart';
-import 'theme/app_motion.dart';
 
 /// 全局路由（原型 §4 信息架构：4 Tab + 内容详情/书聚合/设置）。
 ///
@@ -149,25 +148,15 @@ int _idParam(GoRouterState state) =>
     int.tryParse(state.pathParameters['id'] ?? '') ?? 0;
 
 /// SharedAxis 页面工厂（§6.3 代码草图；fillColor 取 canvas 与页面底一致）。
-CustomTransitionPage<void> _sharedAxisPage({
+Page<void> _sharedAxisPage({
   required BuildContext context,
   required GoRouterState state,
   required SharedAxisTransitionType type,
   required Widget child,
 }) {
-  final AppMotionTheme motion = AppMotionTheme.of(context);
-  return CustomTransitionPage<void>(
+  return MotionPage<void>(
     key: state.pageKey,
-    transitionDuration: motion.transition.duration,
-    reverseTransitionDuration: motion.transition.duration,
-    transitionsBuilder: (context, animation, secondaryAnimation, pageChild) =>
-        SharedAxisTransition(
-          animation: animation,
-          secondaryAnimation: secondaryAnimation,
-          transitionType: type,
-          fillColor: AppColors.of(context).canvas,
-          child: pageChild,
-        ),
+    type: type,
     child: child,
   );
 }

@@ -1,8 +1,7 @@
 import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 
-import '../../theme/app_colors.dart';
-import '../../theme/app_motion.dart';
+import 'page_transition.dart';
 
 // 中间功能区页面栈（用户口径：书聚合页 / 设置 / 关于 / 热门榜 / 在线帖 等
 // 「单独弹出的页面」在 expanded 三栏下不再盖住整窗，直接显示在**中间功能区**）。
@@ -57,17 +56,5 @@ Route<void> _centerRoute(
   Widget page,
   SharedAxisTransitionType type,
 ) {
-  final AppMotionTheme motion = AppMotionTheme.of(context);
-  return PageRouteBuilder<void>(
-    pageBuilder: (context, animation, secondaryAnimation) => page,
-    transitionDuration: motion.transition.duration,
-    reverseTransitionDuration: motion.transition.duration,
-    transitionsBuilder: (context, animation, secondaryAnimation, child) => SharedAxisTransition(
-      animation: animation,
-      secondaryAnimation: secondaryAnimation,
-      transitionType: type,
-      fillColor: AppColors.of(context).canvas,
-      child: child,
-    ),
-  );
+  return MotionPage<void>(child: page, type: type).createRoute(context);
 }

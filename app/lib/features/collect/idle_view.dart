@@ -9,6 +9,7 @@ import '../../theme/app_spacing.dart';
 import '../home/cards.dart';
 import 'buttons.dart';
 import 'forum_cards.dart';
+import 'status_banner.dart';
 
 /// 空闲态视图（原型 §5.9：账号卡 / 关注吧卡片列表 / + 添加贴吧 / 立即采集大按钮 /
 /// 最近日志列表）。
@@ -16,9 +17,10 @@ import 'forum_cards.dart';
 /// 宽屏（medium+）沿用 v1.3 宽屏语汇的双栏排布（§9.6/§9.3：关注吧 + 操作左栏，
 /// 日志右栏；仪表盘只在运行态）——不强行仪表盘化。
 class CollectIdleView extends ConsumerWidget {
-  const CollectIdleView({super.key, required this.wide});
+  const CollectIdleView({super.key, required this.wide, this.banner});
 
   final bool wide;
+  final String? banner;
 
   Future<void> _startAll(BuildContext context, WidgetRef ref) async {
     try {
@@ -53,6 +55,7 @@ class CollectIdleView extends ConsumerWidget {
       return ListView(
         padding: _listPadding(context),
         children: <Widget>[
+          AnimatedCollectStatusBanner(text: banner),
           const AccountCard(),
           const SectionTitle(label: '关注吧'),
           const ForumSection(),
@@ -74,6 +77,7 @@ class CollectIdleView extends ConsumerWidget {
             child: ListView(
               padding: _listPadding(context),
               children: <Widget>[
+                AnimatedCollectStatusBanner(text: banner),
                 const AccountCard(),
                 const SectionTitle(label: '关注吧'),
                 const ForumSection(),

@@ -43,6 +43,8 @@ dependencies:
   # 升级 Flutter SDK 后可放开上限。
   drift: '>=2.34.0 <2.35.0'
   drift_flutter: ^0.3.1
+  # Headless diagnostics open existing databases without triggering migrations.
+  sqlite3: ^3.5.2
   go_router: ^17.5.0
   dio: ^5.11.1
   cached_network_image: ^3.4.1
@@ -93,9 +95,6 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   drift_dev: '>=2.34.0 <2.35.0'
   build_runner: ^2.4.13
-  # M1-③ 种子导入测试：fixture 迷你 seed.db 直接按种子包 schema 建库（含 seed-only 溯源列，
-  # 与 drift schema 不同，不能用 AppDatabase 生成）。
-  sqlite3: ^3.5.2
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

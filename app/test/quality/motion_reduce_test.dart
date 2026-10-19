@@ -14,9 +14,14 @@ library;
 
 import 'dart:io';
 
+import 'package:animations/animations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:booksift/collector/collect_state.dart';
+import 'package:booksift/core/fonts/font_tokens.dart';
+import 'package:booksift/core/nav/overlay_motion.dart';
+import 'package:booksift/core/nav/page_transition.dart';
+import 'package:booksift/features/collect/status_banner.dart';
 import 'package:booksift/features/collect/steps_timeline.dart';
 import 'package:booksift/theme/app_motion.dart';
 import 'package:booksift/theme/book_theme.dart';
@@ -140,6 +145,222 @@ void main() {
       );
       expect(resolved, same(AppMotionTheme.reducedTokens));
     });
+  });
+
+  group('页面转场', () {
+    testWidgets('标准模式保留共享轴转场', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Theme(
+            data: BookTheme.light,
+            child: MediaQuery(
+              data: const MediaQueryData(),
+              child: Builder(
+                builder: (BuildContext context) => buildPageTransition(
+                  context: context,
+                  animation: const AlwaysStoppedAnimation<double>(1),
+                  secondaryAnimation: const AlwaysStoppedAnimation<double>(0),
+                  type: SharedAxisTransitionType.horizontal,
+                  child: const SizedBox(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(SharedAxisTransition), findsOneWidget);
+    });
+
+    testWidgets('减弱动效只使用淡入，不使用位移转场', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: Theme(
+            data: BookTheme.of(Brightness.light, FontFamilySet.standard, null, true),
+            child: MediaQuery(
+              data: const MediaQueryData(),
+              child: Builder(
+                builder: (BuildContext context) => buildPageTransition(
+                  context: context,
+                  animation: const AlwaysStoppedAnimation<double>(1),
+                  secondaryAnimation: const AlwaysStoppedAnimation<double>(0),
+                  type: SharedAxisTransitionType.horizontal,
+                  child: const SizedBox(),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(SharedAxisTransition), findsNothing);
+      expect(find.byType(FadeTransition), findsOneWidget);
+    });
+  });
+
+  group('采集状态横幅', () {
+    testWidgets('标准动效使用淡入与高度过渡', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: BookTheme.light,
+          home: const Scaffold(
+            body: AnimatedCollectStatusBanner(text: '采集暂停'),
+          ),
+        ),
+      );
+
+      expect(
+        find.descendant(
+          of: find.byType(AnimatedCollectStatusBanner),
+          matching: find.byType(SizeTransition),
+        ),
+        findsWidgets,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(AnimatedCollectStatusBanner),
+          matching: find.byType(FadeTransition),
+        ),
+        findsWidgets,
+      );
+      expect(find.text('采集暂停'), findsOneWidget);
+    });
+
+    testWidgets('减弱动效保留淡入且移除高度变化', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: BookTheme.of(Brightness.light, FontFamilySet.standard, null, true),
+          home: const Scaffold(
+            body: AnimatedCollectStatusBanner(text: '采集暂停'),
+          ),
+        ),
+      );
+
+      expect(
+        find.descendant(
+          of: find.byType(AnimatedCollectStatusBanner),
+          matching: find.byType(SizeTransition),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(AnimatedCollectStatusBanner),
+          matching: find.byType(FadeTransition),
+        ),
+        findsWidgets,
+      );
+      expect(find.text('采集暂停'), findsOneWidget);
+    });
+
+  });
+
+  group('模态浮层动效', () {
+    testWidgets('标准模式的弹窗、菜单与底部面板使用语义动效 token', (WidgetTester tester) async {
+      late AnimationStyle sheet;
+      late AnimationStyle dialog;
+      late AnimationStyle menu;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: BookTheme.light,
+          home: Builder(
+            builder: (BuildContext context) {
+              sheet = overlayAnimationStyle(context);
+              dialog = dialogAnimationStyle(context);
+              menu = menuAnimationStyle(context);
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      expect(sheet.duration, AppMotionTheme.standardTokens.transition.duration);
+      expect(sheet.reverseDuration, AppMotionTheme.standardTokens.exit.duration);
+      expect(dialog.duration, AppMotionTheme.standardTokens.exit.duration);
+      expect(dialog.reverseDuration, AppMotionTheme.standardTokens.exit.duration);
+      expect(menu.duration, AppMotionTheme.standardTokens.exit.duration);
+      expect(menu.reverseDuration, AppMotionTheme.standardTokens.exit.duration);
+    });
+
+    testWidgets('应用内与系统减少动效都会关闭弹窗及底部面板动画', (WidgetTester tester) async {
+      late AnimationStyle appStyle;
+      late AnimationStyle systemStyle;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: BookTheme.of(Brightness.light, FontFamilySet.standard, null, true),
+          home: Builder(
+            builder: (BuildContext context) {
+              appStyle = overlayAnimationStyle(context);
+              return MediaQuery(
+                data: MediaQuery.of(context).copyWith(disableAnimations: true),
+                child: Builder(
+                  builder: (BuildContext inner) {
+                    systemStyle = overlayAnimationStyle(inner);
+                    return const SizedBox.shrink();
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      expect(appStyle, AnimationStyle.noAnimation);
+      expect(systemStyle, AnimationStyle.noAnimation);
+    });
+  });
+
+  testWidgets('已打开页面在系统关闭动画偏好变化后退场也读取新时长', (WidgetTester tester) async {
+    final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        theme: BookTheme.light,
+        home: const SizedBox.shrink(),
+      ),
+    );
+    final PageRoute<void> route = MotionPage<void>(
+      type: SharedAxisTransitionType.horizontal,
+      child: const SizedBox.shrink(),
+    ).createRoute(navigatorKey.currentState!.context) as PageRoute<void>;
+    navigatorKey.currentState!.push(route);
+    await tester.pumpAndSettle();
+    expect(route.reverseTransitionDuration, const Duration(milliseconds: 200));
+
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    await tester.pump();
+    expect(route.reverseTransitionDuration, const Duration(milliseconds: 100));
+    navigatorKey.currentState!.pop();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(route.animation!.value, greaterThan(0));
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(route.animation!.value, 0);
+  });
+
+  testWidgets('正在入场时启用系统减弱动效会立即完成转场', (WidgetTester tester) async {
+    final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+    addTearDown(tester.binding.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        theme: BookTheme.light,
+        home: const SizedBox.shrink(),
+      ),
+    );
+    final PageRoute<void> route = MotionPage<void>(
+      type: SharedAxisTransitionType.horizontal,
+      child: const SizedBox.shrink(),
+    ).createRoute(navigatorKey.currentState!.context) as PageRoute<void>;
+    navigatorKey.currentState!.push(route);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 40));
+    expect(route.animation!.value, lessThan(1));
+
+    tester.binding.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    await tester.pump();
+    expect(route.animation!.value, 1);
+    expect(route.animation!.status, AnimationStatus.completed);
   });
 
   group('pulse live-toggle（Phase 5 集成审查 minor-1）', () {

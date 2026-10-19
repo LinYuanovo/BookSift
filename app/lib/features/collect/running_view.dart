@@ -12,6 +12,7 @@ import 'log_box.dart';
 import 'progress_ring.dart';
 import 'stat_grid.dart';
 import 'steps_timeline.dart';
+import 'status_banner.dart';
 import 'watermark_card.dart';
 
 /// 运行态手机视图（设计稿 06 采集进度页逐块复刻，index.html:1584–1660）。
@@ -61,10 +62,10 @@ class CollectRunningView extends StatelessWidget {
       // .pad：padding space3 space5 space5（index.html:248）
       padding: EdgeInsets.fromLTRB(s.pagePadding, s.space3, s.pagePadding, s.space5),
       children: <Widget>[
-        if (state.banner != null) ...<Widget>[
-          _Banner(text: state.banner!),
-          SizedBox(height: s.space3),
-        ],
+        AnimatedCollectStatusBanner(
+          text: state.banner,
+          bottomSpacing: s.space3,
+        ),
         // ── 主卡（index.html:1603–1618）──
         Container(
           padding: EdgeInsets.all(s.cardPadding),
@@ -146,30 +147,6 @@ class CollectRunningView extends StatelessWidget {
         ),
         SizedBox(height: s.space4), // index.html:1651 底部留白
       ],
-    );
-  }
-}
-
-/// 降级横幅（§8.12 降级矩阵；danger-soft 底 + danger 字）。
-class _Banner extends StatelessWidget {
-  const _Banner({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    final AppColors c = AppColors.of(context);
-    final AppTypography t = AppTypography.of(context);
-    final AppSpacing s = AppSpacing.of(context);
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.symmetric(horizontal: s.space4, vertical: s.space3),
-      decoration: BoxDecoration(color: c.dangerSoft, borderRadius: AppRadius.mdBorder),
-      child: Row(
-        children: <Widget>[
-          Expanded(child: Text(text, style: t.secondary.copyWith(color: c.danger))),
-        ],
-      ),
     );
   }
 }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../collector/collect_controller.dart';
 import '../../collector/scheduler.dart';
 import '../../core/icons.dart';
+import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../data/db/app_database.dart';
 import '../../data/bduss.dart';
@@ -299,6 +300,7 @@ class CollectEmptyForums extends StatelessWidget {
 Future<void> showAddForumDialog(BuildContext context) {
   return showDialog<void>(
     context: context,
+    animationStyle: dialogAnimationStyle(context),
     builder: (BuildContext context) => const _AddForumDialog(),
   );
 }

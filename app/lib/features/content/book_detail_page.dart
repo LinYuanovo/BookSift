@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/external_launch.dart';
 import '../../core/icons.dart';
+import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../data/db/app_database.dart';
@@ -170,6 +171,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
+      sheetAnimationStyle: overlayAnimationStyle(context),
       builder: (BuildContext sheetContext) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: available * AppMetrics.tocSheetHeightFactor),
@@ -293,6 +295,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
               },
             ),
           PopupMenuButton<String>(
+            popUpAnimationStyle: menuAnimationStyle(context),
             // 菜单容器 = r14 圆角（popupMenuTheme），条目墨渍默认直角会外溢：
             // PopupMenuButton.clipBehavior 默认 Clip.none，须显式裁到菜单形状。
             clipBehavior: Clip.antiAlias,
@@ -446,6 +449,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
                   onChanged: (SemanticFilter v) => setState(() => _filter = v),
                 ),
                 PopupMenuButton<EntrySort>(
+                  popUpAnimationStyle: menuAnimationStyle(context),
                   // 同上：选中项 accent-soft 染底/悬停墨渍是直角，须裁进 r14 菜单。
                   clipBehavior: Clip.antiAlias,
                   tooltip: '排序',

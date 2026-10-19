@@ -6,6 +6,7 @@ import '../../core/fonts/font_service.dart';
 import '../../core/fonts/font_tokens.dart';
 import '../../core/fonts/system_font_catalog.dart';
 import '../../core/icons.dart';
+import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
@@ -82,6 +83,7 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
     }
     final SystemFontEntry? picked = await showDialog<SystemFontEntry>(
       context: context,
+      animationStyle: dialogAnimationStyle(context),
       builder: (BuildContext context) => _SystemFontPickerDialog(fonts: scan.fonts),
     );
     if (picked == null || !mounted) return;
@@ -98,6 +100,7 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
     final AppColors colors = AppColors.of(context);
     final bool? ok = await showDialog<bool>(
       context: context,
+      animationStyle: dialogAnimationStyle(context),
       builder: (BuildContext context) => AlertDialog(
         title: const Text('删除字体'),
         content: Text('删除「${font.familyName}」？引用它的角色将恢复系统字体。'),

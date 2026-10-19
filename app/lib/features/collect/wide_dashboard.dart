@@ -14,6 +14,7 @@ import 'log_table.dart';
 import 'progress_ring.dart';
 import 'stat_grid.dart';
 import 'steps_timeline.dart';
+import 'status_banner.dart';
 import 'watermark_card.dart';
 
 /// 采集仪表盘（运行态宽屏；设计稿 W5t index.html:2806–2905 / W5d 3400–3495，
@@ -140,7 +141,16 @@ class CollectWideDashboard extends StatelessWidget {
         return SingleChildScrollView(
           // .wdash padding：space5 padX space6（index.html:982）
           padding: EdgeInsets.fromLTRB(padX, s.space5, padX, s.space6),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              AnimatedCollectStatusBanner(
+                text: state.banner,
+                bottomSpacing: s.space5,
+              ),
+              ...rows,
+            ],
+          ),
         );
       },
     );

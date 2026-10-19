@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../collector/collect_settings_keys.dart';
 import '../../collector/scheduler.dart' show kMaxConcurrencyBduss;
 import '../../core/constants.dart';
 import '../../data/db/app_database.dart';
@@ -31,7 +32,7 @@ final FutureProvider<CollectSettings> collectSettingsProvider =
         final String? wifi = await read(SettingsKeys.wifiOnly);
         final String? concurrent = await read(SettingsKeys.concurrentForums);
         return CollectSettings(
-          wifiOnly: wifi == null ? true : wifi != 'false',
+          wifiOnly: wifiOnlyFromSetting(wifi),
           concurrentForums:
               (int.tryParse(concurrent ?? '') ?? 2).clamp(2, kMaxConcurrencyBduss),
         );

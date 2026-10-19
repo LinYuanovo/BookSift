@@ -169,7 +169,10 @@ class _CollectPageState extends ConsumerState<CollectPage> {
                         concurrency: settings.concurrentForums,
                         onCancel: _cancel,
                       ))
-              : CollectIdleView(wide: size != WindowSizeClass.compact),
+              : CollectIdleView(
+                  wide: size != WindowSizeClass.compact,
+                  banner: state.banner,
+                ),
         );
       },
     );

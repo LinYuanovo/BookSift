@@ -1093,6 +1093,7 @@ class StaggerPanel extends StatefulWidget {
 class StaggerPanelState extends State<StaggerPanel> with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(vsync: this);
   bool _started = false;
+  bool _reduceMotion = false;
 
   @override
   void didChangeDependencies() {
@@ -1101,6 +1102,10 @@ class StaggerPanelState extends State<StaggerPanel> with SingleTickerProviderSta
     // AnimationController.forward() 在 duration 为 null 时直接断言抛错。
     final AppMotionTheme motion = AppMotionTheme.of(context);
     _controller.duration = motion.enter.duration + motion.staggerAt(7);
+    if (_started && motion.reduceMotion && !_reduceMotion && _controller.isAnimating) {
+      _controller.value = 1;
+    }
+    _reduceMotion = motion.reduceMotion;
     if (!_started) {
       _started = true;
       _controller.forward();
@@ -1188,6 +1193,7 @@ class StaggerItem extends StatefulWidget {
 class _StaggerItemState extends State<StaggerItem> with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late final AnimationController _controller = AnimationController(vsync: this);
   bool _started = false;
+  bool _reduceMotion = false;
 
   @override
   bool get wantKeepAlive => widget.index < 8;
@@ -1198,6 +1204,10 @@ class _StaggerItemState extends State<StaggerItem> with SingleTickerProviderStat
     // 同 StaggerPanelState：duration 必须先于 forward() 落定，否则断言抛错。
     final AppMotionTheme motion = AppMotionTheme.of(context);
     _controller.duration = motion.enter.duration + motion.staggerAt(widget.index);
+    if (_started && motion.reduceMotion && !_reduceMotion && _controller.isAnimating) {
+      _controller.value = 1;
+    }
+    _reduceMotion = motion.reduceMotion;
     if (!_started) {
       _started = true;
       _controller.forward();

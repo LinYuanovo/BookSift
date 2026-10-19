@@ -11,6 +11,7 @@ import '../../collector/collect_providers.dart';
 import '../../collector/post_refresh.dart';
 import '../../core/external_launch.dart';
 import '../../core/icons.dart';
+import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../data/db/app_database.dart';
@@ -315,6 +316,7 @@ class _ContentDetailPageState extends ConsumerState<ContentDetailPage> {
               onPressed: () => _setSelectMode(!_selectMode),
             ),
             PopupMenuButton<String>(
+              popUpAnimationStyle: menuAnimationStyle(context),
               // r14 菜单形状裁切：条目墨渍/高亮默认直角，会外溢到菜单圆角之外。
               clipBehavior: Clip.antiAlias,
               tooltip: '更多',
@@ -659,6 +661,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      sheetAnimationStyle: overlayAnimationStyle(context),
       builder: (BuildContext sheetContext) => SafeArea(
         child: ListView(
           shrinkWrap: true,
@@ -1045,6 +1048,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     final AppColors c = AppColors.of(context);
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
+    final AppMotionTheme motion = AppMotionTheme.of(context);
     final List<Bookmark> bookmarks =
         ref.watch(bookmarksProvider).value ?? const <Bookmark>[];
     final List<Favorite> favorites =
@@ -1070,19 +1074,39 @@ class _PostBodyState extends ConsumerState<_PostBody> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: <Widget>[
-                AppIcon(
-                  svgIcon,
-                  size: 20,
-                  color: active ? c.accentStrong : c.textSecondary,
+                AnimatedSwitcher(
+                  key: ValueKey<String>('post_action_$svgIcon'),
+                  duration: motion.fast,
+                  switchInCurve: motion.decelerate,
+                  switchOutCurve: motion.exit.curve,
+                  transitionBuilder: (Widget child, Animation<double> animation) {
+                    final Widget fade = FadeTransition(opacity: animation, child: child);
+                    return motion.reduceMotion
+                        ? fade
+                        : ScaleTransition(
+                            scale: Tween<double>(begin: 0.8, end: 1).animate(
+                              CurvedAnimation(parent: animation, curve: motion.springCurve),
+                            ),
+                            child: fade,
+                          );
+                  },
+                  child: AppIcon(
+                    svgIcon,
+                    key: ValueKey<bool>(active),
+                    size: 20,
+                    color: active ? c.accentStrong : c.textSecondary,
+                  ),
                 ),
                 // 图标↔文案 gap 4（设计 .actionbar .act{gap:4px}，index.html:677）。
                 SizedBox(height: s.space1),
-                Text(
-                  label,
+                AnimatedDefaultTextStyle(
+                  duration: motion.fast,
+                  curve: motion.standard,
                   style: t.label.copyWith(
                     letterSpacing: 0,
                     color: active ? c.accentStrong : c.textMuted,
                   ),
+                  child: Text(label),
                 ),
               ],
             ),
@@ -1333,6 +1357,7 @@ void showImageViewer(
     context: context,
     // 任务 3：外框不再占满窗口，点弹层外（barrier）即关闭。
     barrierDismissible: true,
+    animationStyle: dialogAnimationStyle(context),
     builder: (BuildContext context) => _ImageViewerDialog(
       images: gallery.images,
       initialIndex: gallery.index,

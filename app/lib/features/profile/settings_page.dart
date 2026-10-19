@@ -8,6 +8,8 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../../core/fonts/font_service.dart';
 import '../../core/icons.dart';
 import '../../core/nav/center_slot.dart';
+import '../../core/nav/overlay_motion.dart';
+import '../../core/nav/page_transition.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../core/update/update_controller.dart';
 import '../../core/update/update_download_controller.dart';
@@ -42,22 +44,11 @@ class SettingsPage extends ConsumerWidget {
 
   /// 父级→子级 = vertical 共享轴（§6.3，与 /settings 路由同族转场）。
   void _openFontManage(BuildContext context) {
-    final AppMotionTheme motion = AppMotionTheme.of(context);
     Navigator.of(context).push(
-      PageRouteBuilder<void>(
-        transitionDuration: motion.transition.duration,
-        reverseTransitionDuration: motion.transition.duration,
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            const FontManagePage(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
-            SharedAxisTransition(
-              animation: animation,
-              secondaryAnimation: secondaryAnimation,
-              transitionType: SharedAxisTransitionType.vertical,
-              fillColor: AppColors.of(context).canvas,
-              child: child,
-            ),
-      ),
+      MotionPage<void>(
+        type: SharedAxisTransitionType.vertical,
+        child: const FontManagePage(),
+      ).createRoute(context),
     );
   }
 
@@ -361,6 +352,7 @@ class _BdussTileState extends ConsumerState<_BdussTile> {
     final TextEditingController controller = TextEditingController();
     final String? submitted = await showDialog<String>(
       context: context,
+      animationStyle: dialogAnimationStyle(context),
       builder: (BuildContext dialogContext) => AlertDialog(
         title: const Text('BDUSS 导入'),
         content: Column(
@@ -748,6 +740,7 @@ class _AboutSection extends ConsumerWidget {
     return showDialog<void>(
       context: pageContext,
       barrierDismissible: !forced,
+      animationStyle: dialogAnimationStyle(pageContext),
       builder: (BuildContext dialogContext) {
         return PopScope<void>(
           canPop: !forced,
@@ -847,6 +840,7 @@ class _AboutSection extends ConsumerWidget {
     );
     final String? submitted = await showDialog<String>(
       context: context,
+      animationStyle: dialogAnimationStyle(context),
       builder: (BuildContext dialogContext) => AlertDialog(
         title: const Text('更新备源'),
         content: Column(

@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import '../../collector/tieba_search.dart';
 import '../../core/external_launch.dart';
 import '../../core/icons.dart';
+import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../core/widgets/scroll_chrome.dart';
 import '../../data/db/app_database.dart';
@@ -801,6 +802,7 @@ void _showResultsToc(
     context: context,
     showDragHandle: true,
     isScrollControlled: true,
+    sheetAnimationStyle: overlayAnimationStyle(context),
     builder: (BuildContext sheetContext) =>
         _ResultsTocSheet(toc: toc, onPick: onPick, store: store, signature: signature),
   );

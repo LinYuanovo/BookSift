@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/icons.dart';
+import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/app_toast.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_radius.dart';
@@ -223,6 +224,7 @@ Future<void> showBooklistExportSheet(
     isScrollControlled: true,
     useSafeArea: true,
     showDragHandle: true,
+    sheetAnimationStyle: overlayAnimationStyle(context),
     // 容器样式吃主题 bottomSheetTheme（raised 底 + 顶部 r24），不另传 backgroundColor。
     builder: (BuildContext sheetContext) =>
         BooklistExportSheet(doc: doc, service: service),
