@@ -6,7 +6,7 @@
 #   → preflight（flutter 在 PATH / pubspec 在位）
 #   → flutter build linux --release（timeout 墙钟看门狗，日志 tee 到 app/build/release_logs/）
 #   → 产物闸门（booksift 可执行 / lib/libsqlite3.so / data/flutter_assets）
-#   → 打包 dist_release/linux-x64-v<VERSION>.tar.gz + .sha256（纯 64 位 hex 一行）
+#   → 打包 dist_release/BookSift-linux-x64-v<VERSION>.tar.gz + .sha256（纯 64 位 hex 一行）
 #   → 打印 dist_release 清单
 #
 # 退出码：0 成功 / 2 preflight 受阻 / 3 构建失败 / 4 产物闸门未过或打包失败
@@ -48,7 +48,7 @@ VERSION="$(awk '/^version:/{gsub(/[+].*/,"",$2); print $2; exit}' "$APP_DIR/pubs
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   fail "无法从 app/pubspec.yaml 解析 version（期望形如 version: 1.0.0+1，实际得到 '$VERSION'）。" 2
 fi
-echo "  版本 $VERSION  →  dist_release/linux-x64-v$VERSION.tar.gz"
+echo "  版本 $VERSION  →  dist_release/BookSift-linux-x64-v$VERSION.tar.gz"
 
 mkdir -p "$DIST_DIR" "$LOG_DIR"
 
@@ -99,7 +99,7 @@ if [[ ! -d "$BUNDLE_DIR/data/flutter_assets" ]]; then
 fi
 echo '  ✓ booksift（可执行）/ lib/libsqlite3.so / data/flutter_assets 均在位'
 
-PKG_NAME="linux-x64-v$VERSION"
+PKG_NAME="BookSift-linux-x64-v$VERSION"
 TAR_PATH="$DIST_DIR/$PKG_NAME.tar.gz"
 # GNU tar --transform：包内顶层目录固定为 $PKG_NAME/（Ubuntu 自带 GNU tar）
 if ! tar -czf "$TAR_PATH" -C "$(dirname -- "$BUNDLE_DIR")" \

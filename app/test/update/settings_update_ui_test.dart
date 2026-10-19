@@ -91,11 +91,11 @@ String versionJsonWithPlatformUrls({Set<String> omitted = const <String>{}}) {
   final Map<String, Object?> app = (json['app']! as Map)
       .cast<String, Object?>();
   app.addAll(<String, String>{
-    'apk_url': 'https://cdn.example.com/android-v1.2.0.apk',
-    'ios_url': 'https://cdn.example.com/ios-v1.2.0.ipa',
-    'windows_url': 'https://cdn.example.com/windows-x64-v1.2.0.zip',
-    'macos_url': 'https://cdn.example.com/macos-universal-v1.2.0.zip',
-    'linux_url': 'https://cdn.example.com/linux-x64-v1.2.0.tar.gz',
+    'apk_url': 'https://cdn.example.com/BookSift-android-v1.2.0.apk',
+    'ios_url': 'https://cdn.example.com/BookSift-ios-v1.2.0.ipa',
+    'windows_url': 'https://cdn.example.com/BookSift-windows-x64-v1.2.0.zip',
+    'macos_url': 'https://cdn.example.com/BookSift-macos-universal-v1.2.0.zip',
+    'linux_url': 'https://cdn.example.com/BookSift-linux-x64-v1.2.0.tar.gz',
   });
   for (final String key in omitted) {
     app.remove(key);
@@ -107,7 +107,7 @@ String versionJsonWithPlatformUrls({Set<String> omitted = const <String>{}}) {
 UpdateInfo shotUpdateInfo() => UpdateInfo(
   version: '1.2.0',
   source: UpdateSourceKind.github,
-  apkUrl: 'https://example.com/android-v1.2.0.apk',
+  apkUrl: 'https://example.com/BookSift-android-v1.2.0.apk',
   notes: '修复若干问题，并优化下载与安装体验。',
 );
 
@@ -298,7 +298,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(downloader.calls, 1);
-    expect(downloader.lastRequest?.fileName, 'android-v1.1.0.apk');
+    expect(downloader.lastRequest?.fileName, 'BookSift-android-v1.1.0.apk');
     expect(find.text('更新包已就绪 · 1.0 KB'), findsOneWidget);
     expect(find.text('安装更新'), findsOneWidget);
     expect(find.text('将唤起系统安装器；首次安装需允许“安装未知应用”'), findsOneWidget);
@@ -352,31 +352,31 @@ void main() {
         <(TargetPlatform, String, String, String)>[
           (
             TargetPlatform.android,
-            'android-v1.2.0.apk',
+            'BookSift-android-v1.2.0.apk',
             '安装更新',
             '将唤起系统安装器；首次安装需允许“安装未知应用”',
           ),
           (
             TargetPlatform.iOS,
-            'ios-v1.2.0.ipa',
+            'BookSift-ios-v1.2.0.ipa',
             '打开文件位置',
             '将打开系统文件面板；IPA 仍需自行签名安装',
           ),
           (
             TargetPlatform.windows,
-            'windows-x64-v1.2.0.zip',
+            'BookSift-windows-x64-v1.2.0.zip',
             '安装更新',
             '将自动解压、备份并替换当前安装，然后重新启动',
           ),
           (
             TargetPlatform.macOS,
-            'macos-universal-v1.2.0.zip',
+            'BookSift-macos-universal-v1.2.0.zip',
             '打开更新包',
             '将打开 macOS 程序包；未签名包可能被 Gatekeeper 拦截',
           ),
           (
             TargetPlatform.linux,
-            'linux-x64-v1.2.0.tar.gz',
+            'BookSift-linux-x64-v1.2.0.tar.gz',
             '安装更新',
             '将自动解压、备份并替换当前安装，然后重新启动',
           ),
@@ -542,7 +542,7 @@ void main() {
     await tester.tap(find.text('前往下载'));
     await tester.pumpAndSettle();
     expect(clipboardTexts(clipboard), <String>[
-      'https://cdn.example.com/android-v1.2.0.apk',
+      'https://cdn.example.com/BookSift-android-v1.2.0.apk',
     ]);
     await dismissSnackBars(tester);
   });
@@ -558,17 +558,26 @@ void main() {
     await pumpSettings(tester, adapter: adapter, store: store);
 
     const List<(TargetPlatform, String)> routes = <(TargetPlatform, String)>[
-      (TargetPlatform.android, 'https://cdn.example.com/android-v1.2.0.apk'),
-      (TargetPlatform.iOS, 'https://cdn.example.com/ios-v1.2.0.ipa'),
+      (
+        TargetPlatform.android,
+        'https://cdn.example.com/BookSift-android-v1.2.0.apk',
+      ),
+      (
+        TargetPlatform.iOS,
+        'https://cdn.example.com/BookSift-ios-v1.2.0.ipa',
+      ),
       (
         TargetPlatform.windows,
-        'https://cdn.example.com/windows-x64-v1.2.0.zip',
+        'https://cdn.example.com/BookSift-windows-x64-v1.2.0.zip',
       ),
       (
         TargetPlatform.macOS,
-        'https://cdn.example.com/macos-universal-v1.2.0.zip',
+        'https://cdn.example.com/BookSift-macos-universal-v1.2.0.zip',
       ),
-      (TargetPlatform.linux, 'https://cdn.example.com/linux-x64-v1.2.0.tar.gz'),
+      (
+        TargetPlatform.linux,
+        'https://cdn.example.com/BookSift-linux-x64-v1.2.0.tar.gz',
+      ),
     ];
     try {
       for (final (TargetPlatform platform, String expectedUrl) in routes) {

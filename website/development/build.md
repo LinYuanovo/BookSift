@@ -28,11 +28,11 @@ drift 的生成代码（`*.g.dart`）**已入库**，clone 之后不需要跑 `b
 
 | 平台 | 发布产物 | 当前 Actions |
 | --- | --- | --- |
-| Android | `android-v{version}.apk` | 已配置 |
-| iOS | `ios-v{version}.ipa` | 已配置；未签名包需接收者自行签名后才能安装 |
-| Windows | `windows-x64-v{version}.zip` | 已配置 |
-| macOS | `macos-universal-v{version}.zip` | 已配置；目标包包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
-| Linux | `linux-x64-v{version}.tar.gz` | 已配置 |
+| Android | `BookSift-android-v{version}.apk` | 已配置 |
+| iOS | `BookSift-ios-v{version}.ipa` | 已配置；未签名包需接收者自行签名后才能安装 |
+| Windows | `BookSift-windows-x64-v{version}.zip` | 已配置 |
+| macOS | `BookSift-macos-universal-v{version}.zip` | 已配置；目标包包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
+| Linux | `BookSift-linux-x64-v{version}.tar.gz` | 已配置 |
 
 Apple 平台的 Actions job 需要 `macos-*` runner 与 Xcode。未签名 iOS IPA 不含可供普通设备直接安装的签名；正式安装仍需匹配的 Apple Team、证书及 provisioning profile。macOS 未签名 ZIP 也未经过 notarization，公开分发时可能触发 Gatekeeper。
 

@@ -28,13 +28,13 @@
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Android | `android-v1.0.0.apk` | 直接安装，无需 Google Play |
-| Windows | `windows-x64-v1.0.0.zip` | 解压即用，无需安装 |
+| Android | `BookSift-android-v1.0.0.apk` | 直接安装，无需 Google Play |
+| Windows | `BookSift-windows-x64-v1.0.0.zip` | 解压即用，无需安装 |
 | 完整性 | 同名 `.sha256` | 一行 64 位十六进制摘要，用于校验下载文件 |
 
 ::: tip 建议校验一下
 ```powershell
-certutil -hashfile .\android-v1.0.0.apk SHA256
+certutil -hashfile .\BookSift-android-v1.0.0.apk SHA256
 ```
 与 `.sha256` 文件里的值逐字对上再安装。
 :::

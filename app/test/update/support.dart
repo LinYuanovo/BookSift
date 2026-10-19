@@ -30,9 +30,9 @@ final String kControllerGithubUrl =
     'https://api.github.com/repos/$kUpdateGithubOwner/$kUpdateGithubRepo/releases/latest';
 
 const String kTestApkUrl =
-    'https://github.com/o/r/releases/download/v1.1.0/android-v1.1.0.apk';
+    'https://github.com/o/r/releases/download/v1.1.0/BookSift-android-v1.1.0.apk';
 const String kTestSha256AssetUrl =
-    'https://github.com/o/r/releases/download/v1.1.0/android-v1.1.0.apk.sha256';
+    'https://github.com/o/r/releases/download/v1.1.0/BookSift-android-v1.1.0.apk.sha256';
 const String kTestSha256 =
     'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90';
 const String kTestFallbackUrl = 'https://cdn.example.com/booksift/version.json';
@@ -122,7 +122,7 @@ Dio scriptedDio(ScriptedAdapter adapter) => Dio(
 
 // ── fixture JSON（§10.1 结构） ──────────────────────────────────────────
 
-/// GitHub latest release 响应；资产名走 `android-v{version}.apk[.sha256]` 约定。
+/// GitHub latest release 响应；资产名走 `BookSift-android-v{version}.apk[.sha256]` 约定。
 String githubReleaseJson({
   String tag = 'v1.1.0',
   String body = '修复若干问题',
@@ -135,12 +135,12 @@ String githubReleaseJson({
   'assets': <Map<String, Object?>>[
     if (withApk)
       <String, Object?>{
-        'name': 'android-$tag.apk',
+        'name': 'BookSift-android-$tag.apk',
         'browser_download_url': kTestApkUrl,
       },
     if (withSha256Asset)
       <String, Object?>{
-        'name': 'android-$tag.apk.sha256',
+        'name': 'BookSift-android-$tag.apk.sha256',
         'browser_download_url': kTestSha256AssetUrl,
       },
   ],
@@ -152,7 +152,7 @@ String versionJson({
   int versionCode = 120,
   String notes = '备源更新日志',
   String? minForce,
-  String apkUrl = 'https://cdn.example.com/android-v1.2.0.apk',
+  String apkUrl = 'https://cdn.example.com/BookSift-android-v1.2.0.apk',
   String apkSha256 = kTestSha256,
   String iosUrl = 'https://apps.apple.com/app/id123456',
   String? iosSha256,

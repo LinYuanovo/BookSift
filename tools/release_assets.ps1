@@ -5,11 +5,11 @@ function Get-BookSiftReleaseAssets {
   )
 
   $names = @(
-    "android-v$Version.apk",
-    "windows-x64-v$Version.zip",
-    "linux-x64-v$Version.tar.gz",
-    "ios-v$Version.ipa",
-    "macos-universal-v$Version.zip",
+    "BookSift-android-v$Version.apk",
+    "BookSift-windows-x64-v$Version.zip",
+    "BookSift-linux-x64-v$Version.tar.gz",
+    "BookSift-ios-v$Version.ipa",
+    "BookSift-macos-universal-v$Version.zip",
     'seed_pack_lite_v1.zip',
     "classifier-source-v$Version.zip"
   )

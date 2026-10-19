@@ -57,11 +57,11 @@ void main() {
       'linux_sha256',
     ], 'update_service 五平台字段');
     _expectAll(service, <String>[
-      r'android-v$version.apk',
-      r'ios-v$version.ipa',
-      r'windows-x64-v$version.zip',
-      r'macos-universal-v$version.zip',
-      r'linux-x64-v$version.tar.gz',
+      r'BookSift-android-v$version.apk',
+      r'BookSift-ios-v$version.ipa',
+      r'BookSift-windows-x64-v$version.zip',
+      r'BookSift-macos-universal-v$version.zip',
+      r'BookSift-linux-x64-v$version.tar.gz',
     ], 'update_service 固定资产名');
   });
 
@@ -75,11 +75,11 @@ void main() {
     ].join('\n');
 
     _expectAll(workflow, <String>[
-      r'android-v${VERSION}.apk',
-      r'ios-v${VERSION}.ipa',
-      r'$pkg = "windows-x64-v$env:VERSION"',
-      r'macos-universal-v${VERSION}.zip',
-      r'pkg="linux-x64-v${VERSION}"',
+      r'BookSift-android-v${VERSION}.apk',
+      r'BookSift-ios-v${VERSION}.ipa',
+      r'$pkg = "BookSift-windows-x64-v$env:VERSION"',
+      r'BookSift-macos-universal-v${VERSION}.zip',
+      r'pkg="BookSift-linux-x64-v${VERSION}"',
     ], 'build-release 工作流包名');
     _expectAll(workflow, <String>[
       '生成带真实摘要的 version.json',
@@ -90,11 +90,11 @@ void main() {
       'linux_sha256',
     ], 'build-release version.json');
     _expectAll(scripts, <String>[
-      r'android-v$Version.apk',
-      r'ios-v$Version.ipa',
-      r'windows-x64-v$Version.zip',
-      r'macos-universal-v$Version.zip',
-      r'PKG_NAME="linux-x64-v$VERSION"',
+      r'BookSift-android-v$Version.apk',
+      r'BookSift-ios-v$Version.ipa',
+      r'BookSift-windows-x64-v$Version.zip',
+      r'BookSift-macos-universal-v$Version.zip',
+      r'PKG_NAME="BookSift-linux-x64-v$VERSION"',
       r'$PKG_NAME.tar.gz',
     ], '发布脚本包名');
   });

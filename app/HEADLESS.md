@@ -388,7 +388,7 @@ $db  = "$tmp\app_copy.db"
 | `pwsh tools/run_tests_safe.ps1 -TimeoutSec 1800` | 981 通过、3 skip、0 失败 |
 | `pwsh tools/smoke_cli.ps1` | 成功：bundle build、版本/分类/doctor/hot/query/facets/show/logs/seed JSON、只读采集计划、网络闸门 exit 3；fixture SHA256 前后相同 |
 | Android release APK | 签名有效；APK 含 armv7 / arm64 / x86_64 三份 `libsqlite3.so`；模拟器安装启动并 fully drawn，logcat 无 fatal / SQLite 加载错误 |
-| `flutter build windows --release` | 成功；`dist_release/windows-x64-v1.0.0.zip` 已重打包并核对 SHA256 |
+| `flutter build windows --release` | 成功；`dist_release/BookSift-windows-x64-v1.0.0.zip` 已重打包并核对 SHA256 |
 | iOS / macOS Wi-Fi native handlers | 已静态复核 runner 通道和 `NWPathMonitor` 路径；本 Windows 主机无 Apple SDK，未做 Apple 构建 |
 
 ---

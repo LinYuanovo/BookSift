@@ -60,7 +60,7 @@ void main() {
           ScriptedAdapter(<String, ScriptedResponse>{
             kTestGithubUrl: ScriptedResponse(githubReleaseJson()),
             kTestSha256AssetUrl: ScriptedResponse(
-              '$kTestSha256  android-v1.1.0.apk\n',
+              '$kTestSha256  BookSift-android-v1.1.0.apk\n',
             ),
           });
       final UpdateInfo info = await testGithubSource(
@@ -82,16 +82,16 @@ void main() {
 
     test('五个平台只匹配固定资产名并读取各自 sha256', () async {
       const Map<String, String> assetUrls = <String, String>{
-        'android-v1.1.0.apk':
-            'https://github.com/o/r/releases/download/v1.1.0/android-v1.1.0.apk',
-        'ios-v1.1.0.ipa':
-            'https://github.com/o/r/releases/download/v1.1.0/ios-v1.1.0.ipa',
-        'windows-x64-v1.1.0.zip':
-            'https://github.com/o/r/releases/download/v1.1.0/windows-x64-v1.1.0.zip',
-        'macos-universal-v1.1.0.zip':
-            'https://github.com/o/r/releases/download/v1.1.0/macos-universal-v1.1.0.zip',
-        'linux-x64-v1.1.0.tar.gz':
-            'https://github.com/o/r/releases/download/v1.1.0/linux-x64-v1.1.0.tar.gz',
+        'BookSift-android-v1.1.0.apk':
+            'https://github.com/o/r/releases/download/v1.1.0/BookSift-android-v1.1.0.apk',
+        'BookSift-ios-v1.1.0.ipa':
+            'https://github.com/o/r/releases/download/v1.1.0/BookSift-ios-v1.1.0.ipa',
+        'BookSift-windows-x64-v1.1.0.zip':
+            'https://github.com/o/r/releases/download/v1.1.0/BookSift-windows-x64-v1.1.0.zip',
+        'BookSift-macos-universal-v1.1.0.zip':
+            'https://github.com/o/r/releases/download/v1.1.0/BookSift-macos-universal-v1.1.0.zip',
+        'BookSift-linux-x64-v1.1.0.tar.gz':
+            'https://github.com/o/r/releases/download/v1.1.0/BookSift-linux-x64-v1.1.0.tar.gz',
       };
       final Map<String, ScriptedResponse> routes = <String, ScriptedResponse>{
         kTestGithubUrl: ScriptedResponse(
@@ -115,15 +115,15 @@ void main() {
         scriptedDio(adapter),
       ).fetch();
 
-      expect(info.apkUrl, assetUrls['android-v1.1.0.apk']);
+      expect(info.apkUrl, assetUrls['BookSift-android-v1.1.0.apk']);
       expect(info.apkSha256, kTestSha256);
-      expect(info.iosUrl, assetUrls['ios-v1.1.0.ipa']);
+      expect(info.iosUrl, assetUrls['BookSift-ios-v1.1.0.ipa']);
       expect(info.iosSha256, kTestSha256);
-      expect(info.windowsUrl, assetUrls['windows-x64-v1.1.0.zip']);
+      expect(info.windowsUrl, assetUrls['BookSift-windows-x64-v1.1.0.zip']);
       expect(info.windowsSha256, kTestSha256);
-      expect(info.macosUrl, assetUrls['macos-universal-v1.1.0.zip']);
+      expect(info.macosUrl, assetUrls['BookSift-macos-universal-v1.1.0.zip']);
       expect(info.macosSha256, kTestSha256);
-      expect(info.linuxUrl, assetUrls['linux-x64-v1.1.0.tar.gz']);
+      expect(info.linuxUrl, assetUrls['BookSift-linux-x64-v1.1.0.tar.gz']);
       expect(info.linuxSha256, kTestSha256);
       expect(adapter.requestedUrls.toSet(), <String>{
         kTestGithubUrl,
@@ -299,7 +299,10 @@ void main() {
       expect(info.versionCode, 120);
       expect(info.notes, '备源更新日志');
       expect(info.minForce, '1.0.5');
-      expect(info.apkUrl, 'https://cdn.example.com/android-v1.2.0.apk');
+      expect(
+        info.apkUrl,
+        'https://cdn.example.com/BookSift-android-v1.2.0.apk',
+      );
       expect(info.apkSha256, kTestSha256);
       expect(info.iosUrl, 'https://apps.apple.com/app/id123456');
       expect(info.windowsUrl, isNull);
@@ -310,9 +313,12 @@ void main() {
 
     test('新增三个桌面 URL 字段从 version.json app 对象解析', () async {
       const Map<String, String> urls = <String, String>{
-        'windows_url': 'https://cdn.example.com/windows-x64-v1.2.0.zip',
-        'macos_url': 'https://cdn.example.com/macos-universal-v1.2.0.zip',
-        'linux_url': 'https://cdn.example.com/linux-x64-v1.2.0.tar.gz',
+        'windows_url':
+            'https://cdn.example.com/BookSift-windows-x64-v1.2.0.zip',
+        'macos_url':
+            'https://cdn.example.com/BookSift-macos-universal-v1.2.0.zip',
+        'linux_url':
+            'https://cdn.example.com/BookSift-linux-x64-v1.2.0.tar.gz',
       };
       final Map<String, Object?> json = (jsonDecode(versionJson()) as Map)
           .cast<String, Object?>();

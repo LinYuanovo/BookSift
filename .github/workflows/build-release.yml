@@ -5,11 +5,11 @@
 #   - Actions 页面手动触发并填版本号（不带 v）；tag 不存在时由 action 基于当前提交创建
 #
 # 产物（命名与 tools/make_release.ps1 / make_release_linux.sh、App 内更新检查契约一致）：
-#   android-v<版本>.apk          + .sha256        Android（minSdk 24）
-#   ios-v<版本>.ipa              + .sha256        iOS（未签名，需接收者自行签名）
-#   windows-x64-v<版本>.zip      + .sha256        Windows 10/11 x64
-#   macos-universal-v<版本>.zip  + .sha256        macOS（arm64 + x86_64，未签名）
-#   linux-x64-v<版本>.tar.gz     + .sha256        Linux x64（Ubuntu 22.04+，GTK3 / libsecret）
+#   BookSift-android-v<版本>.apk          + .sha256        Android（minSdk 24）
+#   BookSift-ios-v<版本>.ipa              + .sha256        iOS（未签名，需接收者自行签名）
+#   BookSift-windows-x64-v<版本>.zip      + .sha256        Windows 10/11 x64
+#   BookSift-macos-universal-v<版本>.zip  + .sha256        macOS（arm64 + x86_64，未签名）
+#   BookSift-linux-x64-v<版本>.tar.gz     + .sha256        Linux x64（Ubuntu 22.04+，GTK3 / libsecret）
 #
 # Release 的 tag 必须是 v<版本> 且与 app/pubspec.yaml 的 version 一致：
 # App 的更新检查用 GitHub Releases 的 tag_name 与本地 versionName 比对，对不上会判不出新版本。
@@ -123,8 +123,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp app/build/app/outputs/flutter-apk/app-release.apk "dist/android-v${VERSION}.apk"
-          (cd dist && sha256sum "android-v${VERSION}.apk" | cut -d' ' -f1 > "android-v${VERSION}.apk.sha256")
+          cp app/build/app/outputs/flutter-apk/app-release.apk "dist/BookSift-android-v${VERSION}.apk"
+          (cd dist && sha256sum "BookSift-android-v${VERSION}.apk" | cut -d' ' -f1 > "BookSift-android-v${VERSION}.apk.sha256")
           ls -l dist
 
       - name: Upload Android artifact
@@ -164,7 +164,7 @@ jobs:
       - name: 打包 zip + sha256
         shell: pwsh
         run: |
-          $pkg = "windows-x64-v$env:VERSION"
+          $pkg = "BookSift-windows-x64-v$env:VERSION"
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path app/build/windows/x64/runner/Release/* -DestinationPath "dist/$pkg.zip"
           $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$pkg.zip").Hash.ToLower()
@@ -216,7 +216,7 @@ jobs:
           test -x "$bundle/booksift" || { echo "::error::缺可执行文件 $bundle/booksift"; exit 1; }
           test -f "$bundle/lib/libsqlite3.so" || { echo "::error::缺 $bundle/lib/libsqlite3.so（sqlite3 native assets 未产出）"; exit 1; }
           test -d "$bundle/data/flutter_assets" || { echo "::error::缺 $bundle/data/flutter_assets"; exit 1; }
-          pkg="linux-x64-v${VERSION}"
+          pkg="BookSift-linux-x64-v${VERSION}"
           mkdir -p dist
           tar -czf "dist/$pkg.tar.gz" -C app/build/linux/x64/release --transform "s,^bundle,$pkg," bundle
           sha256sum "dist/$pkg.tar.gz" | cut -d' ' -f1 > "dist/$pkg.tar.gz.sha256"
@@ -261,15 +261,15 @@ jobs:
           test -d "$app_path" || { echo "::error::缺 iOS 构建产物 $app_path"; exit 1; }
           mkdir -p "$RUNNER_TEMP/ios-package/Payload" dist
           ditto "$app_path" "$RUNNER_TEMP/ios-package/Payload/Runner.app"
-          (cd "$RUNNER_TEMP/ios-package" && ditto -c -k --sequesterRsrc --keepParent Payload "$GITHUB_WORKSPACE/dist/ios-v${VERSION}.ipa")
-          shasum -a 256 "dist/ios-v${VERSION}.ipa" | awk '{print tolower($1)}' > "dist/ios-v${VERSION}.ipa.sha256"
+          (cd "$RUNNER_TEMP/ios-package" && ditto -c -k --sequesterRsrc --keepParent Payload "$GITHUB_WORKSPACE/dist/BookSift-ios-v${VERSION}.ipa")
+          shasum -a 256 "dist/BookSift-ios-v${VERSION}.ipa" | awk '{print tolower($1)}' > "dist/BookSift-ios-v${VERSION}.ipa.sha256"
           ls -l dist
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-ipa
-          path: dist/ios-v*
+          path: dist/BookSift-ios-v*
           if-no-files-found: error
 
   macos:
@@ -338,8 +338,8 @@ jobs:
             fi
           done < <(find "$app_path" -type f -print0)
           mkdir -p dist
-          ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/macos-universal-v${VERSION}.zip"
-          shasum -a 256 "dist/macos-universal-v${VERSION}.zip" | awk '{print tolower($1)}' > "dist/macos-universal-v${VERSION}.zip.sha256"
+          ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/BookSift-macos-universal-v${VERSION}.zip"
+          shasum -a 256 "dist/BookSift-macos-universal-v${VERSION}.zip" | awk '{print tolower($1)}' > "dist/BookSift-macos-universal-v${VERSION}.zip.sha256"
           ls -l dist
 
       - name: Upload macOS artifact
@@ -382,11 +382,11 @@ jobs:
             }
             printf '%s' "${value,,}"
           }
-          apk_sha="$(sha_for "android-v${VERSION}.apk")"
-          ios_sha="$(sha_for "ios-v${VERSION}.ipa")"
-          windows_sha="$(sha_for "windows-x64-v${VERSION}.zip")"
-          macos_sha="$(sha_for "macos-universal-v${VERSION}.zip")"
-          linux_sha="$(sha_for "linux-x64-v${VERSION}.tar.gz")"
+          apk_sha="$(sha_for "BookSift-android-v${VERSION}.apk")"
+          ios_sha="$(sha_for "BookSift-ios-v${VERSION}.ipa")"
+          windows_sha="$(sha_for "BookSift-windows-x64-v${VERSION}.zip")"
+          macos_sha="$(sha_for "BookSift-macos-universal-v${VERSION}.zip")"
+          linux_sha="$(sha_for "BookSift-linux-x64-v${VERSION}.tar.gz")"
           cat > artifacts/version.json <<JSON
           {
             "app": {
@@ -394,15 +394,15 @@ jobs:
               "version_code": ${version_code},
               "notes": "",
               "min_force": "",
-              "apk_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/android-v${VERSION}.apk",
+              "apk_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/BookSift-android-v${VERSION}.apk",
               "apk_sha256": "${apk_sha}",
-              "ios_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/ios-v${VERSION}.ipa",
+              "ios_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/BookSift-ios-v${VERSION}.ipa",
               "ios_sha256": "${ios_sha}",
-              "windows_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/windows-x64-v${VERSION}.zip",
+              "windows_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/BookSift-windows-x64-v${VERSION}.zip",
               "windows_sha256": "${windows_sha}",
-              "macos_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/macos-universal-v${VERSION}.zip",
+              "macos_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/BookSift-macos-universal-v${VERSION}.zip",
               "macos_sha256": "${macos_sha}",
-              "linux_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/linux-x64-v${VERSION}.tar.gz",
+              "linux_url": "https://github.com/LinYuanovo/BookSift/releases/download/v${VERSION}/BookSift-linux-x64-v${VERSION}.tar.gz",
               "linux_sha256": "${linux_sha}"
             }
           }
@@ -420,11 +420,11 @@ jobs:
             echo
             echo "| 平台 | 文件 | 说明 |"
             echo "| --- | --- | --- |"
-            echo "| Android | \`android-v${VERSION}.apk\` | 直接安装（Android 7.0+），需允许安装未知应用 |"
-            echo "| iOS | \`ios-v${VERSION}.ipa\` | 未签名包；需使用 Apple Team、证书和描述文件签名后才能安装 |"
-            echo "| Windows | \`windows-x64-v${VERSION}.zip\` | 完整解压后运行 \`booksift.exe\`（Windows 10/11 64 位） |"
-            echo "| macOS | \`macos-universal-v${VERSION}.zip\` | arm64 + x86_64 通用包，未签名/公证；Gatekeeper 可能阻止打开 |"
-            echo "| Linux | \`linux-x64-v${VERSION}.tar.gz\` | 解压后运行 \`booksift\`（Ubuntu 22.04+，需 GTK3 / libsecret） |"
+            echo "| Android | \`BookSift-android-v${VERSION}.apk\` | 直接安装（Android 7.0+），需允许安装未知应用 |"
+            echo "| iOS | \`BookSift-ios-v${VERSION}.ipa\` | 未签名包；需使用 Apple Team、证书和描述文件签名后才能安装 |"
+            echo "| Windows | \`BookSift-windows-x64-v${VERSION}.zip\` | 完整解压后运行 \`booksift.exe\`（Windows 10/11 64 位） |"
+            echo "| macOS | \`BookSift-macos-universal-v${VERSION}.zip\` | arm64 + x86_64 通用包，未签名/公证；Gatekeeper 可能阻止打开 |"
+            echo "| Linux | \`BookSift-linux-x64-v${VERSION}.tar.gz\` | 解压后运行 \`booksift\`（Ubuntu 22.04+，需 GTK3 / libsecret） |"
             echo
             echo "每个平台包都附同名 \`.sha256\`（一行 64 位十六进制摘要），下载后建议核对。"
             echo "iOS 与 macOS 产物不包含 Apple 签名、provisioning profile 或公证；请在分发安装前自行完成相应签名流程。"

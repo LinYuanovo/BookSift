@@ -158,7 +158,7 @@ final class UpdateInfo {
   /// 更新日志（GitHub = release body；version.json = app.notes）。
   final String notes;
 
-  /// Android APK 直链（GitHub = assets 里 `android-v{version}.apk` 约定名；§10.2 浏览器下载）。
+  /// Android APK 直链（GitHub = assets 里 `BookSift-android-v{version}.apk` 约定名；§10.2 浏览器下载）。
   final String? apkUrl;
 
   /// APK sha256 公示值（§11.1 缺陷 #7 对策；GitHub 源 best-effort 取 `.apk.sha256` 资产，
@@ -322,11 +322,11 @@ final class GithubReleaseSource implements UpdateSource {
       return null;
     }
 
-    final String apkAssetName = 'android-v$version.apk';
-    final String iosAssetName = 'ios-v$version.ipa';
-    final String windowsAssetName = 'windows-x64-v$version.zip';
-    final String macosAssetName = 'macos-universal-v$version.zip';
-    final String linuxAssetName = 'linux-x64-v$version.tar.gz';
+    final String apkAssetName = 'BookSift-android-v$version.apk';
+    final String iosAssetName = 'BookSift-ios-v$version.ipa';
+    final String windowsAssetName = 'BookSift-windows-x64-v$version.zip';
+    final String macosAssetName = 'BookSift-macos-universal-v$version.zip';
+    final String linuxAssetName = 'BookSift-linux-x64-v$version.tar.gz';
 
     final String? apkUrl = assetUrl(apkAssetName);
     final String? iosUrl = assetUrl(iosAssetName);

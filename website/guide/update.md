@@ -24,11 +24,11 @@ App 程序包更新与种子数据包是**两条独立的线**：换版本不会
 
 | 客户端 | `version.json` 下载字段 | Release 资产名 | 校验字段 / 文件 |
 | --- | --- | --- | --- |
-| Android | `app.apk_url` | `android-v{version}.apk` | `app.apk_sha256` / `.sha256` |
-| iOS | `app.ios_url` | `ios-v{version}.ipa` | `app.ios_sha256` / `.sha256` |
-| Windows | `app.windows_url` | `windows-x64-v{version}.zip` | `app.windows_sha256` / `.sha256` |
-| macOS | `app.macos_url` | `macos-universal-v{version}.zip` | `app.macos_sha256` / `.sha256` |
-| Linux | `app.linux_url` | `linux-x64-v{version}.tar.gz` | `app.linux_sha256` / `.sha256` |
+| Android | `app.apk_url` | `BookSift-android-v{version}.apk` | `app.apk_sha256` / `.sha256` |
+| iOS | `app.ios_url` | `BookSift-ios-v{version}.ipa` | `app.ios_sha256` / `.sha256` |
+| Windows | `app.windows_url` | `BookSift-windows-x64-v{version}.zip` | `app.windows_sha256` / `.sha256` |
+| macOS | `app.macos_url` | `BookSift-macos-universal-v{version}.zip` | `app.macos_sha256` / `.sha256` |
+| Linux | `app.linux_url` | `BookSift-linux-x64-v{version}.tar.gz` | `app.linux_sha256` / `.sha256` |
 
 Release 中每个程序包旁都应有同名 `.sha256` 文件；静态 JSON 可提供对应的 `*_sha256` 值。当前平台缺少下载字段或资产时，不会拿其他平台的包代替。
 

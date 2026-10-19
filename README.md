@@ -63,11 +63,11 @@
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Android | `android-v1.0.0.apk` | Android 7.0+，允许安装未知应用 |
-| iOS | `ios-v1.0.0.ipa` | 未签名包需使用自己的证书签名 |
-| Windows | `windows-x64-v1.0.0.zip` | Windows 10/11，完整解压后运行 `booksift.exe` |
-| macOS | `macos-universal-v1.0.0.zip` | 包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
-| Linux | `linux-x64-v1.0.0.tar.gz` | Ubuntu 22.04+，需 GTK3 / libsecret |
+| Android | `BookSift-android-v1.0.0.apk` | Android 7.0+，允许安装未知应用 |
+| iOS | `BookSift-ios-v1.0.0.ipa` | 未签名包需使用自己的证书签名 |
+| Windows | `BookSift-windows-x64-v1.0.0.zip` | Windows 10/11，完整解压后运行 `booksift.exe` |
+| macOS | `BookSift-macos-universal-v1.0.0.zip` | 包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
+| Linux | `BookSift-linux-x64-v1.0.0.tar.gz` | Ubuntu 22.04+，需 GTK3 / libsecret |
 
 发布页不一定同时提供所有平台的包；每个文件旁都有同名 `.sha256`，建议用 `certutil -hashfile <文件> SHA256` 校验。
 
@@ -113,7 +113,7 @@ pwsh tools/make_release.ps1        # 版本号取自 app/pubspec.yaml；-Publish
 Linux 桌面发布包（Ubuntu）用 bash 脚本一键走完「preflight → 构建 → 产物闸门 → 组装」，产物落 `dist_release/`：
 
 ```bash
-tools/make_release_linux.sh        # 版本号取自 app/pubspec.yaml；产物 linux-x64-v<版本>.tar.gz
+tools/make_release_linux.sh        # 版本号取自 app/pubspec.yaml；产物 BookSift-linux-x64-v<版本>.tar.gz
 ```
 
 Linux 构建环境（Ubuntu 22.04+/24.04 实测）：

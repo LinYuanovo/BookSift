@@ -14,8 +14,8 @@
 
   更新检查契约（只读对齐 app/lib/core/update/update_service.dart，勿改）：
     GitHub tag        = v{version}
-    APK 资产名        = android-v{version}.apk
-    sha256 资产名     = android-v{version}.apk.sha256（App 侧取内容中首个 64 位 hex）
+    APK 资产名        = BookSift-android-v{version}.apk
+    sha256 资产名     = BookSift-android-v{version}.apk.sha256（App 侧取内容中首个 64 位 hex）
     主源 owner/repo   = LinYuanovo/BookSift
                         （以 app/lib/core/update/update_controller.dart 的 kUpdateGithubOwner/Repo 为准，
                          两处需同步）
@@ -120,7 +120,7 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
   Write-Error "版本号不一致：-Version=$Version 但 app/pubspec.yaml 为 $SpecVersion+$SpecBuild。`nAPK 内 versionName/versionCode 由 pubspec 决定，改名不改实会破坏更新检查契约。`n请先改 pubspec.yaml 再重跑，或省略 -Version。"
   exit 2
 }
-Write-Host "  版本 $Version  versionCode $BuildNumber  →  tag v$Version / android-v$Version.apk"
+Write-Host "  版本 $Version  versionCode $BuildNumber  →  tag v$Version / BookSift-android-v$Version.apk"
 
 # ── 2. preflight ────────────────────────────────────────────────────────
 Write-Step '2/6 preflight'
@@ -304,7 +304,7 @@ Write-Host "  ✓ 权限闸门：INTERNET 已声明" -ForegroundColor Green
 
 # ── 5. 组装 dist_release ────────────────────────────────────────────────
 Write-Step '5/6 组装 dist_release/'
-$apkName  = "android-v$Version.apk"
+$apkName  = "BookSift-android-v$Version.apk"
 $apkDest  = Join-Path $DistDir $apkName
 Copy-Item -LiteralPath $builtApk -Destination $apkDest -Force
 Write-Sha256File $apkDest
@@ -356,13 +356,13 @@ $versionJson = [ordered]@{
     min_force    = ''
     apk_url      = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/$apkName"
     apk_sha256   = $apkSha
-    ios_url      = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/ios-v$Version.ipa"
+    ios_url      = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/BookSift-ios-v$Version.ipa"
     ios_sha256   = ''
-    windows_url  = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/windows-x64-v$Version.zip"
+    windows_url  = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/BookSift-windows-x64-v$Version.zip"
     windows_sha256 = ''
-    macos_url    = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/macos-universal-v$Version.zip"
+    macos_url    = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/BookSift-macos-universal-v$Version.zip"
     macos_sha256 = ''
-    linux_url    = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/linux-x64-v$Version.tar.gz"
+    linux_url    = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/BookSift-linux-x64-v$Version.tar.gz"
     linux_sha256 = ''
   }
   seed  = [ordered]@{
@@ -416,8 +416,8 @@ if ($Publish) {
     # 发布严格使用本版本平台包及其校验文件，不扫入本地演示和旧版本文件。
     . (Join-Path $PSScriptRoot 'release_assets.ps1')
     $assets = @(Get-BookSiftReleaseAssets -DistDir $DistDir -Version $Version)
-    if (-not ($assets | Where-Object { [System.IO.Path]::GetFileName($_) -eq "android-v$Version.apk" })) {
-      Write-Error "缺少本版本 Android 更新资产 android-v$Version.apk，拒绝发布。"
+    if (-not ($assets | Where-Object { [System.IO.Path]::GetFileName($_) -eq "BookSift-android-v$Version.apk" })) {
+      Write-Error "缺少本版本 Android 更新资产 BookSift-android-v$Version.apk，拒绝发布。"
       exit 5
     }
     Write-Host "  上传 $($assets.Count) 个资产 → tag v$Version"

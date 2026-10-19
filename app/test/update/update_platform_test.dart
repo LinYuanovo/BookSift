@@ -69,7 +69,7 @@ void main() {
         expect(
           platformAsset(info, TargetPlatform.android),
           const UpdatePlatformAsset(
-            fileName: 'android-v1.2.3.apk',
+            fileName: 'BookSift-android-v1.2.3.apk',
             url: 'https://example.com/android.apk',
             sha256: 'apk-hash',
           ),
@@ -77,7 +77,7 @@ void main() {
         expect(
           platformAsset(info, TargetPlatform.iOS),
           const UpdatePlatformAsset(
-            fileName: 'ios-v1.2.3.ipa',
+            fileName: 'BookSift-ios-v1.2.3.ipa',
             url: 'https://example.com/ios.ipa',
             sha256: 'ios-hash',
           ),
@@ -85,7 +85,7 @@ void main() {
         expect(
           platformAsset(info, TargetPlatform.windows),
           const UpdatePlatformAsset(
-            fileName: 'windows-x64-v1.2.3.zip',
+            fileName: 'BookSift-windows-x64-v1.2.3.zip',
             url: 'https://example.com/windows.zip',
             sha256: 'windows-hash',
           ),
@@ -93,7 +93,7 @@ void main() {
         expect(
           platformAsset(info, TargetPlatform.macOS),
           const UpdatePlatformAsset(
-            fileName: 'macos-universal-v1.2.3.zip',
+            fileName: 'BookSift-macos-universal-v1.2.3.zip',
             url: 'https://example.com/macos.zip',
             sha256: 'macos-hash',
           ),
@@ -101,7 +101,7 @@ void main() {
         expect(
           platformAsset(info, TargetPlatform.linux),
           const UpdatePlatformAsset(
-            fileName: 'linux-x64-v1.2.3.tar.gz',
+            fileName: 'BookSift-linux-x64-v1.2.3.tar.gz',
             url: 'https://example.com/linux.tar.gz',
             sha256: 'linux-hash',
           ),
@@ -199,11 +199,11 @@ void main() {
 
     expect(
       await platform.installDownloadedFile(
-        '/fake/windows-x64-v1.2.3.zip',
+        '/fake/BookSift-windows-x64-v1.2.3.zip',
         TargetPlatform.windows,
       ),
       isTrue,
     );
-    expect(installedPath, '/fake/windows-x64-v1.2.3.zip');
+    expect(installedPath, '/fake/BookSift-windows-x64-v1.2.3.zip');
   });
 }

@@ -34,27 +34,27 @@ final class UpdatePlatformAsset {
 UpdatePlatformAsset? platformAsset(UpdateInfo info, TargetPlatform target) {
   final UpdatePlatformAsset? asset = switch (target) {
     TargetPlatform.android => UpdatePlatformAsset(
-      fileName: 'android-v${info.version}.apk',
+      fileName: 'BookSift-android-v${info.version}.apk',
       url: info.apkUrl,
       sha256: info.apkSha256,
     ),
     TargetPlatform.iOS => UpdatePlatformAsset(
-      fileName: 'ios-v${info.version}.ipa',
+      fileName: 'BookSift-ios-v${info.version}.ipa',
       url: info.iosUrl,
       sha256: info.iosSha256,
     ),
     TargetPlatform.windows => UpdatePlatformAsset(
-      fileName: 'windows-x64-v${info.version}.zip',
+      fileName: 'BookSift-windows-x64-v${info.version}.zip',
       url: info.windowsUrl,
       sha256: info.windowsSha256,
     ),
     TargetPlatform.macOS => UpdatePlatformAsset(
-      fileName: 'macos-universal-v${info.version}.zip',
+      fileName: 'BookSift-macos-universal-v${info.version}.zip',
       url: info.macosUrl,
       sha256: info.macosSha256,
     ),
     TargetPlatform.linux => UpdatePlatformAsset(
-      fileName: 'linux-x64-v${info.version}.tar.gz',
+      fileName: 'BookSift-linux-x64-v${info.version}.tar.gz',
       url: info.linuxUrl,
       sha256: info.linuxSha256,
     ),

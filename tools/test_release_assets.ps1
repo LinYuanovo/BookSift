@@ -6,22 +6,22 @@ $temp = Join-Path ([System.IO.Path]::GetTempPath()) "booksift-release-assets-$([
 New-Item -ItemType Directory -Path $temp | Out-Null
 try {
   $expected = @(
-    'android-v1.2.3.apk',
-    'android-v1.2.3.apk.sha256',
+    'BookSift-android-v1.2.3.apk',
+    'BookSift-android-v1.2.3.apk.sha256',
     'seed_pack_lite_v1.zip',
     'seed_pack_lite_v1.zip.sha256',
     'classifier-source-v1.2.3.zip',
     'classifier-source-v1.2.3.zip.sha256'
   )
   foreach ($name in @(
-    'android-v1.2.3.apk',
-    'android-v1.2.3.apk.sha256',
+    'BookSift-android-v1.2.3.apk',
+    'BookSift-android-v1.2.3.apk.sha256',
     'seed_pack_lite_v1.zip',
     'seed_pack_lite_v1.zip.sha256',
     'classifier-source-v1.2.3.zip',
     'classifier-source-v1.2.3.zip.sha256',
     'app-v1.2.3.apk',
-    'android-v1.2.2.apk',
+    'BookSift-android-v1.2.2.apk',
     'booksift-promo-video.mp4',
     'RELEASE_NOTES.md',
     'version.json'
