@@ -67,7 +67,7 @@ void main() {
     final StringBuffer human = StringBuffer();
     final cli.BookSiftRunner humanRunner = cli.BookSiftRunner(resultSink: human);
     expect(await humanRunner.runSafely(<String>['--version']), cli.ExitCode.ok);
-    expect(human.toString(), contains('1.0.0'));
+    expect(human.toString(), contains('1.0.1'));
 
     final StringBuffer json = StringBuffer();
     final cli.BookSiftRunner jsonRunner = cli.BookSiftRunner(resultSink: json);
@@ -79,7 +79,7 @@ void main() {
       ]),
       cli.ExitCode.ok,
     );
-    expect((jsonDecode(json.toString()) as Map<String, dynamic>)['version'], '1.0.0');
+    expect((jsonDecode(json.toString()) as Map<String, dynamic>)['version'], '1.0.1');
 
     final StringBuffer misplaced = StringBuffer();
     final cli.BookSiftRunner misplacedRunner = cli.BookSiftRunner(resultSink: misplaced);

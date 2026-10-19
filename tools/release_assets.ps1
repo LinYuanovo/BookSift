@@ -1,7 +1,8 @@
 function Get-BookSiftReleaseAssets {
   param(
     [Parameter(Mandatory)][string]$DistDir,
-    [Parameter(Mandatory)][string]$Version
+    [Parameter(Mandatory)][string]$Version,
+    [Parameter(Mandatory)][int]$SeedPackVersion
   )
 
   $names = @(
@@ -10,7 +11,7 @@ function Get-BookSiftReleaseAssets {
     "BookSift-linux-x64-v$Version.tar.gz",
     "BookSift-ios-v$Version.ipa",
     "BookSift-macos-universal-v$Version.zip",
-    'seed_pack_lite_v1.zip',
+    "seed_pack_lite_v$SeedPackVersion.zip",
     "classifier-source-v$Version.zip"
   )
   $assets = [System.Collections.Generic.List[string]]::new()

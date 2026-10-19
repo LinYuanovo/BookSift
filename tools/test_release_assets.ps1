@@ -29,7 +29,7 @@ try {
     Set-Content -LiteralPath (Join-Path $temp $name) -Value 'fixture' -NoNewline
   }
 
-  $actual = @(Get-BookSiftReleaseAssets -DistDir $temp -Version '1.2.3' |
+  $actual = @(Get-BookSiftReleaseAssets -DistDir $temp -Version '1.2.3' -SeedPackVersion 1 |
     ForEach-Object { [System.IO.Path]::GetFileName($_) })
   if (Compare-Object -ReferenceObject $expected -DifferenceObject $actual) {
     throw "Unexpected release assets: $($actual -join ', ')"

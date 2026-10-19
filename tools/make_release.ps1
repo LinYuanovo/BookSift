@@ -83,6 +83,8 @@ if (-not (Test-Path -LiteralPath $SeedReportPath)) {
   exit 2
 }
 $SeedReport = Get-Content -LiteralPath $SeedReportPath -Raw | ConvertFrom-Json
+$SeedPackVersion = [int]([System.IO.Path]::GetFileName([string]$SeedReport.tiers.full.final_zip.file) -replace '^seed_pack_v(\d+)\.zip$', '$1')
+$SeedFullName = [System.IO.Path]::GetFileName([string]$SeedReport.tiers.full.final_zip.file)
 $SeedFullSize   = [int64]$SeedReport.tiers.full.final_zip.size_bytes
 $SeedFullSha256 = [string]$SeedReport.tiers.full.final_zip.sha256
 if ($SeedFullSize -le 0 -or $SeedFullSha256 -notmatch '^[0-9a-f]{64}$') {
@@ -113,6 +115,12 @@ if ($null -eq $m) { Write-Error "无法从 pubspec.yaml 解析 version: $pubspec
 $SpecVersion = $m.Matches[0].Groups[1].Value
 $SpecBuild   = $m.Matches[0].Groups[2].Value
 $BuildNumber = if ([string]::IsNullOrWhiteSpace($SpecBuild)) { 1 } else { [int]$SpecBuild }
+
+& node (Join-Path $RepoRoot 'tools\render_docs.js')
+if ($LASTEXITCODE -ne 0) {
+  Write-Error '文档版本渲染失败，拒绝继续发布构建。'
+  exit 2
+}
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
   $Version = $SpecVersion
@@ -323,7 +331,7 @@ if ($SkipSeed) {
   if (-not (Test-Path -LiteralPath $seedSrc)) {
     Write-Error "缺种子包源文件: $seedSrc（用 -SkipSeed 跳过）"; exit 2
   }
-  $seedName = [System.IO.Path]::GetFileName($seedSrc)
+  $seedName = "seed_pack_lite_v$SeedPackVersion.zip"
   $seedDest = Join-Path $DistDir $seedName
   Copy-Item -LiteralPath $seedSrc -Destination $seedDest -Force
   Write-Sha256File $seedDest
@@ -366,9 +374,9 @@ $versionJson = [ordered]@{
     linux_sha256 = ''
   }
   seed  = [ordered]@{
-    basic_version = 1
-    full_version  = 1
-    full_urls     = @("https://github.com/LinYuanovo/BookSift/releases/download/seed-v1/seed_pack_v1.zip")
+    basic_version = $SeedPackVersion
+    full_version  = $SeedPackVersion
+    full_urls     = @("https://github.com/LinYuanovo/BookSift/releases/download/seed-v$SeedPackVersion/$SeedFullName")
     full_size     = $SeedFullSize
     full_sha256   = $SeedFullSha256
     lanzou_backup = ''
@@ -415,7 +423,7 @@ if ($Publish) {
     if ($LASTEXITCODE -ne 0) { Write-Error 'gh 未登录，先 gh auth login'; exit 5 }
     # 发布严格使用本版本平台包及其校验文件，不扫入本地演示和旧版本文件。
     . (Join-Path $PSScriptRoot 'release_assets.ps1')
-    $assets = @(Get-BookSiftReleaseAssets -DistDir $DistDir -Version $Version)
+    $assets = @(Get-BookSiftReleaseAssets -DistDir $DistDir -Version $Version -SeedPackVersion $SeedPackVersion)
     if (-not ($assets | Where-Object { [System.IO.Path]::GetFileName($_) -eq "BookSift-android-v$Version.apk" })) {
       Write-Error "缺少本版本 Android 更新资产 BookSift-android-v$Version.apk，拒绝发布。"
       exit 5

@@ -1,20 +1,20 @@
 {
   "pack_name": "seed_pack_lite",
-  "pack_version": 1,
+  "pack_version": 2,
   "tier": "lite",
   "schema_version": 4,
   "min_app_version": "1.0.0",
-  "built_at": "2026-10-19T00:35:49+08:00",
+  "built_at": "2026-10-19T20:05:32+08:00",
   "builder": "repack_deflate.py (from _build/seed_lite.db)",
   "source": {
     "db": "work\\unified\\unified_v2.db",
-    "size_bytes": 907190272,
-    "sha256": "398117f7e8e8374f38d01583e8df05fd188c6c03ca16b97784fc1f3c5d9087ef",
+    "size_bytes": 910835712,
+    "sha256": "b67cadfaaf58fd5249e288251b6379ee14305943f54f6b238d314098aa885f19",
     "unified_built_at": "2026-10-12 16:23:52"
   },
   "db_file": "seed.db",
-  "db_size_bytes": 173047808,
-  "db_sha256": "b18a249ea98b7467c959b9c0494ac2d8384d8e73a0753ff896b5a32fd0f12223",
+  "db_size_bytes": 174555136,
+  "db_sha256": "83554e22a83f61e2af2983e568a3843be69d0111a4b46910c4e711c6e0ba52f6",
   "features": {
     "fts_prebuilt": false,
     "raw_content": false,
@@ -27,11 +27,11 @@
     "pre_classified_v3": 3
   },
   "rows": {
-    "posts": 38905,
-    "floors": 165399,
-    "images": 20961,
-    "book_entries": 53441,
-    "book_groups": 25862,
+    "posts": 39348,
+    "floors": 170996,
+    "images": 21549,
+    "book_entries": 53591,
+    "book_groups": 25965,
     "experts": 10,
     "nouns": 89,
     "site_links": 10,
@@ -44,12 +44,12 @@
   },
   "data_window": {
     "entry_date_min": "2010-02-04",
-    "entry_date_max": "2026-10-12",
+    "entry_date_max": "2026-10-19",
     "post_date_min": "2010-02-04",
-    "post_date_max": "2026-10-13"
+    "post_date_max": "2026-10-19"
   },
   "build_seconds": null,
-  "lite_target_bytes": 73400320,
+  "lite_target_bytes": 74448896,
   "clean": {
     "mode": "recompute",
     "classifier_version": 3,
@@ -61,58 +61,58 @@
       "rows_deleted": 25914,
       "groups_refreshed": 13968,
       "batches": 87,
-      "elapsed_ms": 409799
+      "elapsed_ms": 8088
     },
     "reclassify": {
       "classifier_version": 3,
       "dict_lines": 22001,
       "dict_anchors": 21913,
-      "posts_total": 38905,
-      "posts_scanned": 38905,
+      "posts_total": 39348,
+      "posts_scanned": 39348,
       "posts_updated": 13972,
       "entries_category_synced": 23013,
       "batches": 20,
-      "elapsed_ms": 24572
+      "elapsed_ms": 6678
     },
     "tool": "app/tool/bake_clean_seed.dart",
-    "cleaned_at": "2026-10-14T17:28:01.480138",
+    "cleaned_at": "2026-10-19T19:29:11.901918",
     "tier": "lite",
     "order": "先裁 comment≤300 → dedup → v3 回填 + category 镜像（与真机首启维护同序，故装机后维护为 no-op）",
     "source_db": "work\\seed_pack\\_build\\seed_lite.db",
-    "book_entries_before": 79355,
-    "book_entries_after": 53441,
+    "book_entries_before": 79505,
+    "book_entries_after": 53591,
     "idempotent_second_pass": {
       "dedup_rows_deleted": 0,
       "dedup_dup_groups": 0,
       "reclassify_posts_updated": 0,
       "reclassify_entries_updated": 0,
-      "dedup_elapsed_ms": 235,
-      "reclassify_elapsed_ms": 4628
+      "dedup_elapsed_ms": 227,
+      "reclassify_elapsed_ms": 4776
     },
-    "elapsed_seconds": 474.488
+    "elapsed_seconds": 23.163
   },
   "fts_rebuild_desktop_seconds": {
-    "book_fts": 7.4,
-    "floor_fts": 15.9,
-    "create_and_rebuild_total": 23.3,
-    "db_size_after_rebuild": 241332224
+    "book_fts": 7.1,
+    "floor_fts": 15.8,
+    "create_and_rebuild_total": 22.9,
+    "db_size_after_rebuild": 243265536
   },
-  "repack_reason": "Dart archive 无 Zip-LZMA 解码 → lite 换 deflate；裁剪阶梯取中档 comment≤300、保留 seed-only 溯源列（体积上限 70MiB）",
+  "repack_reason": "Dart archive 无 Zip-LZMA 解码 → lite 换 deflate；裁剪阶梯取中档 comment≤300、保留 seed-only 溯源列（体积上限 71MiB）",
   "full_pack": {
     "pack_name": "seed_pack",
-    "pack_version": 1,
-    "zip_file": "seed_pack_v1.zip",
-    "zip_size_bytes": 332359252,
-    "zip_sha256": "44062fe456fd1f53ee11dcdc3d2bf95bc8c4f9e57b12910df4394156f3c3f59e",
-    "db_sha256": "05f8bda0bf04f7c8cef85869105715824d670a3950ec18df8d44e6d2f8bdf56f",
+    "pack_version": 2,
+    "zip_file": "seed_pack_v2.zip",
+    "zip_size_bytes": 334424868,
+    "zip_sha256": "cf05c5ebfdfcb58a079dd4267e5a2d8e5c1b6958819e79a07f85f4f867196a9e",
+    "db_sha256": "99dd8c5c9af1e033af787d17e8f4b84e5001610fd6c18aa27a476bbb92485df9",
     "fts_prebuilt": true
   },
   "compression": {
     "method": "deflate",
     "method_choice_reason": "Dart archive 不支持 Zip-LZMA → deflate（App 端解压兼容唯一稳妥项）",
     "zip_file": "seed_pack_lite_v1.zip",
-    "zip_size_bytes": 63414604,
-    "zip_sha256": "8b697e6b0253297cb04fa669a251762d162f9d6b6f7ef729862e29988ba2e342",
+    "zip_size_bytes": 64118786,
+    "zip_sha256": "d5daec7d3851683fd5de6cedd7ce5eb387973bb1f3c5993c5ede20b06606671c",
     "seconds": 4.6
   },
   "lite_target_met": true,
@@ -120,10 +120,10 @@
     {
       "comment_max_chars": 300,
       "drop_trace_columns": false,
-      "db_size_bytes": 173047808,
-      "zip_size_bytes": 63414604,
+      "db_size_bytes": 174555136,
+      "zip_size_bytes": 64118786,
       "seconds": 4.6,
-      "sha256": "8b697e6b0253297cb04fa669a251762d162f9d6b6f7ef729862e29988ba2e342",
+      "sha256": "d5daec7d3851683fd5de6cedd7ce5eb387973bb1f3c5993c5ede20b06606671c",
       "target_met": true
     }
   ]
