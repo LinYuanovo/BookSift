@@ -3,13 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/features/content/content_detail_page.dart';
+import 'package:booksift/theme/app_spacing.dart';
 import 'package:booksift/theme/book_theme.dart';
 
 import '../support/harness.dart';
 
 // 任务 2：图片查看器画廊归一化（showImageViewer 新增可选 images/initialIndex，
 // 缺省退化为单张 → 旧调用点兼容）。
-// 任务 3：弹层外框尺寸（可用窗口 60%×80%）与「点外部关闭 / 点内部不关」。
+// 任务 3：横屏弹层外框 60%×80%、竖屏占满详情栏与操作条之间，「点外部关闭 / 点内部不关」。
 // 左右切换钮：悬停侧区淡入 / 移出淡出（AnimatedOpacity + IgnorePointer），首末页按钮隐藏。
 //
 // 归一化 / 尺寸是纯函数 → plain test()（floor_images_grid_test 同款口径）。
@@ -58,14 +59,21 @@ void main() {
   });
 
   group('FloorImages.viewerFrameOf', () {
-    test('横竖屏同口径：按可用窗口算 宽 60% / 高 80%', () {
+    test('横屏：按可用窗口算 宽 60% / 高 80%', () {
       final Size landscape = FloorImages.viewerFrameOf(const Size(1280, 800));
       expect(landscape.width, closeTo(768, 0.001));
       expect(landscape.height, closeTo(640, 0.001));
+    });
 
-      final Size portrait = FloorImages.viewerFrameOf(const Size(390, 844));
-      expect(portrait.width, closeTo(234, 0.001));
-      expect(portrait.height, closeTo(675.2, 0.001));
+    test('竖屏：全宽，仅避开顶部详情栏与底部操作条', () {
+      final Rect portrait = FloorImages.viewerRectOf(
+        const Size(390, 844),
+        const EdgeInsets.only(top: 24, bottom: 20),
+      );
+      expect(portrait.left, 0);
+      expect(portrait.top, closeTo(84, 0.001));
+      expect(portrait.right, closeTo(390, 0.001));
+      expect(portrait.bottom, closeTo(768, 0.001));
     });
   });
 
@@ -89,7 +97,7 @@ void main() {
       color: const Color(0xFFBDBDBD),
     );
 
-    testWidgets('外框 = 软件窗口 60%×80%；点内部不关、点外部关闭', (WidgetTester tester) async {
+    testWidgets('横屏外框 = 窗口 60%×80%；点内部不关、点外部关闭', (WidgetTester tester) async {
       useSurface(tester, width: 1000, height: 600);
       late BuildContext hostContext;
       await tester.pumpWidget(
@@ -122,6 +130,29 @@ void main() {
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
       expect(find.byType(PageView), findsNothing);
+    });
+
+    testWidgets('竖屏外框 = 全宽，避开顶部详情栏与底部操作条', (WidgetTester tester) async {
+      useSurface(tester, width: 390, height: 844, dpr: 1);
+      tester.view.padding = const FakeViewPadding(top: 24, bottom: 20);
+      addTearDown(() => tester.view.padding = FakeViewPadding.zero);
+      late BuildContext hostContext;
+      await tester.pumpWidget(
+        host((BuildContext context) => hostContext = context),
+      );
+
+      final FloorImage image = _img(1);
+      showImageViewer(hostContext, image, imageBuilder: fakeImage);
+      await tester.pumpAndSettle();
+
+      final Rect frame = tester.getRect(find.byType(PageView));
+      expect(frame.left, 0);
+      expect(frame.top, 24 + AppMetrics.appBarHeight);
+      expect(frame.right, 390);
+      expect(
+        frame.bottom,
+        closeTo(844 - 20 - AppMetrics.minTouchTarget - 12, 0.5),
+      );
     });
 
     testWidgets('保留左右翻页与关闭钮：横滑换页更新 i/n，关闭钮可关', (WidgetTester tester) async {

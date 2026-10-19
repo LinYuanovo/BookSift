@@ -436,6 +436,8 @@ class _PostBody extends ConsumerStatefulWidget {
 }
 
 class _PostBodyState extends ConsumerState<_PostBody> {
+  static const double _actionBarHeight = AppMetrics.minTouchTarget + 12;
+
   final ScrollController _scrollController = ScrollController();
 
   /// 楼层锚点 key，按 floor.id（库内唯一）而非 seq 键控：
@@ -1070,7 +1072,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
         child: InkWell(
           onTap: onTap,
           child: SizedBox(
-            height: AppMetrics.minTouchTarget + 12,
+            height: _actionBarHeight,
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: <Widget>[
@@ -1276,7 +1278,7 @@ class FloorImages extends StatelessWidget {
     return (images: images, index: initialIndex.clamp(0, images.length - 1));
   }
 
-  /// 查看器外框占可用窗口的比例（任务 3）：宽 60% / 高 80%，横竖屏同口径。
+  /// 查看器外框占可用窗口的比例（任务 3）：横屏宽 60% / 高 80%。
   static const double viewerWidthFactor = 0.6;
   static const double viewerHeightFactor = 0.8;
 
@@ -1285,6 +1287,19 @@ class FloorImages extends StatelessWidget {
   static Size viewerFrameOf(Size window) => Size(
     window.width * viewerWidthFactor,
     window.height * viewerHeightFactor,
+  );
+
+  /// 竖屏查看器矩形：贴合左右边界，只避开顶部帖子详情栏与底部书签/收藏操作条。
+  static Rect viewerRectOf(
+    Size window,
+    EdgeInsets padding, {
+    double topInset = AppMetrics.appBarHeight,
+    double bottomInset = _PostBodyState._actionBarHeight,
+  }) => Rect.fromLTRB(
+    0,
+    padding.top + topInset,
+    window.width,
+    window.height - padding.bottom - bottomInset,
   );
 
   @override
@@ -1430,13 +1445,37 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
     final AppColors c = AppColors.of(context);
     final AppSpacing s = AppSpacing.of(context);
     final AppMotionTheme motion = AppMotionTheme.of(context);
-    final Size frame = FloorImages.viewerFrameOf(MediaQuery.sizeOf(context));
+    final Size window = MediaQuery.sizeOf(context);
+    final bool portrait = window.height > window.width;
+    final Rect frame = portrait
+        ? FloorImages.viewerRectOf(window, MediaQuery.paddingOf(context))
+        : Rect.fromCenter(
+            center: window.center(Offset.zero),
+            width: FloorImages.viewerFrameOf(window).width,
+            height: FloorImages.viewerFrameOf(window).height,
+          );
     return Dialog(
       backgroundColor: c.canvas,
-      insetPadding: EdgeInsets.zero,
-      // 任务 3：按可用窗口给死外框 —— 覆盖 Dialog 默认 minWidth 280 约束，
-      // 窄窗（竖屏手机）也严格是 60%×80%。
-      constraints: BoxConstraints.tight(frame),
+      insetPadding: EdgeInsets.only(
+        left: frame.left,
+        top: frame.top,
+        right: window.width - frame.right,
+        bottom: window.height - frame.bottom,
+      ),
+      constraints: BoxConstraints.tight(window),
+      // 竖屏吃满帖子详情与底部操作条之间的区域；横屏仍按原比例居中。
+      child: _viewerFrame(c, s, motion, frame),
+    );
+  }
+
+  Widget _viewerFrame(
+    AppColors c,
+    AppSpacing s,
+    AppMotionTheme motion,
+    Rect frame,
+  ) {
+    return ColoredBox(
+      color: c.canvas,
       child: Stack(
         children: <Widget>[
           PageView.builder(
