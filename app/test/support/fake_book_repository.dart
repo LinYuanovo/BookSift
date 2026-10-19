@@ -225,6 +225,12 @@ class FakeBookRepository implements BookRepository {
   Stream<int> watchNewContentCount() => _newContent.stream;
 
   @override
+  Future<void> clearNewContentCount() async {
+    _hit('clearNewContentCount');
+    _newContent.value = 0;
+  }
+
+  @override
   Future<List<RankRow>> rankRows(
     RankWindow window, {
     DateTime? today,

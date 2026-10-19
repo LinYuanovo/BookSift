@@ -448,22 +448,25 @@ class RecentLogsList extends ConsumerWidget {
                   ),
                   SizedBox(width: s.space3),
                   Expanded(
-                    child: Text(
-                      data[i].fname,
+                    child: Text.rich(
+                      TextSpan(
+                        children: <InlineSpan>[
+                          TextSpan(text: data[i].fname),
+                          TextSpan(
+                            text:
+                                '  +${data[i].threadsAdded}帖/${data[i].floorsAdded}楼',
+                            style: AppTypography.tabular(
+                              t.caption.copyWith(color: c.text),
+                            ),
+                          ),
+                        ],
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: t.caption.copyWith(color: c.textSecondary),
                     ),
                   ),
-                  Flexible(
-                    child: Text(
-                      '+${data[i].threadsAdded}帖/${data[i].floorsAdded}楼',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTypography.tabular(t.caption.copyWith(color: c.text)),
-                    ),
-                  ),
-                  SizedBox(width: s.space3),
+                  SizedBox(width: s.space2),
                   CollectBadge(label: _badgeOf(data[i].status).$2, variant: _badgeOf(data[i].status).$1, height: 20),
                 ],
               ),

@@ -906,6 +906,9 @@ abstract interface class BookRepository {
   /// 自采新内容红点计数（collection_state.new_since_visit 之和）。
   Stream<int> watchNewContentCount();
 
+  /// 首页提示已读：清零全部吧的红点计数。
+  Future<void> clearNewContentCount();
+
   /// 热门榜（§5.13：按 [window] 时段内推荐次数重排）。
   Future<List<RankRow>> rankRows(
     RankWindow window, {
@@ -1141,6 +1144,12 @@ class Queries implements BookRepository, SearchSettingsKv {
         .watch()
         .map((List<QueryRow> rows) => rows.single.data['n']! as int);
   }
+
+  @override
+  Future<void> clearNewContentCount() =>
+      db.update(db.collectionState).write(
+        const CollectionStateCompanion(newSinceVisit: Value<int>(0)),
+      );
 
   // ── 热门榜（§5.13：推荐次数榜，GROUP BY name_norm，不依赖 FTS）──
 

@@ -6,6 +6,7 @@ import 'package:booksift/collector/collect_controller.dart';
 import 'package:booksift/collector/collect_settings_keys.dart';
 import 'package:booksift/collector/collect_state.dart';
 import 'package:booksift/data/db/app_database.dart';
+import 'package:booksift/features/collect/badges.dart';
 import 'package:booksift/features/collect/collect_page.dart';
 import 'package:booksift/features/collect/collect_settings.dart';
 import 'package:booksift/theme/app_colors.dart';
@@ -61,9 +62,9 @@ void main() {
   testWidgets('吧卡片：吧名/水位/上次结果/启用开关/冷却倒计时 danger 色', (WidgetTester tester) async {
     await pumpIdle(tester);
 
-    // 吧名出现两处：关注吧卡片 + 最近日志行（demoLogs 同源吧名）。
-    expect(find.text('yy小说吧'), findsNWidgets(2));
-    expect(find.text('哀伤雪刃'), findsNWidgets(2));
+    // 吧名出现在关注吧卡片 + 最近日志行（后者与 +N帖/N楼 同一 Text.rich）。
+    expect(find.textContaining('yy小说吧', findRichText: true), findsNWidgets(2));
+    expect(find.textContaining('哀伤雪刃', findRichText: true), findsNWidgets(2));
     // 水位行：epoch 秒 → 'YYYY-MM-DD HH:mm'（0 → '未采集'）；值在 Text.rich 内（整串 = '水位 …'）。
     expect(find.textContaining('2026-10-11 18:32', findRichText: true), findsOneWidget);
     expect(find.textContaining('2026-10-10 09:15', findRichText: true), findsOneWidget);
@@ -162,10 +163,47 @@ void main() {
     await pumpIdle(tester);
     expect(find.text('最近日志'), findsOneWidget);
     expect(find.text('10-12 08:00'), findsOneWidget);
-    expect(find.text('+37帖/12楼'), findsOneWidget);
     expect(find.text('成功'), findsOneWidget);
     expect(find.text('10-11 20:00'), findsOneWidget);
     expect(find.text('接口异常'), findsOneWidget);
+
+    final Finder okRow = find.ancestor(
+      of: find.text('成功'),
+      matching: find.byType(Row),
+    ).first;
+    expect(find.descendant(of: okRow, matching: find.textContaining('+37帖/12楼')), findsOneWidget);
+    final double okStatusRight = tester.getRect(
+      find.ancestor(of: find.text('成功'), matching: find.byType(CollectBadge)).first,
+    ).right;
+    expect(
+      tester.getRect(
+        find.ancestor(of: find.text('接口异常'), matching: find.byType(CollectBadge)).first,
+      ).right,
+      closeTo(okStatusRight, 0.5),
+      reason: '不同状态徽标的右边界应一致',
+    );
+    final Finder canceledText = find.text('已取消');
+    if (canceledText.evaluate().isNotEmpty) {
+      expect(
+        tester.getRect(
+          find.ancestor(of: canceledText, matching: find.byType(CollectBadge)).first,
+        ).right,
+        closeTo(okStatusRight, 0.5),
+      );
+    }
+  });
+
+  testWidgets('采集页顶部：标题与模式徽标垂直居中', (WidgetTester tester) async {
+    await pumpIdle(tester);
+    final Finder title = find.descendant(
+      of: find.byType(AppBar),
+      matching: find.text('采集'),
+    );
+    final Finder badge = find.descendant(
+      of: find.byKey(const ValueKey<String>('collect-anon-badge')),
+      matching: find.text('匿名模式'),
+    );
+    expect(tester.getCenter(title).dy, closeTo(tester.getCenter(badge).dy, 0.5));
   });
 
   testWidgets('空态（无关注吧）：引导添加默认两吧', (WidgetTester tester) async {

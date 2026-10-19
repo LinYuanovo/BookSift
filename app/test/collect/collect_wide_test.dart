@@ -112,7 +112,8 @@ void main() {
     expect(find.text('关注吧'), findsOneWidget);
     expect(find.text('立即采集（预计2分钟）'), findsOneWidget);
     expect(find.text('最近日志'), findsOneWidget);
-    expect(find.text('yy小说吧'), findsNWidgets(2)); // 吧卡片 + 日志行
+    // 吧卡片 + 日志行（后者吧名与 +N帖/N楼 同一 Text.rich）。
+    expect(find.textContaining('yy小说吧', findRichText: true), findsNWidgets(2));
     // 空闲态不出现仪表盘卡。
     expect(find.byType(DashCard), findsNothing);
   });

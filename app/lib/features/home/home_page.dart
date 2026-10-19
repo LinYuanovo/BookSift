@@ -594,6 +594,16 @@ class _SearchFieldStub extends StatelessWidget {
 final StreamProvider<int> newContentCountProvider =
     StreamProvider<int>((Ref ref) => ref.watch(queriesProvider).watchNewContentCount());
 
+Future<void> _refreshHome(WidgetRef ref) async {
+  ref.read(homePageCountProvider.notifier).state = 1;
+  ref.invalidate(homeFeedProvider);
+  try {
+    await ref.read(queriesProvider).clearNewContentCount();
+  } catch (_) {
+    ref.invalidate(newContentCountProvider);
+  }
+}
+
 /// 采集提示卡（有新内容时显示，§5.2；accent-soft 染底，motion.pop 弹现）。
 class _NewContentCard extends ConsumerWidget {
   const _NewContentCard();
@@ -620,7 +630,7 @@ class _NewContentCard extends ConsumerWidget {
           child: Transform.scale(scale: 0.9 + 0.1 * v, child: child),
         ),
         child: InkWell(
-          onTap: () => context.go('/collect'),
+          onTap: () => _refreshHome(ref),
           borderRadius: AppRadius.lgBorder,
           child: Container(
             padding: EdgeInsets.symmetric(horizontal: s.space4, vertical: s.space3),

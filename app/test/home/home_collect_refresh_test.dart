@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../support/fake_book_repository.dart';
 import '../support/fake_collect.dart';
+import '../support/demo_data.dart';
 import '../support/harness.dart';
 
 class _MutableCollectNotifier extends FakeCollectRunNotifier {
@@ -124,5 +125,33 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(repo.calls['timelinePosts'], before);
+  });
+
+  testWidgets('点击自采提示：留在首页刷新并清除提示', (WidgetTester tester) async {
+    final FakeLibrary library = demoLibrary();
+    repo = FakeBookRepository(
+      library: FakeLibrary(
+        posts: library.posts,
+        floors: library.floors,
+        entries: library.entries,
+        groups: library.groups,
+        newContentCount: 3,
+      ),
+    );
+    useSurface(tester, height: 1200);
+    await tester.pumpWidget(
+      testApp(repo, home: const HomePage()),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('自采新内容 +3 条'), findsOneWidget);
+    final int before = repo.calls['timelinePosts'] ?? 0;
+
+    await tester.tap(find.text('自采新内容 +3 条'));
+    await tester.pumpAndSettle();
+
+    expect(repo.calls['timelinePosts'], greaterThan(before));
+    expect(repo.calls['clearNewContentCount'], 1);
+    expect(find.text('自采新内容 +3 条'), findsNothing);
+    expect(find.byType(HomePage), findsOneWidget);
   });
 }

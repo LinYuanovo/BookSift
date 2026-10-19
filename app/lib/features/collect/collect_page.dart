@@ -109,16 +109,26 @@ class _CollectPageState extends ConsumerState<CollectPage> {
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
                 // Tab 页无返回键；标题口径：运行态 = 采集中心（index.html:1597），空闲 = 采集。
-                Text(running ? '采集中心' : '采集'),
+                Align(
+                  alignment: Alignment.center,
+                  widthFactor: 1,
+                  child: Text(running ? '采集中心' : '采集'),
+                ),
                 SizedBox(width: s.space2),
                 GestureDetector(
                   key: const ValueKey<String>('collect-anon-badge'),
                   onLongPress: kDebugMode ? _toggleDemo : null,
                   // 需求 8/5：导入 BDUSS 即账号模式（配额 600）；失效标记后按匿名档运行
                   // （effective 口径，与采集装配同源）。
-                  child: CollectBadge(
-                    label: ref.watch(effectiveBdussProvider).value == null ? '匿名模式' : '账号模式',
-                    variant: CollectBadgeVariant.originSelf,
+                  child: Align(
+                    alignment: Alignment.center,
+                    heightFactor: 1,
+                    child: CollectBadge(
+                      label: ref.watch(effectiveBdussProvider).value == null
+                          ? '匿名模式'
+                          : '账号模式',
+                      variant: CollectBadgeVariant.originSelf,
+                    ),
                   ),
                 ),
               ],

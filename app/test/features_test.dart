@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -318,6 +319,42 @@ void main() {
       final BookDetailData? book = await q.bookDetail(gid);
       expect(book!.recommendCount, 1);
       expect(book.avoidCount, 0);
+    });
+
+    test('首页提示已读：清零全部吧 new_since_visit', () async {
+      await db.into(db.collectionState).insert(
+        const CollectionStateCompanion(
+          fname: Value<String>('提示吧A'),
+          newSinceVisit: Value<int>(3),
+        ),
+      );
+      await db.into(db.collectionState).insert(
+        const CollectionStateCompanion(
+          fname: Value<String>('提示吧B'),
+          newSinceVisit: Value<int>(5),
+        ),
+      );
+      expect(
+        (await db
+                .customSelect(
+                  'SELECT SUM(new_since_visit) AS n FROM collection_state',
+                )
+                .getSingle())
+            .data['n'],
+        8,
+      );
+
+      await q.clearNewContentCount();
+
+      expect(
+        (await db
+                .customSelect(
+                  'SELECT SUM(new_since_visit) AS n FROM collection_state',
+                )
+                .getSingle())
+            .data['n'],
+        0,
+      );
     });
 
     test('历史六维快照去重 + 书签/收藏 toggle', () async {
