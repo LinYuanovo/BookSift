@@ -48,6 +48,9 @@ jobs:
         working-directory: website
         run: npm ci
 
+      - name: Sync documented version from pubspec.yaml
+        run: node tools/render_docs.js
+
       - name: Build with VitePress
         working-directory: website
         run: npm run docs:build

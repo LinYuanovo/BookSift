@@ -1,21 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readAppVersion, renderVersioned } from '../../tools/render_docs.js'
 import { defineConfig } from 'vitepress'
-
-// 从 app/pubspec.yaml 读取版本号（取 + 构建号之前的部分），保持文档站与软件版本同步
-function readAppVersion(): string {
-  try {
-    const pubspec = readFileSync(
-      resolve(import.meta.dirname, '../../app/pubspec.yaml'),
-      'utf-8',
-    )
-    const match = pubspec.match(/^version:\s*(\S+)/m)
-    if (match) return match[1].split('+')[0]
-  } catch {
-    // 读取失败时回退到占位版本号
-  }
-  return '0.0.0'
-}
 
 const appVersion = readAppVersion()
 
@@ -34,6 +18,15 @@ export default defineConfig({
   description: '贴吧「扫书帖」离线书单浏览器 —— 使用文档与图文教程',
   cleanUrls: true,
   lastUpdated: true,
+
+  // 文档正文仍保持普通 Markdown 语法；仅在构建时从 pubspec.yaml 注入版本号。
+  markdown: {
+    preConfig(md) {
+      const render = md.render.bind(md)
+      md.render = (source, env) =>
+        render(renderVersioned(source, appVersion), env)
+    },
+  },
 
   head: [
     ['link', { rel: 'icon', type: 'image/png', href: '/BookSift/logo.png' }],

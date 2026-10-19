@@ -48,6 +48,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 校验 README 与文档版本已同步
+        run: node tools/check_docs.js
+
       - name: 解析 tag / 输入，并与 pubspec.yaml 对齐
         id: resolve
         env:

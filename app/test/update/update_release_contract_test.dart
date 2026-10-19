@@ -99,6 +99,43 @@ void main() {
     ], '发布脚本包名');
   });
 
+  test('README 五平台下载链接与当前版本资产名一致', () {
+    final String pubspec = _readRepoFile('app/pubspec.yaml');
+    final String template = _readRepoFile('docs-content/readme.md.tpl');
+    final RegExp versionPattern = RegExp(
+      r'^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+[0-9]+$',
+      multiLine: true,
+    );
+    final RegExpMatch? versionMatch = versionPattern.firstMatch(pubspec);
+    expect(versionMatch, isNotNull, reason: 'pubspec.yaml 缺少版本号');
+    final String version = versionMatch!.group(1)!;
+    final String readme = _readRepoFile('README.md');
+    final String expectedReadme = template.replaceAll('{{version}}', version);
+
+    expect(
+      readme,
+      expectedReadme,
+      reason: 'README.md 应与 docs-content/readme.md.tpl 渲染结果一致',
+    );
+  });
+
+  test('使用指南源码使用版本占位符，不写死版本号', () {
+    final String guide = _readRepoFile(
+      'docs-content/guide-getting-started.md',
+    );
+
+    _expectAll(guide, <String>[
+      r'BookSift-android-v{{version}}.apk',
+      r'BookSift-windows-x64-v{{version}}.zip',
+      r'certutil -hashfile .\BookSift-android-v{{version}}.apk SHA256',
+    ], '使用指南源码');
+    expect(
+      RegExp(r'v1\.0\.\d+').hasMatch(guide),
+      isFalse,
+      reason: '使用指南源码不应写死版本号',
+    );
+  });
+
   test('桌面更新助手随 Windows 与 Linux 发行包一起安装', () {
     final String windows = _readRepoFile('app/windows/CMakeLists.txt');
     final String linux = _readRepoFile('app/linux/CMakeLists.txt');

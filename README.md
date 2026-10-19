@@ -63,11 +63,11 @@
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Android | `BookSift-android-v1.0.0.apk` | Android 7.0+，允许安装未知应用 |
-| iOS | `BookSift-ios-v1.0.0.ipa` | 未签名包需使用自己的证书签名 |
-| Windows | `BookSift-windows-x64-v1.0.0.zip` | Windows 10/11，完整解压后运行 `booksift.exe` |
-| macOS | `BookSift-macos-universal-v1.0.0.zip` | 包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
-| Linux | `BookSift-linux-x64-v1.0.0.tar.gz` | Ubuntu 22.04+，需 GTK3 / libsecret |
+| Android | [`BookSift-android-v1.0.1.apk`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.1/BookSift-android-v1.0.1.apk) | Android 7.0+，允许安装未知应用 |
+| iOS | [`BookSift-ios-v1.0.1.ipa`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.1/BookSift-ios-v1.0.1.ipa) | 未签名包需使用自己的证书签名 |
+| Windows | [`BookSift-windows-x64-v1.0.1.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.1/BookSift-windows-x64-v1.0.1.zip) | Windows 10/11，完整解压后运行 `booksift.exe` |
+| macOS | [`BookSift-macos-universal-v1.0.1.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.1/BookSift-macos-universal-v1.0.1.zip) | 包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
+| Linux | [`BookSift-linux-x64-v1.0.1.tar.gz`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.1/BookSift-linux-x64-v1.0.1.tar.gz) | Ubuntu 22.04+，需 GTK3 / libsecret |
 
 发布页不一定同时提供所有平台的包；每个文件旁都有同名 `.sha256`，建议用 `certutil -hashfile <文件> SHA256` 校验。
 
@@ -135,8 +135,8 @@ pwsh tools/run_tests_safe.ps1
 推送与 `app/pubspec.yaml` 版本一致的 tag 可触发 GitHub Actions 构建与发布：
 
 ```powershell
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 </details>

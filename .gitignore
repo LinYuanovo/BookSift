@@ -12,6 +12,9 @@ tools/*
 !tools/smoke_cli.ps1
 !tools/release_assets.ps1
 !tools/test_release_assets.ps1
+!tools/render_docs.js
+!tools/check_docs.js
+!tools/package.json
 !tools/make_release_linux.sh
 !tools/pack_classifier_sources.ps1
 !tools/classifier_pack/
