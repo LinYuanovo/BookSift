@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../collector/scheduler.dart';
 import '../../core/icons.dart';
 import '../../core/update/update_controller.dart';
 import '../../core/update/update_service.dart';
+import '../../core/widgets/app_toast.dart';
 import '../../data/repo/queries_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
@@ -110,6 +112,41 @@ class AboutPage extends ConsumerWidget {
         '不上传、不同步。应用不含任何统计或广告 SDK。',
   ];
 
+  /// 反馈渠道：页面展示与实际打开地址共用同一组常量。
+  static const String _creatorUrl = 'https://space.bilibili.com/345721873';
+  static const String _projectUrl = 'https://github.com/LinYuanovo/BookSift';
+  static const String _email = '1577242215@qq.com';
+
+  static Future<void> _openFeedbackUrl(BuildContext context, String url) async {
+    bool opened = false;
+    try {
+      opened = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+    } on Object {
+      opened = false;
+    }
+    if (!opened && context.mounted) {
+      showAppToast(context, '没有可打开该链接的应用');
+    }
+  }
+
+  static Future<void> _openFeedbackEmail(BuildContext context) async {
+    bool opened = false;
+    try {
+      opened = await launchUrl(
+        Uri(scheme: 'mailto', path: _email),
+        mode: LaunchMode.externalApplication,
+      );
+    } on Object {
+      opened = false;
+    }
+    if (!opened && context.mounted) {
+      showAppToast(context, '没有可发送邮件的应用');
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final AppColors colors = AppColors.of(context);
@@ -156,6 +193,56 @@ class AboutPage extends ConsumerWidget {
               bullets: _privacyBullets,
               tail: _privacyTail,
             ),
+            SizedBox(height: space.space6),
+            Card(
+              child: Padding(
+                padding: EdgeInsets.all(space.cardPadding),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Row(
+                      children: <Widget>[
+                        AppIcon('info', size: 20, color: colors.accent),
+                        SizedBox(width: space.space3),
+                        Expanded(
+                          child: Text(
+                            '反馈与联系',
+                            style: t.cardTitle.copyWith(color: colors.text),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: space.space4),
+                    Text(
+                      '遇到问题、发现数据有误，或有功能建议，欢迎通过以下渠道反馈。'
+                      '为了便于定位，请尽量附上应用版本、使用平台和复现步骤。',
+                      style: t.body.copyWith(color: colors.textSecondary),
+                    ),
+                    SizedBox(height: space.space3),
+                    _FeedbackLink(
+                      icon: 'user',
+                      title: 'B 站主页',
+                      subtitle: _creatorUrl,
+                      onTap: () => _openFeedbackUrl(context, _creatorUrl),
+                    ),
+                    const Divider(height: 1),
+                    _FeedbackLink(
+                      icon: 'book',
+                      title: '项目主页',
+                      subtitle: _projectUrl,
+                      onTap: () => _openFeedbackUrl(context, _projectUrl),
+                    ),
+                    const Divider(height: 1),
+                    _FeedbackLink(
+                      icon: 'external',
+                      title: '邮件联系',
+                      subtitle: _email,
+                      onTap: () => _openFeedbackEmail(context),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             SizedBox(height: space.space8),
             Text(
               '扫书汇 · $versionText',
@@ -174,6 +261,41 @@ class AboutPage extends ConsumerWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 反馈渠道行：整行可点，附外部打开图标。
+class _FeedbackLink extends StatelessWidget {
+  const _FeedbackLink({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final String icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final AppColors colors = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: AppIcon(icon, size: 20, color: colors.textMuted),
+      title: Text(
+        title,
+        style: t.bodyStrong.copyWith(color: colors.text),
+      ),
+      subtitle: Text(
+        subtitle,
+        style: t.caption.copyWith(color: colors.textMuted),
+      ),
+      trailing: AppIcon('external', size: 16, color: colors.textMuted),
+      onTap: onTap,
     );
   }
 }

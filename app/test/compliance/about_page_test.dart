@@ -4,6 +4,8 @@
 /// 频控数字与 `collector/scheduler.dart` 常量同源、设置页入口可达。
 library;
 
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:booksift/collector/scheduler.dart';
 import 'package:booksift/core/update/update_service.dart';
@@ -52,6 +54,14 @@ void main() {
       expect(find.text('扫书汇 · v1.0.0 (100)'), findsOneWidget);
       expect(find.textContaining('protobuf 定义取自开源项目 aiotieba'), findsOneWidget);
       expect(find.textContaining('不隶属于百度'), findsOneWidget);
+      expect(find.text('反馈与联系'), findsOneWidget);
+      expect(find.textContaining('请尽量附上应用版本、使用平台和复现步骤'), findsOneWidget);
+      expect(find.text('B 站主页'), findsOneWidget);
+      expect(find.text('https://space.bilibili.com/345721873'), findsOneWidget);
+      expect(find.text('项目主页'), findsOneWidget);
+      expect(find.text('https://github.com/LinYuanovo/BookSift'), findsOneWidget);
+      expect(find.text('邮件联系'), findsOneWidget);
+      expect(find.text('1577242215@qq.com'), findsOneWidget);
     });
 
     testWidgets('版本号降级：package_info 不可用 → 「版本未知」', (WidgetTester tester) async {
@@ -62,6 +72,46 @@ void main() {
     testWidgets('版本号降级：无 buildNumber → 只显示 v 号', (WidgetTester tester) async {
       await pumpAbout(tester, local: const LocalVersion(version: '1.2.3'));
       expect(find.text('扫书汇 · v1.2.3'), findsOneWidget);
+    });
+  });
+
+  group('反馈与联系', () {
+    testWidgets('三个渠道分别打开 B 站主页、项目主页与邮件', (
+      WidgetTester tester,
+    ) async {
+      const MethodChannel launcher = MethodChannel(
+        'plugins.flutter.io/url_launcher',
+      );
+      final List<String> urls = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        launcher,
+        (MethodCall call) async {
+          if (call.method == 'launch') {
+            urls.add((call.arguments as Map<Object?, Object?>)['url'] as String);
+          }
+          return true;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          launcher,
+          null,
+        ),
+      );
+      await pumpAbout(tester);
+
+      for (final String title in <String>['B 站主页', '项目主页', '邮件联系']) {
+        final Finder row = find.widgetWithText(ListTile, title);
+        await tester.ensureVisible(row);
+        await tester.tap(row);
+        await tester.pumpAndSettle();
+      }
+
+      expect(urls, <String>[
+        'https://space.bilibili.com/345721873',
+        'https://github.com/LinYuanovo/BookSift',
+        'mailto:1577242215@qq.com',
+      ]);
     });
   });
 
