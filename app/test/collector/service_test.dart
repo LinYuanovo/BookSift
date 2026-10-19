@@ -10,6 +10,7 @@ import 'package:booksift/collector/collect_state.dart';
 import 'package:booksift/collector/scheduler.dart';
 import 'package:booksift/collector/tieba/src/models.dart';
 import 'package:booksift/collector/tieba_api.dart';
+import 'package:booksift/core/constants.dart';
 import 'package:booksift/data/db/app_database.dart';
 
 import 'support.dart';
@@ -42,6 +43,60 @@ List<int> postsCallTids(TestEnv env) => <int>[
     ];
 
 void main() {
+  group('仅 Wi-Fi 网络门控', () {
+    test('非 Wi-Fi 时不发请求、不移动水位并显示暂停说明', () async {
+      final TestEnv env = await TestEnv.create(
+        forums: <String>['网络测试吧'],
+        wifiAvailable: false,
+      );
+      addTearDown(env.dispose);
+
+      await env.service.run();
+
+      expect(env.api.calls, isEmpty);
+      final CollectionStateEntry forum = (await env.repo.forum('网络测试吧'))!;
+      expect(forum.lastThreadTime, 0);
+      expect(env.last.banner, contains('当前非 WiFi'));
+    });
+
+    test('关闭仅 Wi-Fi 后允许非 Wi-Fi 网络采集', () async {
+      final TestEnv env = await TestEnv.create(
+        forums: <String>['网络测试吧'],
+        wifiAvailable: false,
+      );
+      addTearDown(env.dispose);
+      await env.repo.setSetting(SettingsKeys.wifiOnly, 'false');
+      scriptThreadPage(env, '网络测试吧', 1, threads: const <ThreadSummary>[]);
+
+      await env.service.run();
+
+      expect(env.api.calls, hasLength(1));
+      expect(env.last.banner, isNull);
+    });
+
+    test('运行中切离 Wi-Fi：不再发请求、不计预算、不推进水位', () async {
+      final TestEnv env = await TestEnv.create(forums: <String>['网络测试吧']);
+      addTearDown(env.dispose);
+      scriptThreadPage(env, '网络测试吧', 1, threads: <ThreadSummary>[
+        mkThread(tid: 9001, createTime: 100),
+      ]);
+      scriptPost(env, 9001, '网络测试吧');
+      env.api.afterRequest = (int n) {
+        if (n == 1) env.networkGate.wifiAvailable = false;
+      };
+
+      await env.service.run();
+
+      expect(env.api.calls, hasLength(1), reason: '列表请求后断网，不应再发楼层请求');
+      expect(await env.repo.getSetting(CollectSettingsKeys.budgetCount), '1');
+      expect(env.last.banner, contains('当前非 WiFi'));
+      expect(env.last.forums.single.status, ForumStatus.canceled);
+      final CollectionStateEntry state = (await env.repo.forum('网络测试吧'))!;
+      expect(state.lastThreadTime, 0);
+      expect(state.lastStatus, 'canceled');
+    });
+  });
+
   group('§8.8 并发模型', () {
     test('跨吧并发 ≤2（默认）、吧内严格串行、全局间隔 ≥1.5s', () async {
       final TestEnv env = await TestEnv.create(

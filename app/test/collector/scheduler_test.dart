@@ -171,6 +171,29 @@ void main() {
             greaterThanOrEqualTo(1500));
       }
     });
+
+    test('请求启动回调拒绝时不消耗每日预算', () async {
+      final FakeClock clock = FakeClock();
+      final DailyBudget budget = DailyBudget(
+        store: _MapBudgetStore(),
+        clock: clock,
+        limit: 3,
+      );
+      final GlobalRateLimiter limiter = GlobalRateLimiter(
+        clock: clock,
+        sleeper: fakeSleeper(clock),
+        rng: Random(1),
+        budget: budget,
+        beforeStart: () async => throw const NetworkGateBlockedException(),
+      );
+
+      await expectLater(
+        limiter.throttle(),
+        throwsA(isA<NetworkGateBlockedException>()),
+      );
+
+      expect(budget.used, 0);
+    });
   });
 
   group('DailyBudget（§8.11 每日 ≤300 本地计数、跨日重置）', () {

@@ -301,6 +301,7 @@ class TestEnv {
     required this.clock,
     required this.service,
     required this.snapshots,
+    required this.networkGate,
   });
 
   final AppDatabase db;
@@ -309,6 +310,7 @@ class TestEnv {
   final FakeClock clock;
   final CollectService service;
   final List<CollectRunState> snapshots;
+  final FakeNetworkGate networkGate;
 
   CollectRunState get last => snapshots.last;
 
@@ -320,6 +322,7 @@ class TestEnv {
     int holdTicks = 4,
     int? seed,
     bool bdussImported = false,
+    bool wifiAvailable = true,
     TiebaApi Function()? anonymousApiFactory,
     void Function()? onAccountInvalid,
     FakeClock? clock,
@@ -329,6 +332,7 @@ class TestEnv {
     final CollectRepository repo = CollectRepository(db);
     final FakeTiebaApi api = FakeTiebaApi(effectiveClock, holdTicks: holdTicks);
     final List<CollectRunState> snapshots = <CollectRunState>[];
+    final FakeNetworkGate networkGate = FakeNetworkGate(wifiAvailable);
     final CollectService service = CollectService(
       db: db,
       repo: repo,
@@ -339,6 +343,7 @@ class TestEnv {
       rng: Random(seed ?? 42),
       budgetLimit: budgetLimit,
       bdussImported: bdussImported,
+      networkGate: networkGate,
       anonymousApiFactory: anonymousApiFactory,
       onAccountInvalid: onAccountInvalid,
       onState: snapshots.add,
@@ -355,8 +360,18 @@ class TestEnv {
         api: api,
         clock: effectiveClock,
         service: service,
-        snapshots: snapshots);
+        snapshots: snapshots,
+        networkGate: networkGate);
   }
 
   Future<void> dispose() => db.close();
+}
+
+class FakeNetworkGate implements NetworkGate {
+  FakeNetworkGate(this.wifiAvailable);
+
+  bool wifiAvailable;
+
+  @override
+  Future<bool> isWifi() async => wifiAvailable;
 }

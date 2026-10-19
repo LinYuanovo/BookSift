@@ -392,6 +392,7 @@ class IngestPipeline {
           return p;
         }
       }
+      return null;
     }
     return candidates.first;
   }

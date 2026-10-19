@@ -10,6 +10,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:path/path.dart' as p;
 
 /// 种子包体检结果。
 class SeedPackReport {
@@ -95,18 +96,63 @@ abstract final class SeedInspector {
       throw SeedInspectException('manifest.json 不存在：$dir');
     }
     onProgress?.call('读 manifest.json');
-    final Map<String, Object?> manifest =
-        jsonDecode(await manifestFile.readAsString()) as Map<String, Object?>;
-
-    final Map<String, Object?> compression =
-        (manifest['compression'] as Map<String, Object?>?) ?? const <String, Object?>{};
-    final String? zipName = compression['zip_file'] as String?;
-    final String? expectedSha = compression['zip_sha256'] as String?;
-    final int? expectedBytes = (compression['zip_size_bytes'] as num?)?.toInt();
-
-    if (zipName == null) {
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(await manifestFile.readAsString());
+    } on FormatException catch (e) {
+      throw SeedInspectException('manifest.json 格式无效：${e.message}');
+    }
+    if (decoded is! Map) {
+      throw const SeedInspectException('manifest.json 顶层必须是对象');
+    }
+    if (decoded.keys.any((Object? key) => key is! String)) {
+      throw const SeedInspectException('manifest.json 对象键必须是字符串');
+    }
+    final Map<String, Object?> manifest = Map<String, Object?>.from(decoded);
+    final Object? compressionValue = manifest['compression'];
+    if (compressionValue is! Map) {
+      throw const SeedInspectException('manifest.compression 缺失或格式无效');
+    }
+    if (compressionValue.keys.any((Object? key) => key is! String)) {
+      throw const SeedInspectException('manifest.compression 对象键必须是字符串');
+    }
+    final Map<String, Object?> compression = Map<String, Object?>.from(
+      compressionValue,
+    );
+    final Object? zipNameValue = compression['zip_file'];
+    if (zipNameValue is! String || zipNameValue.trim().isEmpty) {
       throw SeedInspectException('manifest.compression.zip_file 缺失，无法定位 zip');
     }
+    final String zipName = zipNameValue;
+    if (p.isAbsolute(zipName) ||
+        zipName.contains('/') ||
+        zipName.contains('\\') ||
+        zipName.contains(':') ||
+        zipName == '.' ||
+        zipName == '..' ||
+        p.basename(zipName) != zipName) {
+      throw const SeedInspectException(
+        'manifest.compression.zip_file 必须是当前目录内的文件名',
+      );
+    }
+    final Object? expectedShaValue = compression['zip_sha256'];
+    if (expectedShaValue != null &&
+        (expectedShaValue is! String ||
+            !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(expectedShaValue))) {
+      throw const SeedInspectException(
+        'manifest.compression.zip_sha256 必须是 64 位十六进制 SHA256 或 null',
+      );
+    }
+    final String? expectedSha = expectedShaValue as String?;
+    final Object? expectedBytesValue = compression['zip_size_bytes'];
+    if (expectedBytesValue != null &&
+        (expectedBytesValue is! int || expectedBytesValue < 0)) {
+      throw const SeedInspectException(
+        'manifest.compression.zip_size_bytes 必须是非负整数或 null',
+      );
+    }
+    final int? expectedBytes = expectedBytesValue as int?;
+
     final File zip = File('$dir${Platform.pathSeparator}$zipName');
     if (!await zip.exists()) {
       return SeedPackReport(

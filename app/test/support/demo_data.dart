@@ -185,7 +185,7 @@ FakeLibrary demoLibrary() {
         category: scan, postRef: 20001, quality: 3, author: '咸鱼军师',
         comment: '重生加恋爱游戏设定，前期笑点密集，节奏轻快不拖沓。'),
     _entry(id: 2007, nameNorm: '我不想和你一起重生', groupId: 900, date: '2025-04-10',
-        channel: '雪群推书', category: scan, postRef: 18293, author: '咸鱼军师'),
+        channel: '雪群推书', category: scan, postRef: 8, author: '咸鱼军师'),
     // 2008 带楼层号：书聚合页点卡进帖须直达该楼（PostSelection.initialFloorSeq）。
     _entry(id: 2008, nameNorm: '我不想和你一起重生', groupId: 900, date: '2025-04-22', channel: 'yy小说吧',
         category: scan, postRef: 7, floorSeq: 2, author: '咸鱼军师'),

@@ -140,9 +140,27 @@ class BookQueryApi {
   /// 五维真实命中计数。
   Future<CategoryCounts> dimensionCounts() => _queries.dimensionCounts();
 
+  /// 在其他已选维度条件下，返回每个维度的联动候选计数。
+  Future<CategoryCounts> searchDimensions(SearchFilter filter) =>
+      _queries.searchDimensionCounts(filter);
+
+  /// 五维筛选预览（命中总数 + 最新条目）。
+  Future<CategoryPreview> categoryPreview(
+    CategorySelection selection, {
+    int limit = 5,
+  }) =>
+      _queries.categoryPreview(selection, limit: limit);
+
   /// 热门榜。
-  Future<List<RankRow>> rank(RankWindow window, {int limit = 10, DateTime? today}) =>
-      _queries.rankRows(window, today: today, limit: limit);
+  Future<List<RankRow>> rank(
+    RankWindow window, {
+    int limit = 10,
+    DateTime? today,
+    bool wordCount = false,
+  }) =>
+      wordCount
+          ? _queries.wordRankRows(window, today: today, limit: limit)
+          : _queries.rankRows(window, today: today, limit: limit);
 
   /// 热门书名（book_groups.entry_total Top N）。
   Future<List<HotBook>> hotBooks({int limit = 20}) => _queries.hotBooks(limit: limit);
@@ -251,8 +269,11 @@ Map<String, Object?> entryRowJson(EntryRow e) => <String, Object?>{
       'wordCount': e.wordCount,
       'postRef': e.postRef,
       'floorRef': e.floorRef,
+      'floorSeq': e.floorSeq,
+      'floorText': e.floorText,
       'bookGroupId': e.bookGroupId,
       'srcUrl': e.srcUrl,
+      'postTitle': e.postTitle,
       'snippet': e.snippet,
       'recommendFlag': e.recommendFlag,
     };
@@ -270,6 +291,19 @@ Map<String, Object?> hotBookJson(HotBook h) => <String, Object?>{
       'nameNorm': h.nameNorm,
       'entryTotal': h.entryTotal,
       'groupId': h.groupId,
+    };
+
+Map<String, Object?> timelinePostJson(PostCardData p) => <String, Object?>{
+      'post': p.post.toJson(),
+      'books': p.books
+          .map((BookChip book) => <String, Object?>{
+                'name': book.name,
+                'nameNorm': book.nameNorm,
+                'bookGroupId': book.bookGroupId,
+              })
+          .toList(),
+      'entryCount': p.entryCount,
+      'summary': p.summary,
     };
 
 Map<String, Object?> collectionLogJson(CollectionLog l) => <String, Object?>{

@@ -140,6 +140,11 @@ class GlobalPausedException implements Exception {
   String toString() => 'GlobalPausedException()';
 }
 
+/// 仅 Wi-Fi 设置不满足，阻止一次尚未发出的请求。
+class NetworkGateBlockedException implements Exception {
+  const NetworkGateBlockedException();
+}
+
 // ── Semaphore（§8.8：全局闸门，内部 Completer 等待队列） ─────────────────
 
 class Semaphore {
@@ -213,6 +218,20 @@ class DailyBudget {
 
   /// 核算并消耗 1 个请求额度；触顶抛 [BudgetExhaustedException]。
   Future<void> consume() async {
+    await _loadForToday();
+    if (_count >= limit) throw BudgetExhaustedException(limit);
+    _count++;
+    await _store.write(dateKey, _date!);
+    await _store.write(countKey, '$_count');
+  }
+
+  /// 先检查预算，避免额度耗尽后仍等待限速间隔。
+  Future<void> ensureAvailable() async {
+    await _loadForToday();
+    if (_count >= limit) throw BudgetExhaustedException(limit);
+  }
+
+  Future<void> _loadForToday() async {
     final String today = _today();
     if (!_loaded || _date != today) {
       final String? storedDate = await _store.read(dateKey);
@@ -223,10 +242,6 @@ class DailyBudget {
       _date = today;
       _loaded = true;
     }
-    if (_count >= limit) throw BudgetExhaustedException(limit);
-    _count++;
-    await _store.write(dateKey, today);
-    await _store.write(countKey, '$_count');
   }
 }
 
@@ -240,6 +255,7 @@ class GlobalRateLimiter {
     required Sleeper sleeper,
     required Random rng,
     required DailyBudget budget,
+    this.beforeStart,
     this.minMs = kMinIntervalMs,
     this.maxMs = kMaxIntervalMs,
   })  : _clock = clock,
@@ -251,6 +267,7 @@ class GlobalRateLimiter {
   final Sleeper _sleeper;
   final Random _rng;
   final DailyBudget _budget;
+  final Future<void> Function()? beforeStart;
   final int minMs;
   final int maxMs;
 
@@ -277,13 +294,15 @@ class GlobalRateLimiter {
   }
 
   Future<void> _takeSlot() async {
-    await _budget.consume(); // 预算触顶 → 上抛，不占用间隔
+    await _budget.ensureAvailable();
     final int span = maxMs - minMs;
     final int intervalMs = minMs + (span > 0 ? _rng.nextInt(span + 1) : 0);
     final DateTime last = _lastStart ?? _clock.now().subtract(Duration(milliseconds: intervalMs));
     final DateTime earliest = last.add(Duration(milliseconds: intervalMs));
     final DateTime now = _clock.now();
     if (earliest.isAfter(now)) await _sleeper(earliest.difference(now));
+    await beforeStart?.call();
+    await _budget.consume(); // 网络拒绝的请求不占预算
     _lastStart = _clock.now();
   }
 }

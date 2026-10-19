@@ -6,6 +6,7 @@
 工程内与代码同步维护的规范文档：
 
 - [`HEADLESS.md`](HEADLESS.md) —— headless CLI 规格、字段契约、不变量与待补缺口清单
+- 仓库根 `../tools/smoke_cli.ps1` —— 构建并验证真实 CLI bundle 的 JSON、只读与网络闸门行为
 - [`test/TESTING.md`](test/TESTING.md) —— 测试纪律（FakeAsync 挂死根因与模式）
 
 ```powershell

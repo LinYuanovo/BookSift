@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:drift/native.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sql;
@@ -210,8 +211,18 @@ void main() {
       await tester.pumpWidget(testApp(repo, initial: '/post/18293'));
       await tester.pumpAndSettle();
 
+      AnimatedSwitcher bookmark = tester.widget<AnimatedSwitcher>(
+        find.byKey(const ValueKey<String>('post_action_bookmark')),
+      );
+      expect(bookmark.child?.key, const ValueKey<bool>(false));
+
       await tester.tap(find.text('书签'));
       await tester.pumpAndSettle();
+
+      bookmark = tester.widget<AnimatedSwitcher>(
+        find.byKey(const ValueKey<String>('post_action_bookmark')),
+      );
+      expect(bookmark.child?.key, const ValueKey<bool>(true));
 
       expect(find.text('已加入书签（含楼层位置）'), findsOneWidget);
       final Bookmark bm = repo.bookmarks.single;

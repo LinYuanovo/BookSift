@@ -147,23 +147,34 @@ git push origin v1.0.0
 采集、分类、检索和入库逻辑都是纯 Dart，可在不启动 Flutter GUI 的情况下运行。完整规格见 [`app/HEADLESS.md`](app/HEADLESS.md)，用法见[文档站](https://linyuanovo.github.io/BookSift/development/headless)。
 
 ```powershell
+pwsh tools/smoke_cli.ps1                    # 构建并验证真实 CLI bundle（墙钟看门狗）
 cd app
 & C:\flutter\bin\dart.bat build cli          # 一次编译，bundle 自带 sqlite3.dll
 $exe = ".\build\cli\windows_x64\bundle\bin\booksift.exe"
 
 & $exe doctor                                 # 环境自检（零网络）
+& $exe --version                             # 输出 CLI 版本
 & $exe --json --db <path> stats               # 结果 JSON→stdout，日志 JSONL→stderr
 & $exe --db <path> query 诡秘之主 --limit 5
+& $exe --json --db <path> facets --year 2026 --month 10
+& $exe --json --db <path> hot --limit 10
+& $exe --json --db <path> random --count 5
+& $exe --json --db <path> timeline --limit 20
+& $exe --json --db <path> rank --kind word --window year --limit 10
+& $exe --json --db <path> show book 123
+& $exe --json --db <path> show book 123 --filter recommend --sort time_desc --limit 50 --offset 0
+& $exe --json --db <path> show post 456
+& $exe --json --no-log-file logs --file .\logs\<run-id>.jsonl --level warn
 & $exe classify --title "《某某》排雷" --floor "正文…"
 & $exe --db <path> collect                    # 只出计划，零请求
 ```
 
 | 要点 | 说明 |
 | --- | --- |
-| 子命令 | `doctor` / `stats` / `query` / `classify` / `logs` / `seed` / `collect` |
-| 日志 | 每次运行落 `app/logs/<run_id>.jsonl`；`--no-log-file` 可关 |
-| `--json` | 数据走 stdout、诊断走 stderr，可直接管道给 `jq` |
-| 退出码 | `0` 成功 / `1` 运行失败 / `2` 参数错误 / `3` 网络闸门未放行 |
+| 子命令 | `doctor` / `stats` / `query` / `facets` / `hot` / `random` / `timeline` / `rank` / `show book|post` / `classify` / `logs` / `seed` / `collect` |
+| 日志 | 每次运行落 `app/logs/<run_id>.jsonl`；`logs --run <id>` / `logs --file <path>` 可回放逐条事件；`--no-log-file` 可关 |
+| `--json` | 成功结果或 `{"error":...}` 走 stdout、JSONL 诊断走 stderr，可直接管道给 `jq` |
+| 退出码 | `0` 成功 / `1` 采集或运行失败 / `2` 参数错误 / `3` 网络闸门未放行或运行中切离 Wi-Fi |
 | 网络 | 只有 `collect --net` 发真请求，须同时设置 `BOOKSIFT_NET=1`，并受 `--budget` 上限约束 |
 
 ```dart

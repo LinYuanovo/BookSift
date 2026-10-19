@@ -21,8 +21,7 @@ import 'tieba/src/parse.dart' show extractBookNames;
 
 // ── 端口抽象：网络闸门（§8.11 wifi_only） ────────────────────────────────
 
-/// WiFi 判定端口。**现状诚实标注**：connectivity_plus 未接入（禁加新依赖），
-/// 默认实现 [AlwaysAllowNetworkGate] 恒 true；接入后仅替换实现，调度层不动。
+/// Wi-Fi 判定端口。headless 场景可注入平台检测；无法检测时应按非 Wi-Fi 处理。
 abstract interface class NetworkGate {
   Future<bool> isWifi();
 }

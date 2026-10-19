@@ -11,9 +11,11 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'package:sqlite3/sqlite3.dart' show OpenMode, sqlite3;
 
 import '../classify/classifier.dart';
 import '../data/db/app_database.dart';
+import 'seed.dart';
 
 /// 一条自检结果。
 class DoctorCheck {
@@ -91,6 +93,14 @@ abstract final class HeadlessEnv {
   /// 打开磁盘库（不存在则创建空库；drift 会在首次访问时建表）。
   static AppDatabase openDb(String path) =>
       AppDatabase(NativeDatabase(File(path)));
+
+  /// 只读打开磁盘库，不让 Drift 自动迁移或创建表。
+  static AppDatabase openReadOnlyDb(String path) => AppDatabase(
+    NativeDatabase.opened(
+      sqlite3.open(path, mode: OpenMode.readOnly),
+      enableMigrations: false,
+    ),
+  );
 
   /// 打开内存库（零 IO；测试与一次性查询用）。
   static AppDatabase openMemoryDb() => AppDatabase(NativeDatabase.memory());
@@ -183,20 +193,73 @@ abstract final class HeadlessEnv {
     }
     AppDatabase? db;
     try {
-      db = HeadlessEnv.openDb(path);
+      db = HeadlessEnv.openReadOnlyDb(path);
       final QueryRow v = await db
           .customSelect('PRAGMA user_version')
           .getSingle();
       final int userVersion = v.data.values.first as int;
       final Map<String, int> rows = await tableRowCounts(db);
+      const Set<String> requiredTables = <String>{
+        'bookmarks',
+        'book_entries',
+        'book_groups',
+        'book_fts',
+        'collection_logs',
+        'collection_state',
+        'favorites',
+        'floor_fts',
+        'floors',
+        'images',
+        'posts',
+        'search_history',
+        'settings',
+      };
+      final List<String> missingTables = requiredTables.difference(rows.keys.toSet()).toList()
+        ..sort();
+      const Set<String> requiredTriggers = <String>{
+        'book_entries_ai',
+        'book_entries_ad',
+        'book_entries_au',
+        'floors_ai',
+        'floors_ad',
+        'floors_au',
+      };
+      final List<QueryRow> triggerRows = await db
+          .customSelect(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger' "
+            "AND name IN ('book_entries_ai', 'book_entries_ad', 'book_entries_au', "
+            "'floors_ai', 'floors_ad', 'floors_au')",
+          )
+          .get();
+      final List<String> missingTriggers = requiredTriggers
+          .difference(
+            triggerRows
+                .map((QueryRow row) => row.read<String>('name'))
+                .toSet(),
+          )
+          .toList()
+        ..sort();
+      final bool currentSchema = userVersion == db.schemaVersion;
+      final bool schemaReady =
+          currentSchema && missingTables.isEmpty && missingTriggers.isEmpty;
       return DoctorCheck(
         name: 'db',
-        ok: true,
-        detail: '可读写，schema user_version=$userVersion，${rows.length} 张表',
+        ok: schemaReady,
+        detail: !currentSchema
+            ? 'schema 版本不匹配：当前 $userVersion，应用需要 ${db.schemaVersion}；只读检查未执行迁移'
+            : (missingTables.isNotEmpty
+                  ? '数据库缺少应用表：${missingTables.join(', ')}'
+                  : missingTriggers.isNotEmpty
+                      ? '数据库缺少 FTS 同步触发器：${missingTriggers.join(', ')}'
+                      : '只读可读，schema user_version=$userVersion，${rows.length} 张表'),
+        hint: schemaReady ? '' : '使用当前版本 App 打开此库以修复 schema',
         data: <String, Object?>{
           'path': path,
           'bytes': await f.length(),
           'userVersion': userVersion,
+          'expectedUserVersion': db.schemaVersion,
+          'missingTables': missingTables,
+          'missingTriggers': missingTriggers,
           'rows': rows,
         },
       );
@@ -254,34 +317,38 @@ abstract final class HeadlessEnv {
         detail: 'skip（未指定 --seed-dir）',
       );
     }
-    final File manifest = File('$dir${Platform.pathSeparator}manifest.json');
-    if (!await manifest.exists()) {
+    try {
+      final SeedPackReport report = await SeedInspector.inspect(
+        dir,
+        verifyHash: false,
+      );
+      return DoctorCheck(
+        name: 'seed',
+        ok: report.ok,
+        detail: !report.zipPresent
+            ? 'manifest 指定的 zip 文件不存在'
+            : (report.sizeMatches
+                  ? 'manifest + ${report.zipPath!.split(Platform.pathSeparator).last} 就位'
+                  : '种子包大小不匹配：实际 ${report.zipBytes}，期望 ${report.expectedZipBytes}'),
+        hint: report.ok ? '' : '种子包 zip 与 manifest 元数据不一致',
+        data: report.toJson(),
+      );
+    } on SeedInspectException catch (e) {
       return DoctorCheck(
         name: 'seed',
         ok: false,
-        detail: 'manifest.json 不存在：$dir',
-        hint: '种子包目录应含 manifest.json + seed_pack_lite_v1.zip',
+        detail: e.message,
+        hint: '种子包目录应含有效的 manifest.json 与对应 zip 文件',
+        data: <String, Object?>{'dir': dir},
+      );
+    } on FileSystemException catch (e) {
+      return DoctorCheck(
+        name: 'seed',
+        ok: false,
+        detail: '读取失败：${e.message}',
         data: <String, Object?>{'dir': dir},
       );
     }
-    final List<File> zipFiles = Directory(dir)
-        .listSync()
-        .whereType<File>()
-        .where((File f) => f.path.toLowerCase().endsWith('.zip'))
-        .toList();
-    return DoctorCheck(
-      name: 'seed',
-      ok: zipFiles.isNotEmpty,
-      detail: zipFiles.isEmpty
-          ? '目录内无 zip 包：$dir'
-          : 'manifest + ${zipFiles.length} 个 zip 就位',
-      hint: zipFiles.isEmpty ? '种子包 zip 缺失，App 首启导入会失败' : '',
-      data: <String, Object?>{
-        'dir': dir,
-        'zipCount': zipFiles.length,
-        'zipFiles': zipFiles.map((File f) => f.uri.pathSegments.last).toList(),
-      },
-    );
   }
 
   /// 各表行数（排错常用：判断库是空壳还是有数据）。
@@ -290,7 +357,7 @@ abstract final class HeadlessEnv {
   /// 「搜索没结果是不是 FTS 没建」正需要它），但**排除其影子表**
   /// （`*_data`/`*_idx`/`*_content`/`*_docsize`/`*_config`）：它们是 SQLite 内部结构，
   /// 且 `*_config` 恒有 1 行，混进来会让「新库应全为 0」这类判断失真。
-  /// 影子表按「基名是虚拟表 + 前缀匹配」通用识别，不硬编码表名。
+  /// 影子表按「基名是虚拟表 + 标准后缀」识别，避免误滤同前缀普通表。
   static Future<Map<String, int>> tableRowCounts(AppDatabase db) async {
     final List<QueryRow> tables = await db
         .customSelect(
@@ -307,8 +374,21 @@ abstract final class HeadlessEnv {
         ))
           t.read<String>('name'),
     };
-    bool isShadow(String name) =>
-        virtualBases.any((String b) => b != name && name.startsWith('${b}_'));
+    bool isShadow(String name) {
+      const Set<String> suffixes = <String>{
+        'config',
+        'content',
+        'data',
+        'docsize',
+        'idx',
+      };
+      final String lowerName = name.toLowerCase();
+      return virtualBases.any((String base) {
+        final String lowerBase = base.toLowerCase();
+        return lowerName != lowerBase &&
+            suffixes.any((String suffix) => lowerName == '${lowerBase}_$suffix');
+      });
+    }
 
     final Map<String, int> out = <String, int>{};
     for (final QueryRow t in tables) {
@@ -317,8 +397,9 @@ abstract final class HeadlessEnv {
         continue;
       }
       // 表名来自 sqlite_master，非用户输入；仍加引号防特殊字符。
+      final String quotedName = name.replaceAll('"', '""');
       final QueryRow c = await db
-          .customSelect('SELECT COUNT(*) AS n FROM "$name"')
+          .customSelect('SELECT COUNT(*) AS n FROM "$quotedName"')
           .getSingle();
       out[name] = c.read<int>('n');
     }

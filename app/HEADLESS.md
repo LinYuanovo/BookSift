@@ -12,8 +12,8 @@
 | 交付 | 落点 | 规模 | 状态 |
 |---|---|---|---|
 | 返回日志 | `lib/headless/logs.dart` | 246 行 | 完成，12 用例 |
-| 门面 API | `lib/booksift.dart` + `lib/headless/{env,query,collect,seed}.dart` | 50 + 304/284/310/153 行 | 完成，39 用例 |
-| CLI | `bin/booksift.dart` | 852 行，7 子命令 | 完成，**无自动化测试**（仅手工实跑，见 §8-C1） |
+| 门面 API | `lib/booksift.dart` + `lib/headless/{env,query,collect,seed,network_gate}.dart` | 纯 Dart 门面 | 完成，契约测试覆盖 |
+| CLI | `bin/booksift.dart` | 13 子命令（含 `facets` / `hot` / `random` / `timeline` / `rank` / `show book|post`） | 完成，参数、成功 JSON 与失败路径有自动化契约测试 |
 
 三者共享同一条**纯 Dart 边界**：不 import `package:flutter`，故 `dart run` / `dart build cli` 可脱 GUI 执行。
 
@@ -22,7 +22,7 @@
 ## 1. 架构与依赖边界
 
 ```
-bin/booksift.dart                    CLI（args CommandRunner，7 子命令）
+bin/booksift.dart                    CLI（args CommandRunner，13 子命令）
         │
 lib/booksift.dart                    barrel —— 只导出纯 Dart 库
         │
@@ -32,6 +32,7 @@ lib/headless/                        适配层（为脱 GUI 而写）
   query.dart   检索门面：BookQueryApi / DbOverview / JSON 映射
   collect.dart 采集驱动：HeadlessCollect.plan|run / CollectPlan / CollectRunResult
   seed.dart    种子包体检：SeedInspector / SeedPackReport
+  network_gate.dart Windows CLI 默认路由 Wi-Fi 探测
         │
 lib/collector/*  lib/data/repo/{queries,collect_repository}.dart  lib/classify/*
         │                            业务实现（本体即纯 Dart，未重写一行）
@@ -153,6 +154,9 @@ lib/data/db/app_database.dart        drift schema
 `db`（存在性 → 可开 → `PRAGMA user_version` + 表行数）、`dict`（行数 + `BookDict` 可锚定名数）、
 `seed`（manifest + zip 就位）。
 
+`db` 项同时检查应用表与 FTS 同步触发器完整；缺 `book_entries_ai/ad/au` 或 `floors_ai/ad/au`
+都会判定 schema 未就绪，避免“表在但新增内容永不入 FTS”的假健康。
+
 两条设计约束（都有测试兜底）：
 
 1. **doctor 只读**：库不存在时报 FAIL，**绝不顺手建库文件**——否则「库不存在」这个结论会被自己的副作用掩盖。
@@ -166,13 +170,15 @@ lib/data/db/app_database.dart        drift schema
 |---|---|---|
 | `BookQueryApi(db)` | 116 | 内部持有 `Queries` + `CollectRepository` |
 | `.queries` / `.repo` | 126 / 129 | **直接暴露底层实现**，门面未覆盖的方法可经此调用，避免逐条转发造成重复 |
-| `search / suggest / dimensionCounts / rank / hotBooks / randomBooks / timeline / dataCutoff / bookDetail / bookEntries / postDetail` | 134–172 | 转发到 `Queries` |
+| `search / suggest / dimensionCounts / searchDimensions / categoryPreview / rank / hotBooks / randomBooks / timeline / dataCutoff / bookDetail / bookEntries / postDetail` | 134–184 | 转发到 `Queries` |
 | `overview()` | 177 | `DbOverview`：`userVersion` + 表行数 + 关注吧水位 + settings |
 | `recentLogs({limit})` | 192 | `collection_logs`，新在前 |
 | `ForumWatermark` / `DbOverview` | 20 / 87 | 机读投影，各有 `toJson()` |
 
 文件尾部一组**顶层 JSON 映射函数**：`dimCountJson` / `categoryCountsJson` / `groupHitJson` /
 `searchOutcomeJson` / `entryRowJson` / `rankRowJson` / `hotBookJson` / `collectionLogJson`。
+`entryRowJson` 投影条目展示、分类、分页溯源字段及 `recommendFlag`；`floorSeq` / `floorText` /
+`postTitle` 用于保留楼层定位、原文预览和原帖语义，值为空时也保留对应 JSON 键。
 
 > 为什么放在这里而不是 `queries.dart`：那些数据类是 **UI 视图模型**，本身没有序列化能力；
 > 给它们加 `toJson` 要改 1400 行的大文件并牵动 UI 侧。补在 headless 层，改动面最小。
@@ -182,7 +188,7 @@ lib/data/db/app_database.dart        drift schema
 | 成员 | 行 | 说明 |
 |---|---|---|
 | `HeadlessCollect.plan({db, budgetLimit, bduss?})` | 163 | **零请求**，只读 db；`bduss` 只影响档位展示（间隔/并发上限） |
-| `HeadlessCollect.run({db, log, dictLines, api?, budgetLimit, bduss?, useIsolateWorker, clock?, sleeper?, networkGate?})` | 208 | 真跑；返回 `CollectRunResult` |
+| `HeadlessCollect.run({db, log, dictLines, networkGate, api?, budgetLimit, bduss?, useIsolateWorker, clock?, sleeper?})` | 208 | 真跑；网络闸门由调用方显式提供，返回 `CollectRunResult` |
 | `CollectPlan` | 24 | 吧水位 / 可跑吧 / 冷却吧 / 预算 / 并发 / 仅WiFi / 限速区间 / 账号档（`accountTier`） |
 | `CollectRunSummary` | 71 | `CollectRunState` 的机读投影 |
 | `CollectRunResult` | 144 | `state` + `summary` + `logCount`（逐条日志真实计数） |
@@ -227,6 +233,7 @@ sha256 走 `sha256.bind(file.openRead()).first`，流式、不整体读入内存
 | `--dict <path>` | `assets/dict/book_dict.txt` | v3 书名词典 |
 | `--log-dir <dir>` | `logs` | JSONL 落盘目录，不存在则创建 |
 | `--[no-]log-file` | on | 是否落盘 |
+| `--version` | off | 输出 CLI 版本，不读取数据库 |
 
 全局选项须写在子命令**之前**：`booksift --json --db X query 剑来`。
 
@@ -234,13 +241,20 @@ sha256 走 `sha256.bind(file.openRead()).first`，流式、不整体读入内存
 
 | 命令 | 类:行 | 专属 flag | 网络 | 需 db |
 |---|---|---|---|---|
-| `doctor` | `:234` | `--seed-dir` | 零 | 否 |
-| `stats` | `:299` | — | 零 | **是** |
-| `query <词…>` | `:379` | `--limit --offset --year --month --ten-day --channel --category --sort --suggest` | 零 | **是** |
-| `classify` | `:480` | `--title --floor`(可重复) `--text-file --no-dict` | 零 | 否 |
-| `logs` | `:593` | `--limit` | 零 | **是** |
-| `seed` | `:641` | `--dir --[no-]verify` | 零 | 否 |
-| `collect` | `:706` | `--net --budget --bduss（或环境变量 BOOKSIFT_BDUSS）--[no-]isolate --seed-forums` | **双闸** | **是** |
+| `doctor` | `bin/booksift.dart:419` | `--seed-dir` | 零 | 否 |
+| `stats` | `bin/booksift.dart:484` | — | 零 | **是** |
+| `query <词…>` | `bin/booksift.dart:564` | `--limit --offset --year --month --ten-day --channel --category --sort --suggest` | 零 | **是** |
+| `facets` | `bin/booksift.dart` | `--year --month --ten-day --channel --category` | 零 | **是** |
+| `hot` | `bin/booksift.dart:723` | `--limit` | 零 | **是** |
+| `random` | `bin/booksift.dart:762` | `--count` | 零 | **是** |
+| `timeline` | `bin/booksift.dart:796` | `--limit --offset` | 零 | **是** |
+| `rank` | `bin/booksift.dart:841` | `--window --kind --limit` | 零 | **是** |
+| `show book <gid>` | `bin/booksift.dart:933` | `--filter --sort --limit --offset` | 零 | **是** |
+| `show post <pid>` | `bin/booksift.dart:1022` | — | 零 | **是** |
+| `classify` | `bin/booksift.dart:1080` | `--title --floor`(可重复) `--text-file --no-dict` | 零 | 否 |
+| `logs` | `bin/booksift.dart:1204` | 汇总：`--limit`；回放：`--run --file --scope --level --event --limit` | 零 | 汇总需库；回放不需库 |
+| `seed` | `bin/booksift.dart:1392` | `--dir --[no-]verify` | 零 | 否 |
+| `collect` | `bin/booksift.dart:1466` | `--net --budget --bduss（或环境变量 BOOKSIFT_BDUSS）--[no-]isolate --seed-forums --forum（可重复）` | **双闸** | **计划只读；`--seed-forums` / 真采集可写** |
 
 多词查询：位置参数会被 `join(' ')` 成一个查询串（`query 剑来 番外` → `"剑来 番外"`，再按空格分词 AND）。
 
@@ -249,10 +263,13 @@ sha256 走 `sha256.bind(file.openRead()).first`，流式、不整体读入内存
 | 模式 | stdout | stderr |
 |---|---|---|
 | 默认 | 人读日志 + 人读结果 | — |
-| `--json` | **只有结果 JSON**（缩进 2） | JSONL 日志 |
+| `--json` | **只有结果 JSON**（成功结果或 `{"error":...}`） | JSONL 日志 |
 
-退出码（`ExitCode`，`:35`）：`0` 成功 / `1` 运行失败 / `2` 参数错误 / `3` 网络闸门未放行。
+退出码（`ExitCode`，`:35`）：`0` 成功 / `1` 采集或运行失败 / `2` 参数错误 / `3` 网络闸门拦截。
 可预期失败抛 `CliError`（`:43`，只打消息 + hint，不打栈）；未预期异常打栈并返回 1。
+
+`--json` 下，参数错误、数据库/种子包读取失败和未预期异常也会写到 stdout 的单个错误对象：
+`{"error":{"type":"usage|runtime|gated|internal","code":2,"message":"..."}}`；运行日志仍只走 stderr。
 
 ### 4.4 网络双闸
 
@@ -262,6 +279,14 @@ sha256 走 `sha256.bind(file.openRead()).first`，流式、不整体读入内存
 接受裸值或整段 `BDUSS=…` Cookie 片段（`parseBdussInput` 同源解析）；**凭证绝不进日志 / `--json`**（日志只打掩码，如 `FAKE_B……DE==`）。
 headless 侧读不到系统加密存储（flutter_secure_storage），故凭证只走参数/环境变量——不要在共享终端里 export 真凭证。
 `--seed-forums` 可在关注吧为空时播种默认两吧。
+启用「仅 WiFi」时，Windows CLI 会检测默认路由网卡；Linux CLI 检查默认路由对应的无线接口；App 在 Android / iOS / macOS 读取系统活动网络。其他宿主平台或检测失败时按非 Wi-Fi 处理，不发送请求。可在 App 设置中关闭「仅 WiFi」以允许使用其他网络。`--forum` 可重复传入，计划和实际采集都只处理指定关注吧。
+
+运行中每次请求在限速等待结束后还会复核「仅 WiFi」闸门；切换到非 Wi-Fi 会停止后续请求，未发出的请求不消耗预算，结果 JSON 的 `networkGateBlocked=true` 且退出码为 3。服务或 worker 失败会标记 `failed=true` 并返回退出码 1；因接口失败而进入冷却的吧也计作本轮失败。
+
+`logs` 默认读取数据库中的 `collection_logs` 每轮汇总；需要逐条事件时用 `logs --run <run-id>`
+（读取 `--log-dir/<run-id>.jsonl`）或 `logs --file <path>`。可附加 `--scope`、`--level`
+（`info|ok|warn|error`）、`--event` 精确筛选，`--limit` 返回筛选结果末尾 N 条，0 表示全部。
+JSONL 回放不需要 `--db`，并校验每行的 `RunEvent` 字段契约。
 
 ### 4.5 两种运行方式
 
@@ -277,7 +302,7 @@ headless 侧读不到系统加密存储（flutter_secure_storage），故凭证�
 ## 5. 契约与不变量（改前必读）
 
 1. `RunEvent` 的 JSON 键名与 `RunLevel.wire` 字面量是**对外契约**，改名等于破坏所有已落盘日志的解析。
-2. JSONL 一行一事件，`detail` 里的换行由 `jsonEncode` 转义；`seq` 必须单调。
+2. JSONL 一行一事件，`detail` 里的换行由 `jsonEncode` 转义；`seq` 必须从 1 连续递增。
 3. `lib/booksift.dart` 及其导出的每个库都不得 import `package:flutter`。
 4. `CollectService` / `Queries` / `CollectRepository` 三个实现文件必须保持纯 Dart；要 provider 就写进 `*_providers.dart`。
 5. `CollectService(onLog:)` 是可选参数，**不得改成必填**（会破坏 UI 侧与既有测试的构造调用）。
@@ -291,15 +316,18 @@ headless 侧读不到系统加密存储（flutter_secure_storage），故凭证�
 
 ---
 
-## 6. 测试覆盖（`app/test/headless/`，51 用例）
+## 6. 测试覆盖（`app/test/headless/`，80 用例）
 
 | 文件 | 用例 | 覆盖 |
 |---|---|---|
 | `logs_test.dart` | 12 | JSON 字段契约 / 空 detail·data 省略 / `level.wire` 固定 / JSONL 无裸换行 / 文本行毫秒三位 / seq 单调 / 多 sink 扇出 / `emitCollect` 级别映射与 `全局→global` / `newRunId` 格式 / 落盘逐行可解析 / **未 await close 会丢尾行** / 追加写不覆盖 |
-| `env_test.dart` | 12 | 词典剔空行·缺失返空 / 真实词典可锚定 / 新库表行数为 0 / **FTS 虚拟表计入·影子表排除** / doctor runtime·sqlite3 / 未指定路径记 skip 不误报 / 库缺失 FAIL+hint / 库可开报 user_version / **doctor 不建文件** / 词典·seed 缺失 FAIL / `toJson` 键 |
-| `query_test.dart` | 9 | 门面转发到 drift 本体 / `dimensionCounts` 反映真实插入 / `search` 空结果形状 / `overview` 三块数据 / `ForumWatermark` 投影与 JSON 键 / `recentLogs` 新在前·limit / 四个映射函数键名 |
-| `collect_test.dart` | 10 | plan 空库·播种·停用·冷却与已解冻·预算与并发读取·`budgetRemaining` 不为负·`toJson` 含限速区间 / run 空页跑通·请求数受预算约束·日志逐条桥接·汇总事件·回到 idle / 进度事件去重 / **注入的 api 不被关闭** / `CollectRunSummary` 六项计数 |
-| `seed_test.dart` | 8 | 真实 lite 包元数据口径 / sha 一致与不一致两侧 / 大小不一致 / zip 缺失不抛 / manifest 缺失与字段缺失报错 / `onProgress` 三阶段 |
+| `env_test.dart` | 16 | 词典剔空行·缺失返空 / FTS 表计数 / doctor 只读、缺表与缺触发器诊断 |
+| `query_test.dart` | 11 | 门面转发 / 联动计数与分类预览 / 推荐榜与字数榜 / overview 水位 / 日志排序 / DTO JSON 键 |
+| `collect_test.dart` | 18 | plan 预算/仅 WiFi/吧过滤 / 非 WiFi 零请求 / 指定贴吧只调用目标吧 / 汇总与 API 所有权 |
+| `seed_test.dart` | 11 | lite 包元数据 / sha/size 正反例 / nullable sha / 坏 JSON 与越界路径 / 进度阶段 |
+| `network_gate_test.dart` | 1 | host 网络检测结果注入 |
+| `../collector/network_gate_flutter_test.dart` | 10 | Android / Windows / iOS / macOS 通道读写与 fail-closed；Linux IPv4/IPv6 无线默认路由 |
+| `cli_test.dart` | 13 | 参数拒绝 / `--` 分隔符 / BDUSS 脱敏 / doctor 与 seed 错误形状 / 无效 forum 不创建库 / JSONL 回放过滤、尾部 limit 与 seq 校验 / facets、rank、show、hot、random、timeline JSON / gated 退出码 |
 
 跑法（**禁止裸跑 `flutter test`**）：
 
@@ -322,7 +350,7 @@ pwsh tools/run_tests_safe.ps1                             # 全量
 ```
 flutter analyze --no-pub      → No issues found!
 pwsh tools/run_tests_safe.ps1 → 294 通过 / 7 skip / 0 失败
-                                （其中 test/headless/ 51 个为本次新增）
+                                （历史记录中的 headless 数量已过时，当前数量见 §6）
 ```
 
 CLI 逐条实跑（`dart build cli` 产物 exe）。**数据用的是 temp 副本，不是 `work/` 原件**
@@ -352,6 +380,17 @@ $db  = "$tmp\app_copy.db"
 
 顺带验证到的既有行为：drift 对 seed 库执行了 v1→v2 迁移（`posts` 加 `post_kind`/`recommend_flag`）。
 
+### 当前工作区验证（2026-10-19）
+
+| 检查 | 结果 |
+|---|---|
+| `dart analyze lib test` | No issues found |
+| `pwsh tools/run_tests_safe.ps1 -TimeoutSec 1800` | 981 通过、3 skip、0 失败 |
+| `pwsh tools/smoke_cli.ps1` | 成功：bundle build、版本/分类/doctor/hot/query/facets/show/logs/seed JSON、只读采集计划、网络闸门 exit 3；fixture SHA256 前后相同 |
+| Android release APK | 签名有效；APK 含 armv7 / arm64 / x86_64 三份 `libsqlite3.so`；模拟器安装启动并 fully drawn，logcat 无 fatal / SQLite 加载错误 |
+| `flutter build windows --release` | 成功；`dist_release/windows-x64-v1.0.0.zip` 已重打包并核对 SHA256 |
+| iOS / macOS Wi-Fi native handlers | 已静态复核 runner 通道和 `NWPathMonitor` 路径；本 Windows 主机无 Apple SDK，未做 Apple 构建 |
+
 ---
 
 ## 8. 已知边界与待补缺口
@@ -362,10 +401,10 @@ $db  = "$tmp\app_copy.db"
 
 | # | 缺口 | 现状 | 建议 |
 |---|---|---|---|
-| A1 | `collect` 无 `--forum` 过滤 | 只能跑全部 enabled 吧（`bin:706` 只有 5 个 flag） | 加 `--forum`（可重复）在 `plan`/`run` 前过滤；小样本验证时很关键 |
-| A2 | `query` 只暴露 search + suggest | 门面已有 `bookDetail/postDetail/bookEntries/rank/hotBooks/timeline/randomBooks/categoryPreview`（`query.dart:134-172`），CLI 未接 | 加 `booksift show book <gid>` / `show post <pid>` / `rank` 子命令 |
-| A3 | **无 JSONL 回放命令** | `logs` 读的是 db 里 `collection_logs` 粗汇总，与 `logs/*.jsonl` 是两回事，命名极易混淆 | 加 `logs --run <id>` / `logs --file <path>`，支持按 `scope`/`level`/`event` 过滤 |
-| A4 | 无 `--version` | doctor 也不报 CLI 自身版本 | 排查「agent 用的是哪版 exe」时无据可查；`pubspec.yaml` 的 version 可读出 |
+| A1 | 已补 `collect --forum` 过滤 | `plan` 与 `run` 共用同一筛选集，未匹配的吧不会发请求 | 已在 `bin/booksift.dart`、`headless/collect.dart`、`collect_service.dart` 接线 |
+| A2 | 查询面仍未全部映射到 CLI | 已补 `rank`、`show book <gid>`（含筛选评价列表）、`show post <pid>`、`hot`、`random`、`timeline`；查询门面均可从纯 Dart barrel 调用，并有稳定 JSON 契约测试 | 其余 `Queries` 方法属于 UI 状态/设置或批量领域操作，按明确 agent 场景再扩展 |
+| A3 | JSONL 回放已接线 | `logs --run <id>` / `logs --file <path>` 读取逐条事件，支持 `scope` / `level` / `event` 过滤与尾部条数限制；现在校验 `seq` 从 1 连续递增；保留原 `collection_logs` 汇总默认行为 | 持续维护字段契约与回放测试 |
+| A4 | 已补 `--version` | 人读与 JSON 两种输出均不读取数据库 | 已有版本契约测试 |
 | A5 | 无 JSON Schema | 字段契约只存在于代码与本文档 | 导出 `logs.schema.json` + 各子命令结果 schema，供 agent 机器校验 |
 | A6 | `--db` 缺省是**推断**不是探测 | `defaultDbPath()`（`bin:181`）= `~/Documents/app.sqlite`，未做平台分支，也不检查 drift_flutter 实际落点 | 探测多候选路径并在 doctor 里列出；或干脆去掉缺省、强制显式 |
 | A7 | 无传输层 | agent 必须能起子进程 | 若需远程/跨语言接入，再在 headless 之上加 HTTP 或 MCP 层——**headless 层已按「传输无关」设计，加传输不必改业务** |
@@ -374,20 +413,20 @@ $db  = "$tmp\app_copy.db"
 
 | # | 缺口 | 现状 | 建议 |
 |---|---|---|---|
-| B1 | `classify` 只能单帖 | 无批量 | 加 `classify --batch <file>`（一行一帖或 JSONL），输出 kind 分布 + 与 Python 侧 parity 对比；这是评估分类质量回归的最低成本手段 |
+| B1 | `classify` 只能单帖 | 无批量文件输入 | 加 `classify --batch <file>`（JSONL），输出逐项结果与 kind 分布；parity 对比仍由专用测试夹具负责 |
 | B2 | doctor 检查面窄 | 不查 flutter/dart 版本是否满足 `pubspec`、`build/cli` bundle 是否过期、磁盘余量、`logs/` 体积 | 按需增项；`DoctorCheck` 结构已支持任意扩展 |
 | B3 | 日志无级别过滤 | 无 `--verbose` / `--quiet` | `RunLog` 加 `minLevel`，sink 前置过滤 |
 | B4 | **日志无轮转/清理** | `logs/` 会无限增长（每次运行一个文件） | 加保留策略（按份数/天数）或 `logs --gc` |
 | B5 | 采集失败时无请求/响应快照 | JSONL 里只有 `CollectService` 产出的文案 | 排查「贴吧接口是否变更」仍需抓包；可在 `tieba_api.dart` 层加可选的响应体摘要回调 |
-| B6 | `seed` 不能解包 | 只校验 | 加 `seed --extract <dir>` 把 `seed.db` 解出来，即可直接当 `--db` 用——**这能让 CLI 在没跑过 App 的环境下拥有真实数据**，价值较高 |
+| B6 | `seed` 不能解包 | 只校验；导入依赖 Flutter `AssetBundle` 和数据库迁移流程 | 如确需 CLI 直接检查种子库，再新增受路径与体积校验的解包命令，并独立验证 zip 条目 |
 
 ### C. 工程化
 
 | # | 缺口 | 现状 | 建议 |
 |---|---|---|---|
-| C1 | **`bin/booksift.dart` 无自动化测试** | 852 行，仅手工实跑验证（§7） | 命令层可用 `MemoryRunLogSink` + 内存库做单测；至少覆盖参数解析、退出码、`--json` 分流、双闸 |
+| C1 | CLI 自动化测试覆盖命令级契约 | `tools/smoke_cli.ps1` 验证真实 bundle 的版本、分类、doctor、hot/query/facets/show/logs/seed、只读数据库哈希与网络闸门 | 将 smoke 脚本纳入 CI |
 | C2 | 无 CI | 靠人跑 analyze + 测试 | 加 workflow：`flutter analyze` → `run_tests_safe.ps1` → `dart build cli` → CLI 冒烟（`doctor`/`classify`） |
-| C3 | exe 未纳入一键构建 | README/AGENTS 有命令，但无构建校验 | 加 `tools/build_cli.ps1`，构建后自动跑冒烟 |
+| C3 | CLI release bundle 冒烟 | 已补 `tools/smoke_cli.ps1`：墙钟限制构建并验证 JSON、只读数据库与网络闸门契约 | CI 复用此脚本，避免本机与 CI 使用不同检查 |
 | C4 | `dart run` 的 build hooks 横幅污染 stdout | 未在代码层规避，只有文档提醒 | 无法从 Dart 侧消除（是 `dart run` 自身输出）；结论就是**统一用 exe** |
 | C5 | `onLog` 只被 headless 用 | UI 侧未接 | 若要在 App 内落盘诊断日志（用户反馈时导出），需在 `collect_controller.dart` 侧接同一套 sink |
 
@@ -433,7 +472,7 @@ $db  = "$tmp\app_copy.db"
 | 文件 | 行 | 作用 |
 |---|---|---|
 | `HEADLESS.md` | 本文 | 交接文档 |
-| `bin/booksift.dart` | 852 | CLI 入口，7 子命令 |
+| `bin/booksift.dart` | CLI 入口，13 子命令 |
 | `lib/booksift.dart` | 50 | 纯 Dart barrel |
 | `lib/headless/logs.dart` | 246 | 结构化日志 |
 | `lib/headless/env.dart` | 304 | 环境自检 |
@@ -443,7 +482,7 @@ $db  = "$tmp\app_copy.db"
 | `lib/collector/collect_providers.dart` | 57 | 从 `collect_service.dart` 拆出的 riverpod 装配 |
 | `lib/data/repo/collect_repository_providers.dart` | 28 | 同上（repo） |
 | `lib/data/repo/queries_providers.dart` | 18 | 同上（queries） |
-| `test/headless/{logs,env,query,collect,seed}_test.dart` | 221/178/200/240/177 | 51 用例 |
+| `test/headless/{logs,env,query,collect,seed}_test.dart` | 221/240/257/363/210 | 66 用例 |
 
 ### 修改
 

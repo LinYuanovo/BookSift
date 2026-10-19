@@ -1,7 +1,12 @@
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include "flutter_window.h"
 
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <iphlpapi.h>
+#include <netioapi.h>
 #include <windowsx.h>
 
 #include <cstdlib>
@@ -63,6 +68,31 @@ bool StartUpdateHelper(const std::string& archive, const std::string& bundle) {
   CloseHandle(process.hThread);
   CloseHandle(process.hProcess);
   return true;
+}
+
+bool IsWifiDefaultRoute() {
+  auto is_wifi = [](const SOCKADDR_INET& destination) {
+    MIB_IPFORWARD_ROW2 route{};
+    if (GetBestRoute2(nullptr, 0, nullptr, &destination, 0, &route, nullptr) !=
+        NO_ERROR) {
+      return false;
+    }
+    MIB_IF_ROW2 interface_row{};
+    interface_row.InterfaceLuid = route.InterfaceLuid;
+    return GetIfEntry2(&interface_row) == NO_ERROR &&
+           interface_row.Type == IF_TYPE_IEEE80211 &&
+           interface_row.OperStatus == IfOperStatusUp;
+  };
+
+  SOCKADDR_INET ipv4{};
+  ipv4.Ipv4.sin_family = AF_INET;
+  ipv4.Ipv4.sin_addr.S_un.S_addr = 0x08080808;
+  if (is_wifi(ipv4)) return true;
+
+  SOCKADDR_INET ipv6{};
+  ipv6.Ipv6.sin6_family = AF_INET6;
+  ipv6.Ipv6.sin6_addr.s6_addr[15] = 1;
+  return is_wifi(ipv6);
 }
 
 // 自绘标题栏几何（**逻辑 px**，命中测试时按窗口 DPI 换算成物理 px）。
@@ -328,6 +358,7 @@ bool FlutterWindow::OnCreate() {
 
   SetupWindowChannel();
   SetupUpdateChannel();
+  SetupNetworkChannel();
 
   // Win11：圆角交给 DWM（去系统标题栏后仍要圆角窗口）。
   const int corner_preference = DWMWCP_ROUND;
@@ -353,6 +384,10 @@ void FlutterWindow::OnDestroy() {
   if (window_channel_) {
     window_channel_->SetMethodCallHandler(nullptr);
     window_channel_ = nullptr;
+  }
+  if (network_channel_) {
+    network_channel_->SetMethodCallHandler(nullptr);
+    network_channel_ = nullptr;
   }
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
@@ -435,6 +470,22 @@ void FlutterWindow::SetupUpdateChannel() {
         }
         result->Success(flutter::EncodableValue(true));
         PostMessage(GetHandle(), WM_CLOSE, 0, 0);
+      });
+}
+
+void FlutterWindow::SetupNetworkChannel() {
+  network_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "booksift/network",
+          &flutter::StandardMethodCodec::GetInstance());
+  network_channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<flutter::EncodableValue>& call,
+         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        if (call.method_name() == "isWifi") {
+          result->Success(flutter::EncodableValue(IsWifiDefaultRoute()));
+        } else {
+          result->NotImplemented();
+        }
       });
 }
 

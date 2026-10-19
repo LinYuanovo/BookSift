@@ -4,6 +4,8 @@ import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -37,6 +39,13 @@ class MainActivity : FlutterActivity() {
                 result.notImplemented()
             }
         }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NETWORK_CHANNEL).setMethodCallHandler { call, result ->
+            if (call.method == "isWifi") {
+                result.success(isWifiDefaultNetwork())
+            } else {
+                result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, UPDATE_CHANNEL).setMethodCallHandler { call, result ->
             if (call.method == "installApk") {
                 val path = call.argument<String>("path")
@@ -49,6 +58,13 @@ class MainActivity : FlutterActivity() {
                 result.notImplemented()
             }
         }
+    }
+
+    private fun isWifiDefaultNetwork(): Boolean {
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return false
+        val network = manager.activeNetwork ?: return false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
     }
 
     /**
@@ -168,6 +184,7 @@ class MainActivity : FlutterActivity() {
         const val CHANNEL = "booksift/external_launch"
         const val SYSTEM_FONT_CHANNEL = "booksift/system_fonts"
         const val UPDATE_CHANNEL = "booksift/update"
+        const val NETWORK_CHANNEL = "booksift/network"
         const val FONT_PERMISSION_REQUEST_CODE = 4107
         const val UPDATE_DIRECTORY = "update-cache"
         const val APK_MIME_TYPE = "application/vnd.android.package-archive"

@@ -26,6 +26,7 @@ library;
 export 'headless/collect.dart';
 export 'headless/env.dart';
 export 'headless/logs.dart';
+export 'headless/network_gate.dart';
 export 'headless/query.dart';
 export 'headless/seed.dart';
 

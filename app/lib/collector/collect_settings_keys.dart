@@ -11,3 +11,5 @@ abstract final class CollectSettingsKeys {
   /// 当日已消耗请求数（匿名档 ≤300 / BDUSS 档 ≤600，§8.11；换档共享同一计数）。
   static const String budgetCount = 'collect_budget_count';
 }
+
+bool wifiOnlyFromSetting(String? value) => value != '0' && value != 'false';

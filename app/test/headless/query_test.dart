@@ -31,7 +31,10 @@ void main() {
     required String hash,
     String channel = 'yy小说吧',
     String category = '扫书',
+    String? bookGrade,
     String? date = '2024-05-06',
+    int? bookGroupId,
+    int? wordCount,
   }) => db
       .into(db.bookEntries)
       .insert(
@@ -41,7 +44,10 @@ void main() {
           channel: channel,
           contentHash: hash,
           category: Value<String>(category),
+          bookGrade: Value<String?>(bookGrade),
           date: Value<String?>(date),
+          bookGroupId: Value<int?>(bookGroupId),
+          wordCount: Value<int?>(wordCount),
         ),
       );
 
@@ -64,6 +70,31 @@ void main() {
       expect(mine.count, 1);
     });
 
+    test('联动计数与分类预览都经 façade 暴露', () async {
+      await insertEntry(
+        name: '联动测试书',
+        hash: 'facets-api-1',
+        date: '2026-10-19',
+        channel: 'yy小说吧',
+        category: CategoryKind.scan,
+      );
+
+      final CategoryCounts counts = await api.searchDimensions(
+        const SearchFilter(year: '2026', month: '10'),
+      );
+      final DimCount year = counts.years.singleWhere(
+        (DimCount item) => item.value == '2026',
+      );
+      expect(year.count, 1);
+
+      final CategoryPreview preview = await api.categoryPreview(
+        const CategorySelection(year: '2026', month: '10'),
+        limit: 1,
+      );
+      expect(preview.count, 1);
+      expect(preview.entries.single.name, '联动测试书');
+    });
+
     test('search 不吞异常且返回可用的空结果形状', () async {
       final SearchOutcome out = await api.search(
         const SearchFilter(query: '不存在的书名'),
@@ -72,6 +103,47 @@ void main() {
       expect(out.page.total, 0);
       expect(out.usedFts, isA<bool>());
       expect(out.degraded, isA<bool>());
+    });
+
+    test('推荐榜按推书语义计数，字数榜按最大字数计数', () async {
+      final int groupId = await db.into(db.bookGroups).insert(BookGroupsCompanion.insert(
+            nameNorm: '推荐榜测试书',
+            nameDisplay: const Value<String?>('推荐榜测试书'),
+            wordCountMax: const Value<int?>(42000),
+          ));
+      await insertEntry(
+        name: '推荐榜测试书',
+        hash: 'rank-recommend-1',
+        date: '2026-10-01',
+        bookGroupId: groupId,
+        wordCount: 42000,
+        bookGrade: '#11850A',
+      );
+      await insertEntry(
+        name: '推荐榜测试书',
+        hash: 'rank-recommend-2',
+        date: '2026-10-02',
+        bookGroupId: groupId,
+        wordCount: 40000,
+        bookGrade: '#11850A',
+      );
+      for (int i = 0; i < 4; i++) {
+        await insertEntry(
+          name: '普通扫书条目更多',
+          hash: 'rank-neutral-$i',
+          date: '2026-10-03',
+        );
+      }
+      final RankWindow window = RankWindow.thisYear;
+      final DateTime today = DateTime(2026, 10, 19);
+
+      final List<RankRow> recommend = await api.rank(window, today: today);
+      final List<RankRow> words = await api.rank(window, today: today, wordCount: true);
+
+      expect(recommend.map((RankRow row) => (row.name, row.count)), <(String, int)>[
+        ('推荐榜测试书', 2),
+      ]);
+      expect(words.first.count, 42000);
     });
   });
 
@@ -191,10 +263,16 @@ void main() {
         category: '扫书',
         origin: 'builtin',
         quality: 3,
+        floorSeq: 12,
+        floorText: '楼层正文',
+        postTitle: '《诡秘之主》扫书帖',
       );
       final Map<String, Object?> j = entryRowJson(e);
       expect(j['name'], '诡秘之主');
       expect(j['quality'], 3);
+      expect(j['floorSeq'], 12);
+      expect(j['floorText'], '楼层正文');
+      expect(j['postTitle'], '《诡秘之主》扫书帖');
       expect(j.containsKey('recommendFlag'), isTrue);
 
       const GroupHit g = GroupHit(
@@ -221,6 +299,12 @@ void main() {
       expect(oj['usedFts'], isTrue);
       expect(oj['words'], <String>['诡秘']);
       expect((oj['items'] as List).single, isA<Map<String, Object?>>());
+
+      expect(rankRowJson(const RankRow(
+        nameNorm: '书名',
+        name: '书名',
+        count: 2,
+      ))['count'], 2);
     });
   });
 }

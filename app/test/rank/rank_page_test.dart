@@ -27,6 +27,7 @@ FakeLibrary wordRankLibrary() {
     required String date,
     int? wordCount,
     int? groupId,
+    String? bookGrade,
     String author = '佚',
   }) =>
       EntryRow(
@@ -37,6 +38,7 @@ FakeLibrary wordRankLibrary() {
         date: date,
         channel: 'yy小说吧',
         category: CategoryKind.scan,
+        bookGrade: bookGrade,
         origin: Origin.builtin,
         quality: 2,
         wordCount: wordCount,
@@ -57,18 +59,20 @@ FakeLibrary wordRankLibrary() {
     floors: const <int, List<FloorData>>{},
     entries: <EntryRow>[
       // 长剑行：MAX(word_count)=3,000,000 → 字数榜榜首「300 万字」。
-      e(id: 1, nameNorm: '长剑行', date: '2023-01-01', wordCount: 3000000, groupId: 910, author: '作者甲'),
-      e(id: 2, nameNorm: '长剑行', date: '2025-04-10', wordCount: 2450000, groupId: 910, author: '作者甲'),
+      e(id: 1, nameNorm: '长剑行', date: '2023-01-01', wordCount: 3000000, groupId: 910, bookGrade: '#11850A', author: '作者甲'),
+      e(id: 2, nameNorm: '长剑行', date: '2025-04-10', wordCount: 2450000, groupId: 910, bookGrade: '#11850A', author: '作者甲'),
       // 小城烟火：980,000 → 「98 万字」。
-      e(id: 3, nameNorm: '小城烟火', date: '2025-04-20', wordCount: 980000, groupId: 911, author: '作者乙'),
+      e(id: 3, nameNorm: '小城烟火', date: '2025-04-20', wordCount: 980000, groupId: 911, bookGrade: '#11850A', author: '作者乙'),
       // 无字数书：word_count NULL → 不进字数榜，进推荐次数榜（2 条）。
-      e(id: 4, nameNorm: '无字数书', date: '2025-04-21', groupId: 912, author: '作者丙'),
-      e(id: 5, nameNorm: '无字数书', date: '2025-04-22', groupId: 912, author: '作者丙'),
+      e(id: 4, nameNorm: '无字数书', date: '2025-04-21', groupId: 912, bookGrade: '#11850A', author: '作者丙'),
+      e(id: 5, nameNorm: '无字数书', date: '2025-04-22', groupId: 912, bookGrade: '#11850A', author: '作者丙'),
+      e(id: 6, nameNorm: '第四名书', date: '2025-04-23', wordCount: 500000, groupId: 913, bookGrade: '#11850A', author: '作者丁'),
     ],
     groups: <BookGroup>[
       g(id: 910, nameNorm: '长剑行', author: '作者甲'),
       g(id: 911, nameNorm: '小城烟火', author: '作者乙'),
       g(id: 912, nameNorm: '无字数书', author: '作者丙'),
+      g(id: 913, nameNorm: '第四名书', author: '作者丁'),
     ],
   );
 }
@@ -91,11 +95,11 @@ void main() {
     expect(find.text('《世子很凶》'), findsOneWidget);
     expect(find.text('5 推'), findsOneWidget);
 
-    // 切「本月」→ 重排：世子很凶 4 月无条目离榜，我不想和你一起重生 上位；scope 带锚点年月。
+    // 切「本月」→ 重排：仅保留帖子标题带推书语义的条目；scope 带锚点年月。
     await tester.tap(find.text('本月'));
     await tester.pumpAndSettle();
     expect(find.text('推荐次数榜 · 本月 · 2025-04 Top10'), findsOneWidget);
-    expect(find.text('《我不想和你一起重生》'), findsOneWidget);
+    expect(find.text('《篡水浒》'), findsOneWidget);
     expect(find.text('《世子很凶》'), findsNothing);
     expect(repo.calls['rankRows:${RankWindow.thisMonth}'], greaterThanOrEqualTo(1));
 
@@ -152,7 +156,8 @@ void main() {
 
   testWidgets('Top3 衬线序号强调：23px accent-strong / 其余 17px muted（index.html:793–797）', (WidgetTester tester) async {
     useSurface(tester, height: 1400);
-    await tester.pumpWidget(testApp(repo, initial: '/rank', rankToday: DateTime(2025, 4, 30)));
+    final FakeBookRepository rankRepo = FakeBookRepository(library: wordRankLibrary());
+    await tester.pumpWidget(testApp(rankRepo, initial: '/rank', rankToday: DateTime(2025, 4, 30)));
     await tester.pumpAndSettle();
 
     final Text no1 = tester.widget<Text>(find.byKey(const ValueKey<String>('rank-no-0')));

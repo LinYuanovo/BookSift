@@ -22,6 +22,7 @@ ThreadRecord _record({
   int tid = 11001,
   String fname = 'yy小说吧',
   String title = '月度扫书',
+  String author = '楼主显示名',
   String floorText = _floorText,
   List<ImageInfo> images = const <ImageInfo>[],
 }) =>
@@ -30,7 +31,7 @@ ThreadRecord _record({
       tid: tid,
       title: title,
       authorId: 7,
-      author: '楼主显示名',
+      author: author,
       authorUserName: 'lz_user_name',
       createTime: _createTime,
       floors: <FloorInfo>[
@@ -225,6 +226,30 @@ void main() {
     expect(entry.comment, _floorText);
   });
 
+  test('同吧同标题但作者不同：不把种子帖并入新帖子', () async {
+    final int seedPostId = await db.into(db.posts).insert(PostsCompanion.insert(
+          title: const Value<String?>('月度扫书'),
+          tid: const Value<int?>(99999),
+          author: const Value<String?>('另一位作者'),
+          channel: 'yy小说吧',
+          origin: const Value<String>('seed'),
+        ));
+
+    final IngestResult result = await ingestOne(rec: _record(tid: 11002));
+
+    expect(result.newPost, isTrue);
+    expect(await db.posts.count().getSingle(), 2);
+    final Post seed = await (db.select(db.posts)..where((Posts t) => t.id.equals(seedPostId)))
+        .getSingle();
+    expect(seed.tid, 99999);
+    expect(seed.author, '另一位作者');
+    expect(seed.origin, 'seed');
+    final Post collected = await (db.select(db.posts)..where((Posts t) => t.tid.equals(11002)))
+        .getSingle();
+    expect(collected.author, '楼主显示名');
+    expect(collected.origin, 'collected');
+  });
+
   test('楼层编辑按 pid UPSERT 更新文本，同帖同书仍只保留一条（§8.7 去重层 2）', () async {
     await ingestOne();
     final IngestResult r2 = await ingestOne(
@@ -270,8 +295,10 @@ void main() {
   });
 
   test('同书同推荐语两帖入库 → 按帖各记一条推荐（问题C：rankRows cnt=2）', () async {
-    final IngestResult r1 = await ingestOne();
-    final IngestResult r2 = await ingestOne(rec: _record(tid: 11002));
+    final IngestResult r1 = await ingestOne(rec: _record(title: '推荐：月度扫书'));
+    final IngestResult r2 = await ingestOne(
+      rec: _record(tid: 11002, title: '推荐：月度扫书'),
+    );
     expect(r1.entriesAdded, 1);
     expect(r2.entriesAdded, 1, reason: '跨帖同书同语 = 第二次推荐，不得按全局 hash 丢弃');
     expect(r2.skippedDup, 0);

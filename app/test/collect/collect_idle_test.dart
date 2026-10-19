@@ -3,8 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:booksift/collector/collect_controller.dart';
+import 'package:booksift/collector/collect_settings_keys.dart';
+import 'package:booksift/collector/collect_state.dart';
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/features/collect/collect_page.dart';
+import 'package:booksift/features/collect/collect_settings.dart';
 import 'package:booksift/theme/app_colors.dart';
 
 import '../support/fake_book_repository.dart';
@@ -95,6 +98,31 @@ void main() {
     await tester.tap(find.text('立即采集（预计2分钟）'));
     await tester.pump();
     expect(fake.startAllCalls, 1);
+  });
+
+  testWidgets('启动前采集受阻仍在空闲页显示原因', (WidgetTester tester) async {
+    final FakeCollectRunNotifier blocked = FakeCollectRunNotifier(
+      initial: const CollectRunState(
+        banner: '当前非 WiFi 网络，已按设置暂停采集（设置页可关闭「仅 WiFi」）',
+      ),
+    );
+    await pumpIdle(tester, overrides: () => collectTestOverrides(notifier: blocked));
+
+    expect(
+      find.text('当前非 WiFi 网络，已按设置暂停采集（设置页可关闭「仅 WiFi」）'),
+      findsOneWidget,
+    );
+    expect(find.text('立即采集（预计2分钟）'), findsOneWidget);
+  });
+
+  test('旧式 Wi-Fi 设置值在设置模型中与采集门控口径一致', () {
+    for (final String value in <String>['0', 'false']) {
+      expect(wifiOnlyFromSetting(value), isFalse);
+    }
+    for (final String value in <String>['1', 'true']) {
+      expect(wifiOnlyFromSetting(value), isTrue);
+    }
+    expect(const CollectSettings().wifiOnly, isTrue);
   });
 
   testWidgets('添加吧对话框：CollectAddForumException.reason 以 danger 文案显示在对话框内', (WidgetTester tester) async {

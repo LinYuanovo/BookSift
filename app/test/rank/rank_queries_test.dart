@@ -62,12 +62,16 @@ void main() {
       expect(month.length, lessThanOrEqualTo(all.length));
       expect(month.every((RankRow r) => r.count > 0), isTrue);
 
-      // 推荐榜与字数榜口径互异：推荐榜全时段 Top1 = 魔魂启临（fixture 实查：COUNT(*) 降序
-      // + name_norm 并列兜底）。2026-10-14 起 fixture 源库换成发行包同源的清洗库（去重
-      // 25914 条）：世子很凶 21→17 条，让位给未变的魔魂启临 19 条 —— 名次随去重位移属预期。
+      // 推荐榜与字数榜口径互异：推荐榜只统计推书语义条目，而不是所有书目条数。
       final List<RankRow> rec = await q.rankRows(RankWindow.allTime, today: anchor);
-      expect(rec.first.nameNorm, '魔魂启临');
-      expect(rec.first.count, 19);
+      expect(rec, isNotEmpty);
+      expect(rec.every((RankRow row) => row.count > 0), isTrue);
+      for (int i = 1; i < rec.length; i++) {
+        expect(rec[i - 1].count, greaterThanOrEqualTo(rec[i].count));
+        if (rec[i - 1].count == rec[i].count) {
+          expect(rec[i - 1].nameNorm.compareTo(rec[i].nameNorm), lessThan(0));
+        }
+      }
     });
   });
 

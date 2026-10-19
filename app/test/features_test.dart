@@ -206,11 +206,10 @@ void main() {
       expect(Queries.rankFromDate(RankWindow.allTime, anchor), isNull);
       expect(Queries.rankFromDate(RankWindow.thisMonth, anchor), '2025-04-01');
       expect(Queries.rankFromDate(RankWindow.last30, anchor), '2025-04-01');
-      // 三时段榜首（fixture 实查：COUNT(*) 降序 + name_norm 升序兜底）。2026-10-14 起源库
-      // 换成清洗库后 allTime 首位位移：世子很凶 21→17 条（去重），让位给未变的魔魂启临 19 条。
-      expect(allTime.first.name, '魔魂启临');
-      expect(thisYear.first.name, '我加载了恋爱游戏');
-      expect(thisMonth.first.name, '世子很凶');
+      // 榜单只统计推书语义条目，不把普通扫书、排雷或求书条目混入推荐次数。
+      expect(allTime.first.name, '神国之上');
+      expect(thisYear.first.name, '神国之上');
+      expect(thisMonth, isNotEmpty);
       expect(thisMonth.first.name, isNot(allTime.first.name));
     });
 

@@ -1182,16 +1182,41 @@ class Queries implements BookRepository, SearchSettingsKv {
     final String? from = rankFromDate(window, today ?? DateTime.now());
     return db
         .customSelect(
-          'SELECT b.name_norm AS name_norm, COUNT(*) AS cnt, '
+          'SELECT b.name_norm AS name_norm, ${_kindPayload('b')} AS kinds, '
           'MAX(g.name_display) AS name, MAX(g.author_display) AS author, MAX(g.id) AS gid '
           'FROM book_entries b LEFT JOIN book_groups g ON g.name_norm = b.name_norm '
+          'LEFT JOIN posts p ON p.id = b.post_ref '
           'WHERE b.date IS NOT NULL${from == null ? '' : ' AND b.date >= ?'} '
-          'GROUP BY b.name_norm ORDER BY cnt DESC, b.name_norm LIMIT ?',
-          variables: _rankVars(from, limit),
-          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries, db.bookGroups},
+          'GROUP BY b.name_norm',
+          variables: from == null
+              ? const <Variable<Object>>[]
+              : <Variable<Object>>[Variable<String>(from)],
+          readsFrom: <TableInfo<Table, Object?>>{
+            db.bookEntries,
+            db.bookGroups,
+            db.posts,
+          },
         )
-        .map(_rankRowOf)
-        .get();
+        .get()
+        .then((List<QueryRow> rows) {
+          final List<RankRow> ranked = <RankRow>[];
+          for (final QueryRow row in rows) {
+            final int recommend = kindCountsOf(row.data['kinds'] as String?).$2;
+            if (recommend == 0) continue;
+            ranked.add(RankRow(
+              nameNorm: row.data['name_norm']! as String,
+              name: (row.data['name'] as String?) ?? (row.data['name_norm']! as String),
+              author: row.data['author'] as String?,
+              count: recommend,
+              bookGroupId: row.data['gid'] as int?,
+            ));
+          }
+          ranked.sort((RankRow a, RankRow b) {
+            final int byCount = b.count.compareTo(a.count);
+            return byCount != 0 ? byCount : a.nameNorm.compareTo(b.nameNorm);
+          });
+          return ranked.take(limit).toList(growable: false);
+        });
   }
 
   @override

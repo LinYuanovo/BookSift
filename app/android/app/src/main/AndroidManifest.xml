@@ -4,8 +4,9 @@
          §10.1 更新检查、cached_network_image 图片加载全部失效）。
          实测：修复前 app-release.apk 的 aapt2 dump permissions 只有
          DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION，无 INTERNET。
-         未声明 ACCESS_NETWORK_STATE：connectivity_plus 未接入，NetworkGate 恒 true（见 worker.dart）。 -->
+         ACCESS_NETWORK_STATE 用于「仅 WiFi」采集门控。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- Android 12 及以下读取用户字体目录的兜底权限；13+ 系统字体目录无需该权限。 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>

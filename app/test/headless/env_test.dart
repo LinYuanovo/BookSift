@@ -9,6 +9,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/sqlite3.dart';
+import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/headless/env.dart';
 
 void main() {
@@ -80,9 +82,11 @@ void main() {
     test('FTS5：虚拟表本身计入，影子表排除（否则 agent 读到一堆内部噪声）', () async {
       final db = HeadlessEnv.openMemoryDb();
       addTearDown(db.close);
+      await db.customStatement('CREATE TABLE book_fts_metadata(value TEXT)');
       final Map<String, int> rows = await HeadlessEnv.tableRowCounts(db);
 
       expect(rows.keys, containsAll(<String>['book_fts', 'floor_fts']));
+      expect(rows['book_fts_metadata'], 0, reason: '同前缀普通表不能误判为 FTS 影子表');
       for (final String k in rows.keys) {
         expect(
           RegExp(r'_(data|idx|content|docsize|config)$').hasMatch(k),
@@ -189,6 +193,69 @@ void main() {
         isFalse,
         reason: '诊断若有「凭空建库」的副作用，会把「库不存在」这个结论自我掩盖',
       );
+    });
+
+    test('doctor 检查旧 schema 时不执行迁移或写入数据库', () async {
+      final String path = '${tmp.path}${Platform.pathSeparator}legacy.sqlite';
+      final current = HeadlessEnv.openDb(path);
+      await HeadlessEnv.tableRowCounts(current);
+      await current.close();
+      final Database legacy = sqlite3.open(path);
+      legacy.execute('PRAGMA user_version = 3');
+      legacy.close();
+
+      final DoctorReport report = await HeadlessEnv.doctor(dbPath: path);
+      final DoctorCheck check = report.checks.firstWhere(
+        (DoctorCheck c) => c.name == 'db',
+      );
+
+      expect(check.ok, isFalse);
+      expect(check.data['userVersion'], 3);
+      expect(check.data['expectedUserVersion'], 4);
+      expect(check.detail, contains('未执行迁移'));
+      final Database reopened = sqlite3.open(path, mode: OpenMode.readOnly);
+      expect(reopened.select('PRAGMA user_version').first['user_version'], 3);
+      reopened.close();
+    });
+
+    test('doctor 对同版本但缺应用表的库报告 schema 不完整', () async {
+      final String path = '${tmp.path}${Platform.pathSeparator}empty-schema.sqlite';
+      final Database empty = sqlite3.open(path);
+      empty.execute('PRAGMA user_version = 4');
+      empty.close();
+
+      final DoctorReport report = await HeadlessEnv.doctor(dbPath: path);
+      final DoctorCheck check = report.checks.firstWhere(
+        (DoctorCheck c) => c.name == 'db',
+      );
+
+      expect(check.ok, isFalse);
+      expect(check.data['userVersion'], 4);
+      expect((check.data['missingTables'] as List), contains('book_entries'));
+      expect(check.detail, contains('缺少应用表'));
+      final Database reopened = sqlite3.open(path, mode: OpenMode.readOnly);
+      expect(reopened.select('PRAGMA user_version').first['user_version'], 4);
+      reopened.close();
+    });
+
+    test('doctor 对同版本但缺 FTS 同步触发器的库报告 schema 不完整', () async {
+      final String path = '${tmp.path}${Platform.pathSeparator}missing-trigger.sqlite';
+      final AppDatabase current = HeadlessEnv.openDb(path);
+      await HeadlessEnv.tableRowCounts(current);
+      await current.close();
+      final Database broken = sqlite3.open(path);
+      broken.execute('DROP TRIGGER book_entries_ai');
+      broken.close();
+
+      final DoctorReport report = await HeadlessEnv.doctor(dbPath: path);
+      final DoctorCheck check = report.checks.firstWhere(
+        (DoctorCheck c) => c.name == 'db',
+      );
+
+      expect(check.ok, isFalse);
+      expect(check.data['missingTriggers'], contains('book_entries_ai'));
+      expect(check.detail, contains('FTS 同步触发器'));
+      expect(report.ok, isFalse);
     });
 
     test('词典缺失 → dict 项 FAIL；空目录 → seed 项 FAIL', () async {

@@ -56,12 +56,13 @@ const String kBannerApiBroken = '贴吧接口似乎已变更或网络持续异�
 
 typedef CollectStateSink = void Function(CollectRunState state);
 
-enum _StopReason { canceled, paused, budget }
+enum _StopReason { canceled, paused, budget, networkBlocked }
 
 enum _ForumOutcome {
   completed,
   canceled,
   paused,
+  networkBlocked,
   cooldown,
   listFailed,
   budget,
@@ -125,6 +126,7 @@ class CollectService {
     Sleeper? sleeper,
     Random? rng,
     NetworkGate networkGate = const AlwaysAllowNetworkGate(),
+    Iterable<String>? forumFilter,
     this.budgetLimit = kDailyBudgetAnonymous,
     this.bdussImported = false,
     this.anonymousApiFactory,
@@ -138,6 +140,7 @@ class CollectService {
        _sleeper = sleeper ?? ((Duration d) => Future<void>.delayed(d)),
        _rng = rng ?? Random(),
        _gate = networkGate,
+       _forumFilter = forumFilter == null ? null : Set<String>.unmodifiable(forumFilter),
        _ingest = IngestPipeline(db);
 
   final CollectRepository _repo;
@@ -162,6 +165,7 @@ class CollectService {
   final Sleeper _sleeper;
   final Random _rng;
   final NetworkGate _gate;
+  final Set<String>? _forumFilter;
   final IngestPipeline _ingest;
 
   /// 每日请求预算上限（匿名 ≤300 / BDUSS 档 600，§8.11；装配侧用
@@ -183,6 +187,9 @@ class CollectService {
   bool _cancelRequested = false;
   bool _globalPaused = false;
   bool _budgetExhausted = false;
+  bool _wifiOnly = true;
+  bool _networkGateBlocked = false;
+  bool _runFailed = false;
   int _globalFailures = 0;
   Completer<void>? _cancelCompleter;
 
@@ -197,6 +204,11 @@ class CollectService {
   late GlobalRateLimiter _limiter;
 
   bool get isRunning => _runFuture != null;
+
+  bool get networkGateBlocked => _networkGateBlocked;
+
+  /// 整轮是否因未捕获的服务/worker 异常中止。
+  bool get runFailed => _runFailed;
 
   /// 当前轮完成 future（未运行 = 立即完成）。cancel()/测试等待用。
   Future<void> get completion => _runFuture ?? Future<void>.value();
@@ -221,6 +233,7 @@ class CollectService {
       try {
         await _runInner();
       } catch (e, st) {
+        _runFailed = true;
         _log('全局', '失败', '采集异常终止：$e', level: CollectLogLevel.warn);
         debugPrintCollect('$e\n$st');
       } finally {
@@ -240,6 +253,8 @@ class CollectService {
     _cancelRequested = false;
     _globalPaused = false;
     _budgetExhausted = false;
+    _networkGateBlocked = false;
+    _runFailed = false;
     _globalFailures = 0;
     _accountDowngraded = false;
     _banner = null;
@@ -249,19 +264,18 @@ class CollectService {
     _startedAt = _clock.now();
     _cancelCompleter = Completer<void>();
 
-    // wifi_only（§8.11：默认仅 WiFi；NetworkGate 现状恒 true，见 worker.dart 注释）。
-    final String wifiRaw = await _repo.getSetting(SettingsKeys.wifiOnly) ?? '1';
-    final bool wifiOnly = wifiRaw != '0' && wifiRaw != 'false';
-    if (wifiOnly && !await _gate.isWifi()) {
-      _banner = '当前非 WiFi 网络，已按设置暂停采集（设置页可关闭「仅 WiFi」）';
-      _log('全局', '频控', _banner!, level: CollectLogLevel.warn);
-      _publish();
-      return;
-    }
+    // wifi_only（§8.11：默认仅 WiFi；生产门控由平台层查询当前默认网络）。
+    _wifiOnly = wifiOnlyFromSetting(
+      await _repo.getSetting(SettingsKeys.wifiOnly),
+    );
+    if (await _pauseForNonWifi()) return;
 
     await _repo.seedDefaultsIfEmpty();
     final List<CollectionStateEntry> forums = (await _repo.forums())
-        .where((CollectionStateEntry e) => e.enabled)
+        .where(
+          (CollectionStateEntry e) =>
+              e.enabled && (_forumFilter?.contains(e.fname) ?? true),
+        )
         .toList();
     if (forums.isEmpty) {
       _banner = '暂无启用的关注吧，请先添加';
@@ -291,6 +305,23 @@ class CollectService {
       sleeper: _sleeper,
       rng: _rng,
       budget: budget,
+      beforeStart: () async {
+        if (_cancelRequested) throw const CollectCanceledException();
+        if (_globalPaused) {
+          if (_networkGateBlocked) throw const NetworkGateBlockedException();
+          throw const GlobalPausedException();
+        }
+        if (_budgetExhausted) throw BudgetExhaustedException(budgetLimit);
+        if (await _pauseForNonWifi()) {
+          throw const NetworkGateBlockedException();
+        }
+        if (_cancelRequested) throw const CollectCanceledException();
+        if (_globalPaused) {
+          if (_networkGateBlocked) throw const NetworkGateBlockedException();
+          throw const GlobalPausedException();
+        }
+        if (_budgetExhausted) throw BudgetExhaustedException(budgetLimit);
+      },
       minMs: interval.minMs,
       maxMs: interval.maxMs,
     );
@@ -299,6 +330,7 @@ class CollectService {
     try {
       worker = await _workerFactory();
     } catch (e) {
+      _runFailed = true;
       _banner = '采集解析器启动失败：$e';
       _log('全局', '失败', _banner!, level: CollectLogLevel.warn);
       _publish();
@@ -316,7 +348,7 @@ class CollectService {
     _log(
       '全局',
       '开始',
-      '开始采集 · 并发=$concurrency · ${bdussImported ? 'BDUSS 档' : '匿名'} · ${wifiOnly ? '仅WiFi' : '任意网络'} · ${forums.length} 吧',
+      '开始采集 · 并发=$concurrency · ${bdussImported ? 'BDUSS 档' : '匿名'} · ${_wifiOnly ? '仅WiFi' : '任意网络'} · ${forums.length} 吧',
     );
     _publish();
 
@@ -387,7 +419,9 @@ class CollectService {
           break;
         }
         if (_globalPaused) {
-          ctx.outcome = _ForumOutcome.paused;
+          ctx.outcome = _networkGateBlocked
+              ? _ForumOutcome.networkBlocked
+              : _ForumOutcome.paused;
           break;
         }
         if (_budgetExhausted) {
@@ -416,6 +450,9 @@ class CollectService {
           );
         } on _StopSignal catch (sig) {
           ctx.outcome = _mapStop(sig.reason);
+          break;
+        } on NetworkGateBlockedException {
+          ctx.outcome = _ForumOutcome.networkBlocked;
           break;
         } on _CooldownSignal catch (sig) {
           ctx.outcome = _ForumOutcome.cooldown;
@@ -519,7 +556,9 @@ class CollectService {
         return;
       }
       if (_globalPaused) {
-        ctx.outcome = _ForumOutcome.paused;
+        ctx.outcome = _networkGateBlocked
+            ? _ForumOutcome.networkBlocked
+            : _ForumOutcome.paused;
         return;
       }
       if (_budgetExhausted) {
@@ -629,6 +668,9 @@ class CollectService {
         _publish();
       } on _StopSignal catch (sig) {
         ctx.outcome = _mapStop(sig.reason);
+        return;
+      } on NetworkGateBlockedException {
+        ctx.outcome = _ForumOutcome.networkBlocked;
         return;
       } on BudgetExhaustedException catch (e) {
         _budgetExhausted = true;
@@ -761,6 +803,12 @@ class CollectService {
         lastError = '全局熔断：连续请求失败（接口疑似变更）';
         logEvent = '失败';
         logLevel = CollectLogLevel.warn;
+      case _ForumOutcome.networkBlocked:
+        lastStatus = 'canceled';
+        st = ForumStatus.canceled;
+        lastError = _banner;
+        logEvent = '取消';
+        logLevel = CollectLogLevel.warn;
       case _ForumOutcome.cooldown:
         // 吧级冷却（§8.11：连续≥3 败 → cooldown_until=now+48h，
         // last_status=rate_limited(429/110xxx)/api_error）。
@@ -887,7 +935,10 @@ class CollectService {
 
   Future<T> _request<T>(String fname, Future<T> Function() call) async {
     if (_cancelRequested) throw const CollectCanceledException();
-    if (_globalPaused) throw const GlobalPausedException();
+    if (_globalPaused) {
+      if (_networkGateBlocked) throw const NetworkGateBlockedException();
+      throw const GlobalPausedException();
+    }
     if (_budgetExhausted) throw BudgetExhaustedException(budgetLimit);
     await _sem.acquire();
     try {
@@ -916,6 +967,18 @@ class CollectService {
     } finally {
       _sem.release();
     }
+  }
+
+  Future<bool> _pauseForNonWifi() async {
+    if (!_wifiOnly || await _gate.isWifi()) return false;
+    _networkGateBlocked = true;
+    if (!_globalPaused) {
+      _globalPaused = true;
+      _banner = '当前非 WiFi 网络，已按设置暂停采集（设置页可关闭「仅 WiFi」）';
+      _log('全局', '频控', _banner!, level: CollectLogLevel.warn);
+      _publish();
+    }
+    return true;
   }
 
   /// 账号档命中「登录态失效」→ 换匿名客户端（当次请求的重试不再带 BDUSS）+ 通知一次。
@@ -954,8 +1017,9 @@ class CollectService {
               '（第$attempt/$maxAttempts次）',
           level: CollectLogLevel.warn,
         );
-        if (!await _sleepCancelable(d))
+        if (!await _sleepCancelable(d)) {
           throw const _StopSignal(_StopReason.canceled);
+        }
       }
       try {
         final T v = await _request(ctx.fname, call);
@@ -978,8 +1042,9 @@ class CollectService {
           '$describe 失败（${e.message}），本吧连续 ${ctx.forumFailures} 次',
           level: CollectLogLevel.warn,
         );
-        if (ctx.forumFailures >= kForumFailureCooldown)
+        if (ctx.forumFailures >= kForumFailureCooldown) {
           throw _CooldownSignal(e);
+        }
         if (attempt >= maxAttempts) {
           throw _PermFailSignal('$describe: ${e.message}', e.kind);
         }
@@ -1007,6 +1072,7 @@ class CollectService {
     _StopReason.canceled => _ForumOutcome.canceled,
     _StopReason.paused => _ForumOutcome.paused,
     _StopReason.budget => _ForumOutcome.budget,
+    _StopReason.networkBlocked => _ForumOutcome.networkBlocked,
   };
 
   // ── 状态发布（不可变快照；logs 新在前 cap 200 = collection_logs 口径） ──

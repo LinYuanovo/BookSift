@@ -15,6 +15,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/bduss.dart';
+import 'network_gate_flutter.dart';
 import 'scheduler.dart';
 import 'tieba_account.dart';
 import 'tieba_api.dart';
@@ -28,9 +29,9 @@ final Provider<CollectClock> collectClockProvider =
 final Provider<Sleeper> collectSleeperProvider =
     Provider<Sleeper>((Ref ref) => (Duration d) => Future<void>.delayed(d));
 
-/// WiFi 闸门（connectivity_plus 未接入 → 恒 true，见 worker.dart NetworkGate 注释）。
+/// Wi-Fi 闸门（各桌面/移动 runner 检查当前默认网络；不可用时按非 Wi-Fi 处理）。
 final Provider<NetworkGate> networkGateProvider =
-    Provider<NetworkGate>((Ref ref) => const AlwaysAllowNetworkGate());
+    Provider<NetworkGate>((Ref ref) => const PlatformNetworkGate());
 
 /// 生产贴吧客户端（app-proto 通道；内部节流关闭，间隔由全局限速器统一核算）。
 ///

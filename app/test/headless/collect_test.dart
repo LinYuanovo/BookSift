@@ -12,6 +12,7 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:booksift/collector/collect_settings_keys.dart';
 import 'package:booksift/collector/collect_state.dart';
+import 'package:booksift/collector/worker.dart';
 import 'package:booksift/collector/scheduler.dart';
 import 'package:booksift/collector/tieba/src/models.dart';
 import 'package:booksift/collector/tieba_api.dart';
@@ -21,6 +22,7 @@ import 'package:booksift/data/repo/collect_repository.dart';
 import 'package:booksift/headless/collect.dart';
 import 'package:booksift/headless/env.dart';
 import 'package:booksift/headless/logs.dart';
+import 'package:booksift/headless/network_gate.dart';
 import 'package:booksift/headless/query.dart';
 
 import '../collector/support.dart';
@@ -29,6 +31,8 @@ import '../collector/support.dart';
 Future<void> setCooldown(AppDatabase db, String fname, DateTime until) =>
     (db.update(db.collectionState)..where((CollectionState t) => t.fname.equals(fname)))
         .write(CollectionStateCompanion(cooldownUntil: Value<DateTime?>(until)));
+
+Future<bool> _notWifi() async => false;
 
 void main() {
   late AppDatabase db;
@@ -58,7 +62,7 @@ void main() {
       expect(plan.budgetUsed, 0);
       expect(plan.budgetRemaining, kDailyBudgetAnonymous);
       expect(plan.concurrentForums, 2);
-      expect(plan.wifiOnly, isFalse);
+      expect(plan.wifiOnly, isTrue);
     });
 
     test('播种后两吧可跑；停用吧不进 enabledForums', () async {
@@ -74,6 +78,19 @@ void main() {
       // 停用 ≠ 冷却：不该出现在冷却列表里，否则会误导排错。
       expect(plan.coolingForums, isEmpty);
       expect(plan.forums, hasLength(2), reason: '水位仍要全量透出');
+    });
+
+    test('forumFilter 只返回所选吧的计划与水位', () async {
+      await repo.seedDefaultsIfEmpty();
+      await repo.addForum('额外吧');
+
+      final CollectPlan plan = await HeadlessCollect.plan(
+        db: db,
+        forumFilter: <String>['额外吧'],
+      );
+
+      expect(plan.forums.map((ForumWatermark f) => f.fname), <String>['额外吧']);
+      expect(plan.enabledForums, <String>['额外吧']);
     });
 
     test('冷却中的吧进 coolingForums，过期冷却不算冷却', () async {
@@ -102,6 +119,17 @@ void main() {
       expect(plan.wifiOnly, isTrue);
     });
 
+    test('仅WiFi 旧值与关闭值和采集服务解析一致', () async {
+      for (final String value in <String>['0', 'false']) {
+        await repo.setSetting(SettingsKeys.wifiOnly, value);
+        expect((await HeadlessCollect.plan(db: db)).wifiOnly, isFalse);
+      }
+      for (final String value in <String>['1', 'true']) {
+        await repo.setSetting(SettingsKeys.wifiOnly, value);
+        expect((await HeadlessCollect.plan(db: db)).wifiOnly, isTrue);
+      }
+    });
+
     test('budgetRemaining 不会为负（超支时夹到 0）', () async {
       await repo.setSetting(CollectSettingsKeys.budgetCount, '9999');
       final CollectPlan plan = await HeadlessCollect.plan(db: db, budgetLimit: 300);
@@ -127,6 +155,96 @@ void main() {
   });
 
   group('run（假 API，零真实网络）', () {
+    test('仅 WiFi 开启且网络不是 WiFi 时不会调用 API', () async {
+      await repo.addForum('yy小说吧');
+      final FakeClock clock = FakeClock();
+      final FakeTiebaApi api = FakeTiebaApi(clock, holdTicks: 0);
+      final CollectRunResult result = await HeadlessCollect.run(
+        db: db,
+        log: log,
+        dictLines: const <String>[],
+        api: api,
+        useIsolateWorker: false,
+        clock: clock,
+        sleeper: fakeSleeper(clock),
+        networkGate: const HostNetworkGate(wifiProbe: _notWifi),
+      );
+
+      expect(api.calls, isEmpty);
+      expect(result.summary.banner, contains('当前非 WiFi'));
+      expect(result.summary.networkGateBlocked, isTrue);
+    });
+
+    test('列表请求连续失败时摘要标记 failed', () async {
+      await repo.addForum('失败吧');
+      final FakeClock clock = FakeClock();
+      final FakeTiebaApi api = FakeTiebaApi(clock, holdTicks: 0)
+        ..failThreads('失败吧', errServer(), times: -1);
+
+      final CollectRunResult result = await HeadlessCollect.run(
+        db: db,
+        log: log,
+        dictLines: const <String>[],
+        api: api,
+        useIsolateWorker: false,
+        clock: clock,
+        sleeper: fakeSleeper(clock),
+        networkGate: const AlwaysAllowNetworkGate(),
+      );
+
+      expect(result.summary.failed, isTrue);
+      expect(result.summary.networkGateBlocked, isFalse);
+      expect(result.summary.forums.single['status'], 'cooldown');
+    });
+
+    test('已在冷却期的贴吧正常跳过，不将成功运行标为 failed', () async {
+      await repo.addForum('冷却吧');
+      await repo.addForum('正常吧');
+      await setCooldown(db, '冷却吧', DateTime.now().add(const Duration(hours: 1)));
+      final FakeClock clock = FakeClock();
+      final FakeTiebaApi api = FakeTiebaApi(clock, holdTicks: 0);
+
+      final CollectRunResult result = await HeadlessCollect.run(
+        db: db,
+        log: log,
+        dictLines: const <String>[],
+        api: api,
+        useIsolateWorker: false,
+        clock: clock,
+        sleeper: fakeSleeper(clock),
+        networkGate: const AlwaysAllowNetworkGate(),
+      );
+
+      expect(api.calls.map((ApiCall call) => call.forum).toSet(), <String>{'正常吧'});
+      expect(result.summary.failed, isFalse);
+      expect(
+        result.summary.forums.singleWhere((Map<String, Object?> forum) => forum['fname'] == '冷却吧')['error'],
+        isNull,
+      );
+    });
+
+    test('forumFilter 在实际采集中只调用所选贴吧', () async {
+      await repo.addForum('目标吧');
+      await repo.addForum('其他吧');
+      final FakeClock clock = FakeClock();
+      final FakeTiebaApi api = FakeTiebaApi(clock, holdTicks: 0);
+
+      final CollectRunResult result = await HeadlessCollect.run(
+        db: db,
+        log: log,
+        dictLines: const <String>[],
+        api: api,
+        useIsolateWorker: false,
+        clock: clock,
+        sleeper: fakeSleeper(clock),
+        networkGate: const AlwaysAllowNetworkGate(),
+        forumFilter: const <String>['目标吧'],
+      );
+
+      expect(api.calls.map((ApiCall call) => call.forum).toSet(), <String>{'目标吧'});
+      expect(result.summary.forums.map((Map<String, Object?> f) => f['fname']), <Object?>['目标吧']);
+    });
+
     test('空页跑通：日志逐条桥接到 RunLog，汇总事件带全量计数', () async {
       await repo.addForum('yy小说吧');
       final FakeClock clock = FakeClock();
@@ -141,6 +259,7 @@ void main() {
         useIsolateWorker: false,
         clock: clock,
         sleeper: fakeSleeper(clock),
+        networkGate: const AlwaysAllowNetworkGate(),
       );
 
       // 真的发过请求（否则「跑了一轮」是假的）。
@@ -183,6 +302,7 @@ void main() {
         useIsolateWorker: false,
         clock: clock,
         sleeper: fakeSleeper(clock),
+        networkGate: const AlwaysAllowNetworkGate(),
       );
 
       final List<RunEvent> progress =
@@ -211,6 +331,7 @@ void main() {
         useIsolateWorker: false,
         clock: clock,
         sleeper: fakeSleeper(clock),
+        networkGate: const AlwaysAllowNetworkGate(),
       );
       expect(api.closed, isFalse, reason: '只有 run() 自己 new 的 ProtoTiebaApi 才由它关');
     });
@@ -258,6 +379,7 @@ void main() {
         api: api,
         budgetLimit: kDailyBudgetBduss,
         bduss: 'FAKE_Bduss_not_null',
+        networkGate: const AlwaysAllowNetworkGate(),
         useIsolateWorker: false,
         clock: clock,
         sleeper: fakeSleeper(clock),
@@ -293,6 +415,24 @@ void main() {
         'discardedChat': 0,
         'mineThreads': 0,
       });
+    });
+
+    test('失败状态在机读摘要中显式标记', () {
+      const CollectRunState state = CollectRunState(
+        forums: <ForumRunState>[
+          ForumRunState(
+            fname: '失败吧',
+            status: ForumStatus.failed,
+            error: '列表请求失败',
+          ),
+        ],
+      );
+      final CollectRunSummary summary =
+          CollectRunSummary.of(state, logCount: 1, failed: true);
+
+      expect(summary.failed, isTrue);
+      expect(summary.networkGateBlocked, isFalse);
+      expect(summary.toJson()['failed'], isTrue);
     });
   });
 }

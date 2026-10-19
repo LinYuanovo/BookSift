@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:booksift/classify/src/engine.dart' show kRecommendKind;
+import 'package:booksift/classify/src/engine.dart' show entryKindLabel, kRecommendKind;
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/data/repo/queries.dart';
 
@@ -102,6 +102,51 @@ class FakeBookRepository implements BookRepository {
 
   void _hit(String name) => calls[name] = (calls[name] ?? 0) + 1;
 
+  String _kindLabel(EntryRow entry) {
+    return entryKindLabel(
+      category: entry.category,
+      flag: entry.recommendFlag,
+      title: _postTitle(entry),
+      bookGrade: entry.bookGrade,
+    );
+  }
+
+  String? _postTitle(EntryRow entry) {
+    if (entry.postTitle == null && entry.postRef != null) {
+      for (final Post post in lib.posts) {
+        if (post.id == entry.postRef) {
+          return post.title;
+        }
+      }
+    }
+    return entry.postTitle;
+  }
+
+  EntryRow _withPostTitle(EntryRow entry) => EntryRow(
+        id: entry.id,
+        name: entry.name,
+        nameNorm: entry.nameNorm,
+        author: entry.author,
+        recommender: entry.recommender,
+        comment: entry.comment,
+        date: entry.date,
+        channel: entry.channel,
+        subChannel: entry.subChannel,
+        category: entry.category,
+        bookGrade: entry.bookGrade,
+        origin: entry.origin,
+        quality: entry.quality,
+        wordCount: entry.wordCount,
+        postRef: entry.postRef,
+        floorRef: entry.floorRef,
+        floorSeq: entry.floorSeq,
+        floorText: entry.floorText,
+        bookGroupId: entry.bookGroupId,
+        srcUrl: entry.srcUrl,
+        postTitle: _postTitle(entry),
+        snippet: entry.snippet,
+      );
+
   // ───────────────────────── 首页 ─────────────────────────
 
   @override
@@ -193,7 +238,7 @@ class FakeBookRepository implements BookRepository {
     );
     final Map<String, List<EntryRow>> byName = <String, List<EntryRow>>{};
     for (final EntryRow e in lib.entries) {
-      if (e.date == null) {
+      if (e.date == null || _kindLabel(e) != kRecommendKind) {
         continue;
       }
       if (from != null && e.date!.compareTo(from) < 0) {
@@ -664,7 +709,12 @@ class FakeBookRepository implements BookRepository {
     String? latest;
     final Set<String> channels = <String>{};
     for (final EntryRow e in rows) {
-      final int flag = e.recommendFlag;
+      final String kind = _kindLabel(e);
+      final int flag = kind == kRecommendKind
+          ? 1
+          : kind == CategoryKind.avoid
+          ? -1
+          : 0;
       if (flag.abs() > bestFlag.abs()) {
         bestFlag = flag;
         bestEntryId = e.id;
@@ -680,7 +730,7 @@ class FakeBookRepository implements BookRepository {
     for (final EntryRow e in lib.entries.where(
       (EntryRow e) => e.nameNorm == nameNorm,
     )) {
-      switch (e.kindLabel) {
+      switch (_kindLabel(e)) {
         case kRecommendKind:
           rec++;
         case CategoryKind.avoid:
@@ -781,11 +831,11 @@ class FakeBookRepository implements BookRepository {
             name: lib.groupOfName(e.nameNorm)?.nameDisplay ?? e.name,
             recommend: lib.entries
                 .where((EntryRow x) =>
-                    x.nameNorm == e.nameNorm && x.recommendFlag > 0)
+                    x.nameNorm == e.nameNorm && _kindLabel(x) == kRecommendKind)
                 .length,
             avoid: lib.entries
                 .where((EntryRow x) =>
-                    x.nameNorm == e.nameNorm && x.recommendFlag < 0)
+                    x.nameNorm == e.nameNorm && _kindLabel(x) == CategoryKind.avoid)
                 .length,
           ),
     ];
@@ -813,7 +863,7 @@ class FakeBookRepository implements BookRepository {
         .toList();
     int scan = 0, rec = 0, avoid = 0;
     for (final EntryRow e in own) {
-      switch (e.kindLabel) {
+      switch (_kindLabel(e)) {
         case kRecommendKind:
           rec++;
         case CategoryKind.avoid:
@@ -839,15 +889,16 @@ class FakeBookRepository implements BookRepository {
     _hit('bookEntries:$groupId:$filter:$sort');
     final List<EntryRow> rows = lib.entries
         .where((EntryRow e) => e.bookGroupId == groupId)
+        .map(_withPostTitle)
         .toList();
     final List<EntryRow> out = switch (filter) {
       // 口径同 Queries.bookEntries：非推荐且非排雷（含求书桶）= 页头计数的 default 分支。
       SemanticFilter.scan =>
-        rows.where((EntryRow e) => e.kindLabel != kRecommendKind && e.kindLabel != CategoryKind.avoid).toList(),
+        rows.where((EntryRow e) => _kindLabel(e) != kRecommendKind && _kindLabel(e) != CategoryKind.avoid).toList(),
       SemanticFilter.recommend =>
-        rows.where((EntryRow e) => e.kindLabel == kRecommendKind).toList(),
+        rows.where((EntryRow e) => _kindLabel(e) == kRecommendKind).toList(),
       SemanticFilter.avoid =>
-        rows.where((EntryRow e) => e.kindLabel == CategoryKind.avoid).toList(),
+        rows.where((EntryRow e) => _kindLabel(e) == CategoryKind.avoid).toList(),
       SemanticFilter.all => rows,
     };
     out.sort(switch (sort) {

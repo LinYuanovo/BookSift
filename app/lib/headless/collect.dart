@@ -32,6 +32,7 @@ class CollectPlan {
     required this.concurrentForums,
     required this.wifiOnly,
     this.bdussImported = false,
+    this.forumFilter,
   });
 
   /// 全部关注吧水位。
@@ -51,6 +52,7 @@ class CollectPlan {
 
   /// 本轮账号档：true = 走 BDUSS（间隔 1.0–2.0s / 并发上限 4）。
   final bool bdussImported;
+  final List<String>? forumFilter;
 
   int get budgetRemaining => (budgetLimit - budgetUsed).clamp(0, budgetLimit);
 
@@ -73,6 +75,7 @@ class CollectPlan {
         'accountTier': bdussImported ? 'bduss' : 'anonymous',
         'minIntervalMs': minIntervalMs,
         'maxIntervalMs': maxIntervalMs,
+        if (forumFilter != null) 'forumFilter': forumFilter,
       };
 }
 
@@ -86,9 +89,16 @@ class CollectRunSummary {
     required this.totals,
     required this.forums,
     required this.logCount,
+    this.networkGateBlocked = false,
+    this.failed = false,
   });
 
-  factory CollectRunSummary.of(CollectRunState s, {required int logCount}) =>
+  factory CollectRunSummary.of(
+    CollectRunState s, {
+    required int logCount,
+    bool networkGateBlocked = false,
+    bool failed = false,
+  }) =>
       CollectRunSummary(
         phase: s.phase.name,
         startedAt: s.startedAt,
@@ -124,6 +134,8 @@ class CollectRunSummary {
             },
         ],
         logCount: logCount,
+        networkGateBlocked: networkGateBlocked,
+        failed: failed,
       );
 
   final String phase;
@@ -138,6 +150,12 @@ class CollectRunSummary {
   /// 本轮逐条日志总数（未被 200 条上限裁剪的真实计数）。
   final int logCount;
 
+  /// 是否因当前网络不满足「仅 WiFi」而停止。
+  final bool networkGateBlocked;
+
+  /// 本轮未完成，原因是采集或解析失败，而不是网络策略拦截。
+  final bool failed;
+
   Map<String, Object?> toJson() => <String, Object?>{
         'phase': phase,
         'startedAt': startedAt?.toIso8601String(),
@@ -146,6 +164,8 @@ class CollectRunSummary {
         'totals': totals,
         'forums': forums,
         'logCount': logCount,
+        'networkGateBlocked': networkGateBlocked,
+        'failed': failed,
       };
 }
 
@@ -173,13 +193,18 @@ abstract final class HeadlessCollect {
     required AppDatabase db,
     int budgetLimit = kDailyBudgetAnonymous,
     String? bduss,
+    Iterable<String>? forumFilter,
   }) async {
     final CollectRepository repo = CollectRepository(db);
+    final Set<String>? selected = forumFilter?.toSet();
     final List<CollectionStateEntry> rows = await repo.forums();
     final DateTime now = DateTime.now();
     final List<String> cooling = <String>[];
     final List<String> enabled = <String>[];
     for (final CollectionStateEntry e in rows) {
+      if (selected != null && !selected.contains(e.fname)) {
+        continue;
+      }
       if (!e.enabled) {
         continue;
       }
@@ -197,10 +222,14 @@ abstract final class HeadlessCollect {
       await repo.getSetting(SettingsKeys.concurrentForums),
       bdussImported: bdussImported,
     );
-    final bool wifiOnly =
-        (await repo.getSetting(SettingsKeys.wifiOnly) ?? 'false') == 'true';
+    final bool wifiOnly = wifiOnlyFromSetting(
+      await repo.getSetting(SettingsKeys.wifiOnly),
+    );
     return CollectPlan(
-      forums: rows.map(ForumWatermark.of).toList(growable: false),
+      forums: rows
+          .where((CollectionStateEntry e) => selected == null || selected.contains(e.fname))
+          .map(ForumWatermark.of)
+          .toList(growable: false),
       enabledForums: enabled,
       coolingForums: cooling,
       budgetDate: budgetDate,
@@ -209,6 +238,7 @@ abstract final class HeadlessCollect {
       concurrentForums: concurrent,
       wifiOnly: wifiOnly,
       bdussImported: bdussImported,
+      forumFilter: selected?.toList(growable: false),
     );
   }
 
@@ -229,7 +259,8 @@ abstract final class HeadlessCollect {
     bool useIsolateWorker = true,
     CollectClock clock = const SystemClock(),
     Sleeper? sleeper,
-    NetworkGate networkGate = const AlwaysAllowNetworkGate(),
+    required NetworkGate networkGate,
+    Iterable<String>? forumFilter,
   }) async {
     final bool bdussImported = (bduss ?? '').isNotEmpty;
     final ProtoTiebaApi? owned = api == null ? ProtoTiebaApi(bduss: bduss) : null;
@@ -307,6 +338,7 @@ abstract final class HeadlessCollect {
       clock: clock,
       sleeper: sleeper,
       networkGate: networkGate,
+      forumFilter: forumFilter,
     );
 
     try {
@@ -316,7 +348,18 @@ abstract final class HeadlessCollect {
       owned?.close();
     }
 
-    final CollectRunSummary summary = CollectRunSummary.of(latest, logCount: logCount);
+    final CollectRunSummary summary = CollectRunSummary.of(
+      latest,
+      logCount: logCount,
+      networkGateBlocked: service.networkGateBlocked,
+      failed: service.runFailed ||
+          latest.forums.any(
+            (ForumRunState forum) =>
+                forum.status == ForumStatus.failed ||
+                (forum.status == ForumStatus.cooldown && forum.error != null) ||
+                (forum.status == ForumStatus.done && forum.error != null),
+          ),
+    );
     log.emit(
       'global',
       '汇总',

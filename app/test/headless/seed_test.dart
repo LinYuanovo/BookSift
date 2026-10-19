@@ -142,6 +142,27 @@ void main() {
       expect(r.ok, isFalse);
       expect(r.shaMatches, isNull);
     });
+
+    test('zip 哈希可缺失但 shaMatches 保持 null', () async {
+      final Directory dir = await Directory(
+        '${tmp.path}${Platform.pathSeparator}optional_sha',
+      ).create();
+      final List<int> bytes = const <int>[1, 2, 3];
+      await File('${dir.path}${Platform.pathSeparator}p.zip').writeAsBytes(bytes);
+      await File('${dir.path}${Platform.pathSeparator}manifest.json').writeAsString(
+        jsonEncode(<String, Object?>{
+          'compression': <String, Object?>{
+            'zip_file': 'p.zip',
+            'zip_size_bytes': bytes.length,
+          },
+        }),
+      );
+
+      final SeedPackReport report = await SeedInspector.inspect(dir.path);
+      expect(report.ok, isTrue);
+      expect(report.shaMatches, isNull);
+      expect(report.toJson()['shaMatches'], isNull);
+    });
   });
 
   group('报错路径', () {
@@ -162,6 +183,41 @@ void main() {
       await expectLater(
         SeedInspector.inspect(tmp.path),
         throwsA(isA<SeedInspectException>()),
+      );
+    });
+
+    test('manifest 拒绝 zip 路径越出指定目录', () async {
+      final Directory outside = await Directory(
+        '${tmp.path}${Platform.pathSeparator}outside',
+      ).create();
+      final String outsidePath = '${outside.path}${Platform.pathSeparator}p.zip';
+      await File(outsidePath).writeAsBytes(const <int>[1]);
+      await File('${tmp.path}${Platform.pathSeparator}manifest.json').writeAsString(
+        jsonEncode(<String, Object?>{
+          'compression': <String, Object?>{
+            'zip_file': '../outside/p.zip',
+            'zip_sha256': sha256.convert(const <int>[1]).toString(),
+            'zip_size_bytes': 1,
+          },
+        }),
+      );
+
+      await expectLater(
+        SeedInspector.inspect(tmp.path),
+        throwsA(isA<SeedInspectException>()),
+      );
+    });
+
+    test('manifest JSON 损坏时返回可读的体检异常', () async {
+      await File('${tmp.path}${Platform.pathSeparator}manifest.json')
+          .writeAsString('{broken');
+      await expectLater(
+        SeedInspector.inspect(tmp.path),
+        throwsA(isA<SeedInspectException>().having(
+          (SeedInspectException e) => e.message,
+          'message',
+          contains('格式无效'),
+        )),
       );
     });
 
