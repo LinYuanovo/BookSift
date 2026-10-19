@@ -37,7 +37,7 @@
   跳过种子包 zip 的复制与 sha256（只想快速验证 APK 时用）。
 
 .PARAMETER Publish
-  打包完成后执行 gh release create 并上传 dist_release 全部资产。默认关。
+  打包完成后执行 gh release create 并上传本版本发布包、校验文件及种子/分类器包。默认关。
 
 .PARAMETER BuildTimeoutSec
   flutter build 的墙钟上限秒数，默认 1800（首次构建需下载 Gradle 依赖，别调太小）。
@@ -186,6 +186,26 @@ if ($cache.Ok) {
 
 # ── 3. 构建 ─────────────────────────────────────────────────────────────
 Write-Step "3/6 flutter build apk --release（墙钟上限 ${BuildTimeoutSec}s）"
+# Flutter 的 native-assets 目录不是 Gradle 的完整输入，残留的 Android
+# 增量目录可能让 assembleRelease 复用一份没有 sqlite3 的空结果。只清理
+# Android 构建侧的生成物，保留 Windows native_assets 给本地测试使用。
+$androidNativeAssets = Join-Path $AppDir 'build\native_assets\android'
+$androidReleaseBuildIdFile = Join-Path $AppDir 'build\app\intermediates\flutter\release\.last_build_id'
+if (Test-Path -LiteralPath $androidReleaseBuildIdFile) {
+  $androidReleaseBuildId = (Get-Content -LiteralPath $androidReleaseBuildIdFile -Raw).Trim()
+  if ($androidReleaseBuildId -notmatch '^[0-9a-f]{32}$') {
+    Write-Host '  ✗ Flutter Android release 构建 ID 格式无效，拒绝清理缓存。' -ForegroundColor Red
+    exit 3
+  }
+  $installCodeAssetsStamp = Join-Path $AppDir ".dart_tool\flutter_build\$androidReleaseBuildId\install_code_assets.stamp"
+  if (Test-Path -LiteralPath $installCodeAssetsStamp) {
+    Remove-Item -LiteralPath $installCodeAssetsStamp -Force -ErrorAction Stop
+  }
+}
+if (Test-Path -LiteralPath $androidNativeAssets) {
+  Remove-Item -LiteralPath $androidNativeAssets -Recurse -Force -ErrorAction Stop
+}
+Write-Host '  ✓ 已失效 Android native-assets 安装缓存并清理 ABI 目录' -ForegroundColor Green
 $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 $outLog  = Join-Path $LogDir "release-$Version-$stamp.out.log"
 $errLog  = Join-Path $LogDir "release-$Version-$stamp.err.log"
@@ -197,7 +217,7 @@ $proc = Start-Process -FilePath $FlutterBat -ArgumentList @('build', 'apk', '--r
   -RedirectStandardOutput $outLog -RedirectStandardError $errLog
 Write-Host "  PID=$($proc.Id)  日志 $outLog"
 $exited = $false; $elapsed = 0
-while (-not $exited) {
+while (-not $exited -and $elapsed -lt $BuildTimeoutSec) {
   $slice = [Math]::Min(30, [Math]::Max(1, $BuildTimeoutSec - $elapsed))
   $exited = $proc.WaitForExit($slice * 1000)
   $elapsed = [int]((Get-Date) - $started).TotalSeconds
@@ -231,6 +251,29 @@ if ($buildCode -ne 0) {
 $builtApk = Join-Path $AppDir 'build\app\outputs\flutter-apk\app-release.apk'
 if (-not (Test-Path -LiteralPath $builtApk)) { Write-Error "构建报成功但找不到产物: $builtApk"; exit 3 }
 Select-String -LiteralPath $outLog -Pattern 'Built build' -SimpleMatch | Select-Object -Last 1 | ForEach-Object { Write-Host "  $($_.Line.Trim())" -ForegroundColor Green }
+
+# native-assets 缺失时 APK 仍可能成功打包，但 drift/sqlite3 会在启动时找不到
+# 动态库，最终表现为页面空白或数据库打不开。验证发布包而不是只验证构建退出码。
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$requiredSqliteAssets = @(
+  'lib/armeabi-v7a/libsqlite3.so',
+  'lib/arm64-v8a/libsqlite3.so',
+  'lib/x86_64/libsqlite3.so'
+)
+$apkZip = [System.IO.Compression.ZipFile]::OpenRead($builtApk)
+try {
+  $apkEntries = @($apkZip.Entries | ForEach-Object { $_.FullName })
+} finally {
+  $apkZip.Dispose()
+}
+$missingSqliteAssets = @($requiredSqliteAssets | Where-Object { $_ -notin $apkEntries })
+if ($missingSqliteAssets.Count -gt 0) {
+  Write-Host '  ✗ APK 原生资产闸门失败：缺少 sqlite3 ABI 库：' -ForegroundColor Red
+  $missingSqliteAssets | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+  Write-Host '    已拒绝组装 dist_release；检查 build/native_assets/android/jniLibs/lib 和构建日志。' -ForegroundColor Yellow
+  exit 3
+}
+Write-Host '  ✓ APK 原生资产闸门：arm/arm64/x86_64 三份 libsqlite3.so 均在包内' -ForegroundColor Green
 
 # ── 4. 验签 ─────────────────────────────────────────────────────────────
 Write-Step '4/6 apksigner 验签'
@@ -348,7 +391,7 @@ Get-ChildItem -LiteralPath $DistDir -File | Sort-Object Name | ForEach-Object {
 Write-Host ''
 Write-Host "  下一步（发布）：" -ForegroundColor Cyan
 Write-Host "    1. 建 repo → push → git tag v$Version → git push origin v$Version（也可由 GitHub Actions（.github/workflows/build-release.yml）在 tag 推送时自动打包发布）"
-Write-Host "    2. gh release create v$Version dist_release/* --title `"扫书汇 v$Version`" --notes-file dist_release/RELEASE_NOTES.md"
+Write-Host "    2. pwsh tools/make_release.ps1 -Publish"
 Write-Host "    3. 部署 version.json 到静态托管（五个平台 URL 均指向 v$Version Release 资产），设置页填该 URL 作备源"
 Write-Host "    完整步骤见 docs/发布指南.md"
 
@@ -370,8 +413,13 @@ if ($Publish) {
     if (-not (Test-Path -LiteralPath $GhExe)) { Write-Error "gh 不在预期路径: $GhExe"; exit 5 }
     & $GhExe auth status 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Error 'gh 未登录，先 gh auth login'; exit 5 }
-    # 只上传更新契约需要的资产；RELEASE_NOTES.md 作 --notes-file，version.json 属静态托管（勿当 release 资产）
-    $assets = @(Get-ChildItem -LiteralPath $DistDir -File | Where-Object { $_.Name -notin @('RELEASE_NOTES.md', 'version.json') } | ForEach-Object { $_.FullName })
+    # 发布严格使用本版本平台包及其校验文件，不扫入本地演示和旧版本文件。
+    . (Join-Path $PSScriptRoot 'release_assets.ps1')
+    $assets = @(Get-BookSiftReleaseAssets -DistDir $DistDir -Version $Version)
+    if (-not ($assets | Where-Object { [System.IO.Path]::GetFileName($_) -eq "android-v$Version.apk" })) {
+      Write-Error "缺少本版本 Android 更新资产 android-v$Version.apk，拒绝发布。"
+      exit 5
+    }
     Write-Host "  上传 $($assets.Count) 个资产 → tag v$Version"
     & $GhExe release create "v$Version" @assets --title "扫书汇 v$Version" --notes-file $notesPath
     if ($LASTEXITCODE -ne 0) { Write-Error "gh release create 失败 exit=$LASTEXITCODE"; exit 5 }
