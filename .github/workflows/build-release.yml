@@ -317,8 +317,6 @@ jobs:
           FLUTTER_XCODE_CODE_SIGNING_ALLOWED: 'NO'
           FLUTTER_XCODE_CODE_SIGNING_REQUIRED: 'NO'
           FLUTTER_XCODE_CODE_SIGN_IDENTITY: ''
-          FLUTTER_XCODE_PRODUCT_NAME: 扫书汇
-          FLUTTER_XCODE_PRODUCT_BUNDLE_IDENTIFIER: com.linyuan.booksift.macos
         run: flutter build macos --release
 
       - name: 验证 universal app，打包 zip + sha256
