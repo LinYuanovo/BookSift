@@ -22,10 +22,14 @@ import '../../theme/app_motion.dart';
 import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
 import '../../theme/appearance_settings.dart';
+import '../../collector/collect_controller.dart';
 import '../../collector/collect_providers.dart';
 import '../../collector/scheduler.dart';
 import '../../collector/tieba_account.dart';
 import '../../data/bduss.dart';
+import '../../data/fts_index.dart';
+import '../../data/seed_import.dart';
+import '../../data/seed_import_providers.dart';
 import '../collect/collect_settings.dart';
 import '../home/cards.dart';
 import 'about_page.dart';
@@ -116,6 +120,12 @@ class SettingsPage extends ConsumerWidget {
             child: Text('采集', style: t.label.copyWith(color: colors.textMuted)),
           ),
           const _CollectSection(),
+          // ── 数据与存储（FTS 索引档位 / 删除 / 重建）──
+          Padding(
+            padding: EdgeInsets.only(top: space.space8, bottom: space.space3),
+            child: Text('数据与存储', style: t.label.copyWith(color: colors.textMuted)),
+          ),
+          const _FtsIndexSection(),
           // ── 关于小节（M3 §10.1：版本显示 / 双源更新检查 / 备源 URL 自定义）──
           Padding(
             padding: EdgeInsets.only(top: space.space8, bottom: space.space3),
@@ -320,6 +330,290 @@ class _CollectSection extends ConsumerWidget {
             ),
             // BDUSS 导入 / 测试 / 清除（需求 8/5）：凭证只进设备本地系统加密存储，见 data/bduss.dart。
             const _BdussTile(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 「数据与存储」：FTS 索引档位 + 删除 / 重建（docs/2026-10-20_FTS索引可选化改造方案.md §5）。
+///
+/// 档位三选一（关闭 / 基础 / 完整）；「重建索引」按当前档位先删后建；
+/// 「删除索引」等价切到关闭。三者共用 SeedBootstrapController 的进度状态，
+/// 运行中禁用并显示阶段文案。采集进行中禁用（VACUUM 会锁库）。
+class _FtsIndexSection extends ConsumerStatefulWidget {
+  const _FtsIndexSection();
+
+  @override
+  ConsumerState<_FtsIndexSection> createState() => _FtsIndexSectionState();
+}
+
+class _FtsIndexSectionState extends ConsumerState<_FtsIndexSection> {
+  /// true = 首帧之后（首帧读 settings 全是 loading，直接显示 progress 会闪）。
+  bool _ready = false;
+  FtsMode? _mode;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  Future<void> _load() async {
+    try {
+      final FtsIndexService service = await ref.read(ftsIndexServiceProvider.future);
+      final FtsCapability cap = await service.detect();
+      final FtsMode? desired = await ref
+          .read(seedBootstrapProvider.notifier)
+          .readFtsMode();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _ready = true;
+        _mode = desired ?? cap.mode;
+      });
+    } catch (_) {
+      // 测试环境（真实 IO 被禁）/ 路径解析失败：按默认档显示，不阻塞设置页。
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _ready = true;
+        _mode = FtsMode.full;
+      });
+    }
+  }
+
+  Future<void> _apply(FtsMode target, {bool rebuild = false}) async {
+    if (_busy) {
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final FtsProgress result = await ref
+          .read(seedBootstrapProvider.notifier)
+          .applyFtsMode(target, rebuild: rebuild);
+      if (!mounted) {
+        return;
+      }
+      if (result.message.contains('失败') || result.cancelled) {
+        showAppToast(context, result.message.isEmpty ? '索引操作失败' : result.message);
+      } else {
+        setState(() => _mode = target);
+        final String? warning = result.warning;
+        showAppToast(
+          context,
+          warning == null ? result.message : '${result.message}（$warning）',
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        showAppToast(context, '索引操作失败：$e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _confirmDrop() async {
+    final AppColors c = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    final AppSpacing s = AppSpacing.of(context);
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        icon: AppIcon('alert', size: AppMetrics.iconBase, color: c.danger),
+        title: Text('删除索引？', style: t.headline.copyWith(color: c.text)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '删除后搜索会变慢（正文约 1–2 秒），并释放约 240 MB 存储。',
+              style: t.body.copyWith(color: c.textSecondary),
+            ),
+            SizedBox(height: s.space2),
+            Text(
+              '之后可在本页「重建索引」随时恢复。',
+              style: t.caption.copyWith(color: c.textMuted),
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: c.danger,
+              foregroundColor: c.onAccent,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await _apply(FtsMode.off);
+    }
+  }
+
+  Future<void> _confirmRebuild() async {
+    final AppColors c = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    // 删除后（off）也允许重建：默认按「完整」重建，随后可再切基础。
+    final FtsMode mode = _mode == null || _mode == FtsMode.off ? FtsMode.full : _mode!;
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext dialogContext) => AlertDialog(
+        icon: AppIcon('refresh', size: AppMetrics.iconBase, color: c.accent),
+        title: Text('重建索引？', style: t.headline.copyWith(color: c.text)),
+        content: Text(
+          '将删除当前索引并按「${mode.label}」重新建立，预计约 30 秒。期间搜索自动降级，完成后恢复。',
+          style: t.body.copyWith(color: c.textSecondary),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('重建'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await _apply(mode, rebuild: true);
+    }
+  }
+
+  String _summary(FtsMode mode) => switch (mode) {
+    FtsMode.off => '关闭 · 约 160 MB · 全部 LIKE，正文搜索约 1–2 秒',
+    FtsMode.book => '基础 · 约 255 MB · 书名/作者/评语快，楼层正文走 LIKE',
+    FtsMode.full => '完整 · 约 402 MB · 搜索最快',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final AppColors c = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    final AppSpacing s = AppSpacing.of(context);
+    final SeedImportState seed = ref.watch(seedBootstrapProvider);
+    final bool importing = seed.isImporting || seed.phase == SeedImportPhase.awaitingChoice;
+    final bool collectRunning = ref.watch(collectRunStateProvider).isRunning;
+    final bool enabled = _ready && !_busy && !importing && !collectRunning;
+    final FtsMode mode = _mode ?? FtsMode.full;
+    final String blocking = importing
+        ? '导入进行中，结束后可切换'
+        : collectRunning
+        ? '采集进行中，结束后可切换'
+        : _busy
+        ? seed.phase == SeedImportPhase.rebuildingFts && seed.message.isNotEmpty
+              ? seed.message
+              : '索引处理中…'
+        : _summary(mode);
+
+    return Card(
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: s.space2),
+        child: Column(
+          children: <Widget>[
+            ListTile(
+              leading: AppIcon('db', color: c.textMuted),
+              title: Text(
+                '全文索引',
+                style: t.bodyStrong.copyWith(color: c.text),
+              ),
+              subtitle: Text(
+                blocking,
+                style: t.caption.copyWith(color: c.textMuted),
+              ),
+              trailing: _busy
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: c.accent,
+                      ),
+                    )
+                  : SegmentedPill<FtsMode>(
+                      options: <(FtsMode, String)>[
+                        for (final FtsMode m in FtsMode.values) (m, m.label),
+                      ],
+                      selected: mode,
+                      onChanged: enabled ? (FtsMode v) => _apply(v) : (FtsMode _) {},
+                    ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                s.pagePadding,
+                0,
+                s.pagePadding,
+                s.space2,
+              ),
+              child: Text(
+                '切换档位会重建/删除索引，期间搜索自动降级并如实提示。'
+                '采集进行中为免锁库会暂时禁用。',
+                style: t.caption.copyWith(color: c.textMuted),
+              ),
+            ),
+            const Divider(height: AppMetrics.hairline, indent: 56),
+            ListTile(
+              leading: AppIcon(
+                'refresh',
+                color: enabled ? c.textMuted : c.borderStrong,
+              ),
+              title: Text(
+                '重建索引',
+                style: t.bodyStrong.copyWith(
+                  color: enabled ? c.text : c.textMuted,
+                ),
+              ),
+              subtitle: Text(
+                mode == FtsMode.off
+                    ? '当前未启用 · 点击按「完整」重新建立'
+                    : '删除后按「${mode.label}」重新建立',
+                style: t.caption.copyWith(color: c.textMuted),
+              ),
+              trailing: RotatedBox(
+                quarterTurns: 3,
+                child: AppIcon('chev', size: 16, color: c.textMuted),
+              ),
+              enabled: enabled,
+              onTap: () => _confirmRebuild(),
+            ),
+            ListTile(
+              leading: AppIcon(
+                'close',
+                color: enabled && mode != FtsMode.off ? c.danger : c.borderStrong,
+              ),
+              title: Text(
+                '删除索引',
+                style: t.bodyStrong.copyWith(
+                  color: enabled && mode != FtsMode.off ? c.danger : c.textMuted,
+                ),
+              ),
+              subtitle: Text(
+                mode == FtsMode.off ? '当前未启用索引' : '释放约 240 MB；之后可随时重建',
+                style: t.caption.copyWith(color: c.textMuted),
+              ),
+              trailing: RotatedBox(
+                quarterTurns: 3,
+                child: AppIcon('chev', size: 16, color: c.textMuted),
+              ),
+              enabled: enabled && mode != FtsMode.off,
+              onTap: () => _confirmDrop(),
+            ),
           ],
         ),
       ),

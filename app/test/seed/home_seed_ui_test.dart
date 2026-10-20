@@ -22,12 +22,19 @@ import '../support/harness.dart';
 /// 测试驱动版控制器：手动 emit 状态；ensureStarted 只计数（不跑真导入）。
 class ScriptedSeedController extends SeedBootstrapController {
   int startCalls = 0;
+  FtsMode? chosenMode;
 
   void emit(SeedImportState s) => state = s;
 
   @override
   Future<void> ensureStarted() async {
     startCalls++;
+  }
+
+  @override
+  Future<void> chooseFtsMode(FtsMode mode) async {
+    chosenMode = mode;
+    emit(const SeedImportState(phase: SeedImportPhase.done, progress: 1, message: '已选择'));
   }
 }
 
@@ -87,5 +94,27 @@ void main() {
     ctl.emit(const SeedImportState(phase: SeedImportPhase.done, progress: 1, message: '导入完成'));
     await tester.pumpAndSettle();
     expect(repo.calls['timelinePosts'], greaterThan(before), reason: 'done 迁移应触发重查');
+  });
+
+  testWidgets('awaitingChoice：首启弹框；「暂不建立」= off', (WidgetTester tester) async {
+    final ScriptedSeedController ctl = await pumpHome(tester);
+    ctl.emit(const SeedImportState(phase: SeedImportPhase.awaitingChoice));
+    await tester.pumpAndSettle();
+
+    expect(find.text('建立全文索引？'), findsOneWidget);
+    expect(find.text('建立索引（推荐）'), findsOneWidget);
+    await tester.tap(find.text('暂不建立'));
+    await tester.pumpAndSettle();
+    expect(ctl.chosenMode, FtsMode.off);
+  });
+
+  testWidgets('awaitingChoice：「建立索引」= full', (WidgetTester tester) async {
+    final ScriptedSeedController ctl = await pumpHome(tester);
+    ctl.emit(const SeedImportState(phase: SeedImportPhase.awaitingChoice));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('建立索引（推荐）'));
+    await tester.pumpAndSettle();
+    expect(ctl.chosenMode, FtsMode.full);
   });
 }

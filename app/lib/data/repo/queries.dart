@@ -5,6 +5,7 @@ import 'package:drift/drift.dart';
 import '../../classify/src/engine.dart' show entryKindLabel, kRecommendKind;
 import '../../core/constants.dart';
 import '../db/app_database.dart';
+import '../fts_mode.dart';
 
 // 数据访问层（M1-④）：首页时间线/热门榜、分类五维计数与浏览、六维搜索（FTS+LIKE 兜底）、
 // 帖子/书聚合详情、历史/书签/收藏 CRUD。全部查询参数化（原型 §7.3，消灭字符串拼接缺陷）。
@@ -1002,9 +1003,15 @@ abstract interface class BookRepository {
 
 /// drift 查询集（原型 §7.3 检索策略 / §9.2 Provider 划分的领域层落点）。
 class Queries implements BookRepository, SearchSettingsKv {
-  const Queries(this.db);
+  const Queries(this.db, {this.ftsMode});
 
   final AppDatabase db;
+
+  /// 索引档位（docs/2026-10-20_FTS索引可选化改造方案.md）。
+  ///
+  /// null = 未注入（headless CLI / 既有测试）：保持旧行为「尝试 FTS，异常才 degraded」。
+  /// 显式档位时：`off` 直接走 LIKE（不置 degraded）；`book` 只查 book_fts。
+  final FtsMode? ftsMode;
 
   static const String _entryCols =
       'b.id, b.name, b.name_norm, b.author, b.recommender, b.comment, b.date, b.channel, '
@@ -1462,6 +1469,10 @@ class Queries implements BookRepository, SearchSettingsKv {
         page: await _likeGroups(words, f, platformOnly: true),
         words: words,
       );
+    }
+    if (ftsMode == FtsMode.off) {
+      // 用户主动关闭索引：全部走 LIKE，不尝试 FTS（也绝不置 degraded）。
+      return SearchOutcome(page: await _likeGroups(words, f), words: words);
     }
     if (words.every((String w) => w.runes.length >= 3)) {
       // ── 第一级：仅书名/作者列（fts5 列过滤语法；trigram 分词器实测支持）──
@@ -1941,7 +1952,7 @@ class Queries implements BookRepository, SearchSettingsKv {
 
   /// FTS 检索路径（book_fts + floor_fts trigram）。[match] 由调用方拼好：
   /// 书名级只查 book_fts 并带 {name author} 列过滤（[titleOnly]）；
-  /// 正文级合并 book_fts 与 floor_fts，同一本书可能从多个楼层命中。
+  /// 正文级按档位合并：`full` = book_fts ∪ floor_fts，`book` = 仅 book_fts。
   Future<Paged<GroupHit>> _ftsGroups(
     String match,
     List<String> words,
@@ -1957,20 +1968,31 @@ class Queries implements BookRepository, SearchSettingsKv {
     final String snipExpr = titleOnly
         ? 'NULL'
         : 'snippet(book_fts, 3, \'[\', \']\', \'…\', 16)';
+    final bool withFloor = ftsMode == null || ftsMode == FtsMode.full;
     if (!titleOnly) {
       final List<Variable<Object>> bookVars = <Variable<Object>>[];
       final String bookDims = _dimClauses(f, bookVars);
+      final String bookHits =
+          'SELECT b.id, b.book_group_id, b.date, b.channel, b.quality, '
+          'b.name, b.name_norm, b.author, b.comment, b.floor_ref, '
+          'b.category, b.book_grade, b.post_ref, '
+          '$snipExpr AS snip, ${_flagSql()} AS flag '
+          'FROM book_fts JOIN book_entries b ON b.id = book_fts.rowid '
+          'WHERE book_fts MATCH ?$bookDims';
+      if (!withFloor) {
+        // `book` 档：floor_fts 已删除（或从未建立），只查 book_fts。
+        return _groupedPage(
+          matchedCte: 'WITH matched AS ($bookHits)',
+          cteVars: <Variable<Object>>[Variable<String>(match), ...bookVars],
+          filter: f,
+          words: words,
+        );
+      }
       final List<Variable<Object>> floorVars = <Variable<Object>>[];
       final String floorDims = _dimClauses(f, floorVars);
       return _groupedPage(
         matchedCte:
-            'WITH book_hits AS ('
-            'SELECT b.id, b.book_group_id, b.date, b.channel, b.quality, '
-            'b.name, b.name_norm, b.author, b.comment, b.floor_ref, '
-            'b.category, b.book_grade, b.post_ref, '
-            '$snipExpr AS snip, ${_flagSql()} AS flag '
-            'FROM book_fts JOIN book_entries b ON b.id = book_fts.rowid '
-            'WHERE book_fts MATCH ?$bookDims), '
+            'WITH book_hits AS ($bookHits), '
             'floor_hits AS ('
             'SELECT b.id, b.book_group_id, b.date, b.channel, b.quality, '
             'b.name, b.name_norm, b.author, b.comment, b.floor_ref, '

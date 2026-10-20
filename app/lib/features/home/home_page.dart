@@ -65,6 +65,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// 未构建组的 currentContext 为 null，走比例估算分支）。
   final Map<String, GlobalKey> _groupKeys = <String, GlobalKey>{};
 
+  /// 首启档位弹框只弹一次（同一页面生命周期内防止重复弹出）。
+  bool _choiceDialogShown = false;
+
   @override
   void initState() {
     super.initState();
@@ -134,6 +137,74 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
+  /// 首启选择全文索引档位（docs/2026-10-20_FTS索引可选化改造方案.md §4.3）。
+  ///
+  /// 关掉弹框（返回键 / 点外部）= `off`：内容照常导入，只是没有索引；
+  /// 绝不允许「关掉弹框后书库为空」。
+  Future<void> _showFtsChoiceDialog() async {
+    final AppColors c = AppColors.of(context);
+    final AppTypography t = AppTypography.of(context);
+    final AppSpacing s = AppSpacing.of(context);
+    final bool? build = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) => PopScope<bool>(
+        canPop: true,
+        onPopInvokedWithResult: (bool didPop, bool? result) {
+          if (didPop) {
+            return;
+          }
+          Navigator.of(dialogContext).pop(false);
+        },
+        child: AlertDialog(
+          icon: AppIcon('db', size: AppMetrics.iconBase, color: c.accent),
+          title: Text('建立全文索引？', style: t.headline.copyWith(color: c.text)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '建立后书名、作者和正文搜索更快；不建立可省约 240 MB。',
+                style: t.body.copyWith(color: c.textSecondary),
+              ),
+              SizedBox(height: s.space3),
+              Text(
+                '· 建立（完整）：约 402 MB · 搜索最快',
+                style: t.caption.copyWith(color: c.textMuted),
+              ),
+              SizedBox(height: s.space1),
+              Text(
+                '· 暂不建立：约 160 MB · 正文搜索约 1–2 秒',
+                style: t.caption.copyWith(color: c.textMuted),
+              ),
+              SizedBox(height: s.space3),
+              Text(
+                '之后可在「设置 → 数据与存储」随时切换、删除或重建。',
+                style: t.caption.copyWith(color: c.textMuted),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('暂不建立'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('建立索引（推荐）'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    await ref
+        .read(seedBootstrapProvider.notifier)
+        .chooseFtsMode(build == true ? FtsMode.full : FtsMode.off);
+  }
+
   /// 目录跳转：组头已构建 → ensureVisible；未构建（懒构建屏外）→ 按展平序比例
   /// 估算落点 animateTo，帧后再 ensureVisible 二次定位（两段式与
   /// content_detail_page._scrollToFloor 同构）。
@@ -191,6 +262,14 @@ class _HomePageState extends ConsumerState<HomePage> {
     ref.listen<SeedImportState>(seedBootstrapProvider, (SeedImportState? prev, SeedImportState next) {
       if (next.phase == SeedImportPhase.done && prev?.phase != SeedImportPhase.done) {
         ref.invalidate(queriesProvider);
+      }
+      if (next.phase == SeedImportPhase.awaitingChoice && !_choiceDialogShown) {
+        _choiceDialogShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _showFtsChoiceDialog();
+          }
+        });
       }
     });
     // 采集成功结束后首页仍可能停在旧的 FutureProvider 快照：首页（StatefulShellRoute
@@ -263,6 +342,18 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   Widget _feedSliver(AsyncValue<List<PostCardData>> feed, SeedImportState seed) {
+    // 首启等待用户选索引档位：显示同样的进度面板骨架，避免「书库为空」误导。
+    if (seed.phase == SeedImportPhase.awaitingChoice) {
+      return SliverToBoxAdapter(
+        child: _SeedImportProgress(
+          seedState: const SeedImportState(
+            phase: SeedImportPhase.extracting,
+            progress: 0.01,
+            message: '等待选择全文索引方式…',
+          ),
+        ),
+      );
+    }
     // 导入进行中优先于 feed 各态：库还没就绪时骨架屏/空态都是误导。
     if (seed.isImporting) {
       return SliverToBoxAdapter(child: _SeedImportProgress(seedState: seed));

@@ -1088,6 +1088,10 @@ Stream<MaintenanceEvent> runMaintenance({
       onError: events.sendPort,
       onExit: events.sendPort,
     );
+    // done 延迟到 isolate 真正退出（onExit → null）后再 yield：
+    // 维护 isolate 在 finally 里关闭独立连接，提前 yield 会让调用方立刻开新连接
+    // 撞上「database is locked」（PRAGMA user_version 阶段）。
+    MaintenanceEvent? pendingDone;
     await for (final Object? msg in events) {
       if (msg is MaintenanceEvent) {
         switch (msg.kind) {
@@ -1096,8 +1100,8 @@ Stream<MaintenanceEvent> runMaintenance({
             continue;
           case MaintenanceEventKind.done:
             completed = !msg.cancelled;
-            yield msg;
-            return;
+            pendingDone = msg;
+            continue;
           case MaintenanceEventKind.failed:
             completed = true; // 失败不再补发 cancel
             yield msg;
@@ -1106,10 +1110,14 @@ Stream<MaintenanceEvent> runMaintenance({
             yield msg;
         }
       } else if (msg == null) {
-        yield const MaintenanceEvent(
-          MaintenanceEventKind.failed,
-          message: '维护 isolate 意外退出',
-        );
+        if (pendingDone != null) {
+          yield pendingDone;
+        } else {
+          yield const MaintenanceEvent(
+            MaintenanceEventKind.failed,
+            message: '维护 isolate 意外退出',
+          );
+        }
         return;
       } else if (msg is List) {
         yield MaintenanceEvent(

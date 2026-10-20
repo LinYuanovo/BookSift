@@ -61,6 +61,15 @@ class NoopSeedImporter implements SeedImporter {
   Future<bool> ftsRebuildDone() async => true;
 
   @override
+  Future<FtsMode?> readFtsMode() async => FtsMode.full;
+
+  @override
+  Future<FtsMode?> readFtsBuiltMode() async => FtsMode.full;
+
+  @override
+  Future<void> writeFtsMode(FtsMode desired, {FtsMode? built}) async {}
+
+  @override
   Stream<SeedImportState> rebuildFts() => const Stream<SeedImportState>.empty();
 }
 

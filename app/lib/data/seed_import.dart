@@ -14,7 +14,12 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/constants.dart';
 import 'db/app_database.dart';
+import 'db/fts_schema.dart';
+import 'fts_index.dart';
+import 'fts_mode.dart';
 import 'maintenance.dart' show dedupDoneValue;
+
+export 'fts_mode.dart' show FtsMode;
 
 // M1-③ 种子数据包导入。流程对标 原型 §7.5 / 种子包说明.md §6.2–§6.3：
 //   版本闸门(settings.seed_version vs manifest.pack_version)
@@ -119,7 +124,18 @@ class SeedManifest {
 }
 
 /// 导入阶段（§9.2 seedImportControllerProvider 状态机：idle/importing(progress)/done/error）。
-enum SeedImportPhase { idle, extracting, importing, rebuildingFts, done, error }
+///
+/// [awaitingChoice] = 首启等待用户选择 FTS 索引档位（见 docs/2026-10-20_FTS索引可选化改造方案.md）；
+/// 该阶段不开始导入，选择后由控制器重新进入 [DefaultSeedImporter] 流程。
+enum SeedImportPhase {
+  idle,
+  awaitingChoice,
+  extracting,
+  importing,
+  rebuildingFts,
+  done,
+  error,
+}
 
 /// 导入进度状态。
 class SeedImportState {
@@ -187,6 +203,15 @@ abstract interface class SeedImporter {
 
   /// FTS 后台重建完成标记（settings `fts_rebuild_done`='1'；缺失/中断为 false）。
   Future<bool> ftsRebuildDone();
+
+  /// 期望的 FTS 档位（settings.fts_mode；缺失 = 老库尚未回填）。
+  Future<FtsMode?> readFtsMode();
+
+  /// 实际已建成的档位（settings.fts_built_mode；缺失 = 未知）。
+  Future<FtsMode?> readFtsBuiltMode();
+
+  /// 写档位（[built] 非空时一并落 `fts_built_mode`）。
+  Future<void> writeFtsMode(FtsMode desired, {FtsMode? built});
 
   /// FTS 后台重建/续跑（幂等、批式 yield 进度，§6.3 T8）：lite 档导入完成后
   /// （ftsPrebuilt=false）或重建中断后续跑时调用；full 档预建索引无需调用。
@@ -360,12 +385,13 @@ class DefaultSeedImporter implements SeedImporter {
         manifest,
         full: false,
       );
+      final FtsMode desired = await readFtsMode() ?? FtsMode.full;
       yield SeedImportState(
         phase: SeedImportPhase.done,
         progress: 1,
         message:
             '基础包 v${manifest.version} 导入完成 ${_countsSummary(outcome.counts)}'
-            '${outcome.ftsReady ? '' : '（FTS 待后台重建 rebuildFts()）'}',
+            '${outcome.ftsReady || desired == FtsMode.off ? '' : '（FTS 待后台重建 rebuildFts()）'}',
       );
     } on SeedImportException catch (e) {
       yield SeedImportState(phase: SeedImportPhase.error, message: e.message);
@@ -427,12 +453,13 @@ class DefaultSeedImporter implements SeedImporter {
         embedded,
         full: true,
       );
+      final FtsMode desired = await readFtsMode() ?? FtsMode.full;
       yield SeedImportState(
         phase: SeedImportPhase.done,
         progress: 1,
         message:
             '完整包 v${embedded.version} 导入完成 ${_countsSummary(outcome.counts)}；'
-            '${outcome.ftsReady ? 'FTS 预建已就位，跳过重建' : 'FTS 待后台重建 rebuildFts()'
+            '${outcome.ftsReady || desired == FtsMode.off ? 'FTS 预建已就位，跳过重建' : 'FTS 待后台重建 rebuildFts()'
                       '${outcome.ftsError == null ? '' : '（影子表复制失败: ${outcome.ftsError}）'}'}',
       );
     } on SeedImportException catch (e) {
@@ -462,6 +489,17 @@ class DefaultSeedImporter implements SeedImporter {
       );
       return;
     }
+    final FtsMode desired = await readFtsMode() ?? FtsMode.full;
+    if (desired == FtsMode.off) {
+      // 用户主动关闭索引：删表删触发器，不扫描。
+      await _dropFtsTables();
+      yield const SeedImportState(
+        phase: SeedImportPhase.done,
+        progress: 1,
+        message: '索引未启用（当前档位：关闭）',
+      );
+      return;
+    }
     _ftsRunning = true;
     var completed = false;
     final ReceivePort events = ReceivePort();
@@ -473,9 +511,16 @@ class DefaultSeedImporter implements SeedImporter {
         await _db.customStatement('PRAGMA busy_timeout=8000');
         await _db.customStatement('PRAGMA journal_mode=WAL');
       } catch (_) {}
+      // 确保目标档位的表存在（可能被「删除索引」或切到 book 档删掉过）。
+      await createBookFts((String sql) async => _db.customStatement(sql));
+      if (desired == FtsMode.full) {
+        await createFloorFts((String sql) async => _db.customStatement(sql));
+      } else {
+        await _dropFloorFts();
+      }
       await Isolate.spawn(
         _ftsRebuildIsolate,
-        _FtsJob(dbPath, events.sendPort),
+        _FtsJob(dbPath, events.sendPort, desired),
         onError: events.sendPort,
         onExit: events.sendPort,
       );
@@ -572,11 +617,17 @@ class DefaultSeedImporter implements SeedImporter {
       // full 档：复制 seed 预建 FTS 影子表（独立事务，失败整体回滚 → rebuildFts() 兜底自愈）。
       var ftsReady = false;
       String? ftsError;
-      if (full && manifest.ftsPrebuilt) {
+      final FtsMode desired = await readFtsMode() ?? FtsMode.full;
+      if (full && manifest.ftsPrebuilt && desired != FtsMode.off) {
         try {
           await _db.transaction(() async {
-            await _copyFtsShadowTables();
+            await _copyFtsShadowTables(book: true, floor: desired == FtsMode.full);
+            // 按档保留：book 档复制完只留 book 影子表。
+            if (desired == FtsMode.book) {
+              await _dropFloorFts();
+            }
             await _upsertSettingRaw(ftsRebuildDoneKey, '1');
+            await _upsertSettingRaw(SettingsKeys.ftsBuiltMode, desired.wire);
           });
           ftsReady = true;
         } catch (e) {
@@ -727,8 +778,16 @@ class DefaultSeedImporter implements SeedImporter {
 
   /// full 档：复制 seed 预建 FTS 影子表（external-content rowid 与显式 id 拷贝一致 → 直接可用）。
   /// FTS5 影子 schema 版本不符或复制失败 → 抛出（调用侧回滚并回退后台 rebuildFts()）。
-  Future<void> _copyFtsShadowTables() async {
-    const List<String> tables = <String>['book_fts', 'floor_fts'];
+  ///
+  /// [book] / [floor] 控制复制范围：`book` 档只复制 book 影子表（floor 影子表随后删除）。
+  Future<void> _copyFtsShadowTables({
+    bool book = true,
+    bool floor = true,
+  }) async {
+    final List<String> tables = <String>[
+      if (book) 'book_fts',
+      if (floor) 'floor_fts',
+    ];
     // external-content FTS5 无 _content 影子表（正文存于内容表本体）
     const List<String> suffixes = <String>[
       '_data',
@@ -763,6 +822,52 @@ class DefaultSeedImporter implements SeedImporter {
     }
   }
 
+  /// 只删 floor_fts 与其触发器（book 档减少 ~147MB 存储）。
+  Future<void> _dropFloorFts() async {
+    for (final String name in floorFtsTriggerNames) {
+      await _db.customStatement('DROP TRIGGER IF EXISTS $name');
+    }
+    await _db.customStatement('DROP TABLE IF EXISTS $floorFtsTable');
+  }
+
+  /// 删除两张 FTS 表与全部触发器（`off` 档；释放空间由设置页的 VACUUM 负责）。
+  Future<void> _dropFtsTables() async {
+    for (final String name in allFtsTriggerNames) {
+      await _db.customStatement('DROP TRIGGER IF EXISTS $name');
+    }
+    await _db.customStatement('DROP TABLE IF EXISTS $bookFtsTable');
+    await _db.customStatement('DROP TABLE IF EXISTS $floorFtsTable');
+    await _db.customStatement(
+      "DELETE FROM settings WHERE key = '$ftsRebuildDoneKey'",
+    );
+    await _upsertSettingRaw(SettingsKeys.ftsBuiltMode, FtsMode.off.wire);
+  }
+
+  /// 读期望档位；settings 缺失 → null（老库，由启动侧回填）。
+  @override
+  Future<FtsMode?> readFtsMode() async {
+    final row = await (_db.select(
+      _db.settings,
+    )..where((tbl) => tbl.key.equals(SettingsKeys.ftsMode))).getSingleOrNull();
+    return ftsModeFromWire(row?.value);
+  }
+
+  @override
+  Future<FtsMode?> readFtsBuiltMode() async {
+    final row = await (_db.select(
+      _db.settings,
+    )..where((tbl) => tbl.key.equals(SettingsKeys.ftsBuiltMode))).getSingleOrNull();
+    return ftsModeFromWire(row?.value);
+  }
+
+  @override
+  Future<void> writeFtsMode(FtsMode desired, {FtsMode? built}) async {
+    await _upsertSettingRaw(SettingsKeys.ftsMode, desired.wire);
+    if (built != null) {
+      await _upsertSettingRaw(SettingsKeys.ftsBuiltMode, built.wire);
+    }
+  }
+
   /// seed.posts 是否已带分类列（当前打包 ETL 未产出 → 导入侧按 post_type 派生；
   /// 未来 ETL 补上（§7.4 Phase S2）则直迁，无需改导入代码）。
   Future<bool> _seedPostsHasKindColumns() async {
@@ -786,44 +891,22 @@ class DefaultSeedImporter implements SeedImporter {
     'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   );
 
-  // 触发器 DDL 与 app_database.dart _createFts 保持一致（那里是权威源；本文件因跨库私有性复制）。
-  static const List<String> _ftsTriggerDdl = <String>[
-    '''CREATE TRIGGER IF NOT EXISTS book_entries_ai AFTER INSERT ON book_entries BEGIN
-       INSERT INTO book_fts(rowid,name,author,recommender,comment)
-       VALUES (new.id,new.name,new.author,new.recommender,new.comment); END''',
-    '''CREATE TRIGGER IF NOT EXISTS book_entries_ad AFTER DELETE ON book_entries BEGIN
-       INSERT INTO book_fts(book_fts,rowid,name,author,recommender,comment)
-       VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment); END''',
-    '''CREATE TRIGGER IF NOT EXISTS book_entries_au AFTER UPDATE ON book_entries BEGIN
-       INSERT INTO book_fts(book_fts,rowid,name,author,recommender,comment)
-       VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment);
-       INSERT INTO book_fts(rowid,name,author,recommender,comment)
-       VALUES (new.id,new.name,new.author,new.recommender,new.comment); END''',
-    '''CREATE TRIGGER IF NOT EXISTS floors_ai AFTER INSERT ON floors BEGIN
-       INSERT INTO floor_fts(rowid,text) VALUES (new.id,new.text); END''',
-    '''CREATE TRIGGER IF NOT EXISTS floors_ad AFTER DELETE ON floors BEGIN
-       INSERT INTO floor_fts(floor_fts,rowid,text) VALUES ('delete',old.id,old.text); END''',
-    '''CREATE TRIGGER IF NOT EXISTS floors_au AFTER UPDATE ON floors BEGIN
-       INSERT INTO floor_fts(floor_fts,rowid,text) VALUES ('delete',old.id,old.text);
-       INSERT INTO floor_fts(rowid,text) VALUES (new.id,new.text); END''',
-  ];
-
+  // 触发器 DDL 的权威源是 db/fts_schema.dart；本文件只用触发器名单做摘除/恢复。
   Future<void> _dropFtsTriggers() async {
-    for (final String name in <String>[
-      'book_entries_ai',
-      'book_entries_ad',
-      'book_entries_au',
-      'floors_ai',
-      'floors_ad',
-      'floors_au',
-    ]) {
+    for (final String name in allFtsTriggerNames) {
       await _db.customStatement('DROP TRIGGER IF EXISTS $name');
     }
   }
 
   Future<void> _createFtsTriggers() async {
-    for (final String ddl in _ftsTriggerDdl) {
-      await _db.customStatement(ddl);
+    await createBookFtsTriggers(
+      (String sql) async => _db.customStatement(sql),
+    );
+    final FtsMode desired = await readFtsMode() ?? FtsMode.full;
+    if (desired == FtsMode.full) {
+      await createFloorFtsTriggers(
+        (String sql) async => _db.customStatement(sql),
+      );
     }
   }
 
@@ -1006,10 +1089,13 @@ class _FtsEvent {
 }
 
 class _FtsJob {
-  const _FtsJob(this.dbPath, this.events);
+  const _FtsJob(this.dbPath, this.events, this.mode);
 
   final String dbPath;
   final SendPort events;
+
+  /// 重建档位：`book` 只重 book_fts；`full` 两张都重。
+  final FtsMode mode;
 }
 
 /// 后台 isolate 入口：独立 drift 连接（WAL + busy_timeout，与主连接并发安全），
@@ -1039,14 +1125,17 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
   );
   final Stopwatch sw = Stopwatch()..start();
   const int batch = DefaultSeedImporter.ftsRebuildBatch;
+  final bool withFloor = job.mode == FtsMode.full;
   try {
     // 幂等起点：清空旧索引（取消后重跑 / 升级重导后重建 都从这里开始）。
     await db.customStatement(
       "INSERT INTO book_fts(book_fts) VALUES('delete-all')",
     );
-    await db.customStatement(
-      "INSERT INTO floor_fts(floor_fts) VALUES('delete-all')",
-    );
+    if (withFloor) {
+      await db.customStatement(
+        "INSERT INTO floor_fts(floor_fts) VALUES('delete-all')",
+      );
+    }
     await db.customStatement(
       "DELETE FROM settings WHERE key = '${DefaultSeedImporter.ftsRebuildDoneKey}'",
     );
@@ -1055,11 +1144,13 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
           .customSelect('SELECT COALESCE(MAX(id),0) AS n FROM book_entries')
           .getSingle(),
     );
-    final int maxFloorId = _row(
-      await db
-          .customSelect('SELECT COALESCE(MAX(id),0) AS n FROM floors')
-          .getSingle(),
-    );
+    final int maxFloorId = withFloor
+        ? _row(
+            await db
+                .customSelect('SELECT COALESCE(MAX(id),0) AS n FROM floors')
+                .getSingle(),
+          )
+        : 0;
     final int totalBooks = _row(
       await db
           .customSelect(
@@ -1067,13 +1158,15 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
           )
           .getSingle(),
     );
-    final int totalFloors = _row(
-      await db
-          .customSelect(
-            'SELECT COUNT(*) AS n FROM floors WHERE id <= $maxFloorId',
+    final int totalFloors = withFloor
+        ? _row(
+            await db
+                .customSelect(
+                  'SELECT COUNT(*) AS n FROM floors WHERE id <= $maxFloorId',
+                )
+                .getSingle(),
           )
-          .getSingle(),
-    );
+        : 0;
     final int total = totalBooks + totalFloors;
     var processed = 0;
     // book_fts：id 游标分批（external-content 表直插 rowid，绕过触发器）。
@@ -1112,39 +1205,41 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
       // 否则控制端口的 cancel 消息在重建结束前得不到处理。
       await Future<void>.delayed(Duration.zero);
     }
-    // floor_fts：同型。
-    cursor = 0;
-    while (!cancelled) {
-      final int? maxId =
-          (await db
-                      .customSelect(
-                        'SELECT MAX(id) AS m FROM (SELECT id FROM floors '
-                        'WHERE id > $cursor AND id <= $maxFloorId '
-                        'ORDER BY id LIMIT $batch)',
-                      )
-                      .getSingle())
-                  .data['m']
-              as int?;
-      if (maxId == null) {
-        break;
+    // floor_fts：同型（book 档跳过；floor_fts 已由档位切换时删除）。
+    if (withFloor) {
+      cursor = 0;
+      while (!cancelled) {
+        final int? maxId =
+            (await db
+                        .customSelect(
+                          'SELECT MAX(id) AS m FROM (SELECT id FROM floors '
+                          'WHERE id > $cursor AND id <= $maxFloorId '
+                          'ORDER BY id LIMIT $batch)',
+                        )
+                        .getSingle())
+                    .data['m']
+                as int?;
+        if (maxId == null) {
+          break;
+        }
+        await db.customStatement(
+          'INSERT INTO floor_fts(rowid,text) '
+          'SELECT id, text FROM floors '
+          'WHERE id > $cursor AND id <= $maxId',
+        );
+        processed += _row(
+          await db.customSelect('SELECT changes() AS n').getSingle(),
+        );
+        cursor = maxId;
+        job.events.send(
+          _FtsEvent(
+            _FtsEventKind.progress,
+            progress: total == 0 ? 1 : processed / total,
+            message: 'floor_fts $processed/$total',
+          ),
+        );
+        await Future<void>.delayed(Duration.zero); // 同上：让出事件循环收 cancel
       }
-      await db.customStatement(
-        'INSERT INTO floor_fts(rowid,text) '
-        'SELECT id, text FROM floors '
-        'WHERE id > $cursor AND id <= $maxId',
-      );
-      processed += _row(
-        await db.customSelect('SELECT changes() AS n').getSingle(),
-      );
-      cursor = maxId;
-      job.events.send(
-        _FtsEvent(
-          _FtsEventKind.progress,
-          progress: total == 0 ? 1 : processed / total,
-          message: 'floor_fts $processed/$total',
-        ),
-      );
-      await Future<void>.delayed(Duration.zero); // 同上：让出事件循环收 cancel
     }
     if (cancelled) {
       job.events.send(
@@ -1153,6 +1248,10 @@ Future<void> _ftsRebuildIsolate(_FtsJob job) async {
     } else {
       await db.customStatement(
         "INSERT INTO settings(key,value) VALUES('${DefaultSeedImporter.ftsRebuildDoneKey}','1') "
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+      );
+      await db.customStatement(
+        "INSERT INTO settings(key,value) VALUES('${SettingsKeys.ftsBuiltMode}','${job.mode.wire}') "
         'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
       );
       job.events.send(

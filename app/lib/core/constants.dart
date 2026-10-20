@@ -47,6 +47,13 @@ abstract final class SettingsKeys {
   static const String railWidth = 'rail_width';
   static const String railWidthExpanded = 'rail_width_expanded';
   static const String detailFraction = 'detail_fraction';
+
+  /// FTS 索引期望档位：`off` | `book` | `full`（lib/data/fts_index.dart 的 FtsMode）。
+  /// 缺失 = 老库，按实际能力回填（见 FtsIndexBootstrap），不弹首启框、不重建。
+  static const String ftsMode = 'fts_mode';
+
+  /// 实际已建成的档位（启动自愈 / 中断续跑判据；由 FtsIndexService 落账）。
+  static const String ftsBuiltMode = 'fts_built_mode';
 }
 
 /// origin 徽标取值（§7.2 origin 字段 / 设计系统 §4：内置灰 / 自采绿 / 导入蓝）。

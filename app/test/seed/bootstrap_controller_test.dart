@@ -71,6 +71,24 @@ class ScriptedImporter implements SeedImporter {
   @override
   Future<bool> ftsRebuildDone() async => ftsDone;
 
+  /// 测试默认：视为老库已回填 full（不进入 awaitingChoice）。
+  FtsMode? ftsMode = FtsMode.full;
+  FtsMode? builtMode = FtsMode.full;
+
+  @override
+  Future<FtsMode?> readFtsMode() async => ftsMode;
+
+  @override
+  Future<FtsMode?> readFtsBuiltMode() async => builtMode;
+
+  @override
+  Future<void> writeFtsMode(FtsMode desired, {FtsMode? built}) async {
+    ftsMode = desired;
+    if (built != null) {
+      builtMode = built;
+    }
+  }
+
   @override
   Stream<SeedImportState> rebuildFts() {
     ftsCalls++;
@@ -198,5 +216,35 @@ void main() {
     await c.read(seedBootstrapProvider.notifier).ensureStarted();
     expect(c.read(seedBootstrapProvider).phase, SeedImportPhase.error);
     expect(c.read(seedBootstrapProvider).message, contains('种子导入失败'));
+  });
+
+  test('首启未选档位 → awaitingChoice 且不导入；chooseFtsMode(off) 后继续导入', () async {
+    final ScriptedImporter imp = ScriptedImporter(
+      needsBasic: true,
+      basicStates: const <SeedImportState>[kDone],
+    )..ftsMode = null;
+    final ProviderContainer c = boot(imp, <SeedImportState>[]);
+    final SeedBootstrapController ctl = c.read(seedBootstrapProvider.notifier);
+
+    await ctl.ensureStarted();
+    expect(c.read(seedBootstrapProvider).phase, SeedImportPhase.awaitingChoice);
+    expect(imp.basicCalls, 0, reason: '未选档位不得开始导入');
+
+    await ctl.chooseFtsMode(FtsMode.off);
+    expect(imp.basicCalls, 1);
+    expect(imp.ftsMode, FtsMode.off);
+    expect(c.read(seedBootstrapProvider).phase, SeedImportPhase.done);
+  });
+
+  test('老库（无 fts_mode）→ 按能力回填 full，不弹框、不重建', () async {
+    final ScriptedImporter imp = ScriptedImporter()
+      ..ftsMode = null
+      ..builtMode = null;
+    final ProviderContainer c = boot(imp, <SeedImportState>[]);
+    await c.read(seedBootstrapProvider.notifier).ensureStarted();
+    expect(c.read(seedBootstrapProvider).phase, SeedImportPhase.done);
+    expect(imp.ftsMode, FtsMode.full, reason: '测试环境缺省按 full 回填');
+    expect(imp.builtMode, FtsMode.full);
+    expect(imp.ftsCalls, 0);
   });
 }

@@ -199,15 +199,30 @@ abstract final class HeadlessEnv {
           .getSingle();
       final int userVersion = v.data.values.first as int;
       final Map<String, int> rows = await tableRowCounts(db);
-      const Set<String> requiredTables = <String>{
+      // FTS 档位（docs/2026-10-20_FTS索引可选化改造方案.md §7）：
+      // 键缺失 = 老库 → 沿用旧口径（要求两张表 + 6 个触发器）；
+      // 显式 off/book → 不要求 floor_fts/floors_*。
+      String? ftsModeWire;
+      try {
+        final QueryRow row = await db
+            .customSelect(
+              "SELECT value AS v FROM settings WHERE key = 'fts_mode'",
+            )
+            .getSingle();
+        ftsModeWire = row.read<String>('v');
+      } catch (_) {
+        ftsModeWire = null; // settings 缺失或无该键
+      }
+      final bool needsFloorFts = ftsModeWire != 'off' && ftsModeWire != 'book';
+      final Set<String> requiredTables = <String>{
         'bookmarks',
         'book_entries',
         'book_groups',
-        'book_fts',
+        if (ftsModeWire != 'off') 'book_fts',
         'collection_logs',
         'collection_state',
         'favorites',
-        'floor_fts',
+        if (needsFloorFts) 'floor_fts',
         'floors',
         'images',
         'posts',
@@ -216,13 +231,13 @@ abstract final class HeadlessEnv {
       };
       final List<String> missingTables = requiredTables.difference(rows.keys.toSet()).toList()
         ..sort();
-      const Set<String> requiredTriggers = <String>{
-        'book_entries_ai',
-        'book_entries_ad',
-        'book_entries_au',
-        'floors_ai',
-        'floors_ad',
-        'floors_au',
+      final Set<String> requiredTriggers = <String>{
+        if (ftsModeWire != 'off') ...<String>[
+          'book_entries_ai',
+          'book_entries_ad',
+          'book_entries_au',
+        ],
+        if (needsFloorFts) ...<String>['floors_ai', 'floors_ad', 'floors_au'],
       };
       final List<QueryRow> triggerRows = await db
           .customSelect(

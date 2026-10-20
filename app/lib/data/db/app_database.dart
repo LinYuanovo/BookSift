@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'fts_schema.dart';
+
 part 'app_database.g.dart';
 
 // 表结构逐值搬运自原型文档 §7.2（drift schema），列注释即文档原注。
@@ -353,51 +355,10 @@ class AppDatabase extends _$AppDatabase {
 ///
 /// sqlite3_flutter_libs 捆绑 SQLite ≥3.34，trigram 可用，不受 Android 系统 SQLite 版本影响；
 /// 检索策略（≥3 字走 FTS、2 字词 LIKE 兜底）属 M1-④ SearchRepository。
-Future<void> _createFts(Future<void> Function(String) exec) async {
-  // 书级索引：书名+作者+推荐人+推荐语
-  await exec('''
-    CREATE VIRTUAL TABLE IF NOT EXISTS book_fts USING fts5(
-      name, author, recommender, comment,
-      content='book_entries', content_rowid='id',
-      tokenize='trigram'
-    )''');
-  // 楼层全文索引（帖级搜索）
-  await exec('''
-    CREATE VIRTUAL TABLE IF NOT EXISTS floor_fts USING fts5(
-      text, content='floors', content_rowid='id', tokenize='trigram'
-    )''');
-  // external-content 同步触发器（采集/导入增量自动维护）
-  await exec(
-    '''CREATE TRIGGER IF NOT EXISTS book_entries_ai AFTER INSERT ON book_entries BEGIN
-    INSERT INTO book_fts(rowid,name,author,recommender,comment)
-    VALUES (new.id,new.name,new.author,new.recommender,new.comment); END''',
-  );
-  await exec(
-    '''CREATE TRIGGER IF NOT EXISTS book_entries_ad AFTER DELETE ON book_entries BEGIN
-    INSERT INTO book_fts(book_fts,rowid,name,author,recommender,comment)
-    VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment); END''',
-  );
-  await exec(
-    '''CREATE TRIGGER IF NOT EXISTS book_entries_au AFTER UPDATE ON book_entries BEGIN
-    INSERT INTO book_fts(book_fts,rowid,name,author,recommender,comment)
-    VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment);
-    INSERT INTO book_fts(rowid,name,author,recommender,comment)
-    VALUES (new.id,new.name,new.author,new.recommender,new.comment); END''',
-  );
-  await exec(
-    '''CREATE TRIGGER IF NOT EXISTS floors_ai AFTER INSERT ON floors BEGIN
-    INSERT INTO floor_fts(rowid,text) VALUES (new.id,new.text); END''',
-  );
-  await exec(
-    '''CREATE TRIGGER IF NOT EXISTS floors_ad AFTER DELETE ON floors BEGIN
-    INSERT INTO floor_fts(floor_fts,rowid,text) VALUES ('delete',old.id,old.text); END''',
-  );
-  await exec(
-    '''CREATE TRIGGER IF NOT EXISTS floors_au AFTER UPDATE ON floors BEGIN
-    INSERT INTO floor_fts(floor_fts,rowid,text) VALUES ('delete',old.id,old.text);
-    INSERT INTO floor_fts(rowid,text) VALUES (new.id,new.text); END''',
-  );
-}
+///
+/// 表结构/触发器 DDL 的单一出处是 `fts_schema.dart`（`data/fts_index.dart` 亦复用同一份，
+/// 保证「首建 / 重建 / 删除」三处逐字一致）。
+Future<void> _createFts(Future<void> Function(String) exec) => createAllFts(exec);
 
 /// 查询索引（schema v4）：服务 queries.dart 检索/榜单/时间线/五维计数、maintenance.dart
 /// 去重、ingest.dart 聚合重算的实际 WHERE/ORDER BY/GROUP BY 列。真机 app.sqlite 此前

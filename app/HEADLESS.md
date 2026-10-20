@@ -313,6 +313,8 @@ JSONL 回放不需要 `--db`，并校验每行的 `RunEvent` 字段契约。
 10. `run` 不关闭调用方注入的 `TiebaApi`。
 11. `--json` 下 stdout 只能是结果 JSON 本身，任何诊断都走 stderr。
 12. headless 测试一律 plain `test()`；碰真实 IO 的断言不得进 `testWidgets`（`test/TESTING.md §1`）。
+13. `Queries(db)` 不传 `ftsMode` 时行为与旧版一致（尝试 FTS，异常才 `degraded=true`）；显式档位时 `off` 直接走 LIKE 且**不置 degraded**（用户主动选择，不是故障）。
+14. `doctor` 的 FTS 表/触发器检查必须读取 `settings.fts_mode`：`off` 不要求任何 FTS 表，`book` 只要求 `book_fts` 与 `book_entries_*`，键缺失（老库）才沿用全量 6 触发的旧口径。
 
 ---
 
