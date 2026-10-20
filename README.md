@@ -71,7 +71,7 @@
 
 发布页不一定同时提供所有平台的包；每个文件旁都有同名 `.sha256`，建议用 `certutil -hashfile <文件> SHA256` 校验。
 
-应用内更新使用 GitHub Releases + 静态 `version.json` 双源检查；下载采用 HTTP `Range` 分块并发，持久化 manifest 与 `.part`，取消或断网可断点续传，完成后做 SHA-256 校验并复用 `update-cache` 中的完整文件。缓存位于应用支持目录下的 `update-cache`，只缓存程序包。Android 完成下载后唤起安装器，桌面端打开对应包，iOS 仅分享或手动安装，不承诺静默安装。详见[在线更新契约](website/guide/update.md)。
+应用内更新详见[在线更新契约](website/guide/update.md)。
 
 Android 安装后首次启动会校验并导入内置种子包、建立全文索引，期间无需联网，请等待导入完成。安装和首启不会覆盖收藏、书签、搜索历史或采集数据。
 
@@ -215,14 +215,6 @@ booksift/
 
 </details>
 
-## 数据与许可证
-
-- 内置数据来自贴吧公开扫书相关帖子，应用只做离线整理与检索；帖子内容版权归原作者和发帖人所有。
-- 采集和在线搜索使用非公开的逆向接口，可能随时失效；请低频、按需使用并自行承担风控风险。
-- 应用默认匿名，不上传本地数据；BDUSS 只存设备本地系统加密存储，不入库、不写日志、不上传。
-- 本项目采用 [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)。
-- 贴吧接口的 protobuf 定义与协议行为参考 [aiotieba](https://github.com/lumina37/aiotieba)。
-
 <details>
 <summary>文档站本地预览</summary>
 
@@ -234,3 +226,11 @@ npm run docs:build     # 产物 → .vitepress/dist
 ```
 
 </details>
+
+## 数据与许可证
+
+- 内置数据来自贴吧公开扫书相关帖子，应用只做离线整理与检索；帖子内容版权归原作者和发帖人所有。
+- 采集和在线搜索使用非公开的逆向接口，可能随时失效；请低频、按需使用并自行承担风控风险。
+- 应用默认匿名，不上传本地数据；BDUSS 只存设备本地系统加密存储，不入库、不写日志、不上传。
+- 本项目采用 [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)。
+- 贴吧接口的 protobuf 定义与协议行为参考 [aiotieba](https://github.com/lumina37/aiotieba)。
