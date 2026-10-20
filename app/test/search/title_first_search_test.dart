@@ -41,6 +41,23 @@ void main() {
 
   tearDown(() async => db.close());
 
+  Future<int> sharedFloor(String text, String date) async {
+    final int postId = await db.into(db.posts).insert(
+          PostsCompanion.insert(
+            channel: 'yy小说吧',
+            title: const Value<String?>('正文召回夹具'),
+            date: Value<String?>(date),
+          ),
+        );
+    return db.into(db.floors).insert(
+          FloorsCompanion.insert(
+            postId: postId,
+            seq: 1,
+            content: Value<String>(text),
+          ),
+        );
+  }
+
   Future<void> insertEntry({
     required String name,
     required String nameNorm,
@@ -50,24 +67,12 @@ void main() {
     String? comment,
     String? date = '2025-04-20',
     String? floorText,
+    int? floorId,
   }) =>
       (() async {
-        int? floorId;
-        if (floorText != null) {
-          final int postId = await db.into(db.posts).insert(
-                PostsCompanion.insert(
-                  channel: 'yy小说吧',
-                  title: const Value<String?>('正文召回夹具'),
-                  date: Value<String?>(date),
-                ),
-              );
-          floorId = await db.into(db.floors).insert(
-                FloorsCompanion.insert(
-                  postId: postId,
-                  seq: 1,
-                  content: Value<String>(floorText),
-                ),
-              );
+        int? resolvedFloorId = floorId;
+        if (resolvedFloorId == null && floorText != null) {
+          resolvedFloorId = await sharedFloor(floorText, date ?? '2025-04-20');
         }
         await db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
               name: name,
@@ -78,7 +83,7 @@ void main() {
               channel: 'yy小说吧',
               contentHash: hash,
               date: Value<String?>(date),
-              floorRef: Value<int?>(floorId),
+              floorRef: Value<int?>(resolvedFloorId),
             ));
       })();
 
@@ -87,25 +92,29 @@ void main() {
   group('同层正文不再污染书名检索（第一级）', () {
     setUp(() async {
       // 同层 3 本：书名都不含「护林员」，但共用一段含「护林员」的整层正文。
+      final int floorId = await sharedFloor(kFloorComment, '2025-04-20');
       await insertEntry(
         name: '《从气运词条开始成就人皇》',
         nameNorm: '从气运词条开始成就人皇',
         hash: 'h1',
-        comment: kFloorComment,
+        comment: '这本人皇走气运流，人物和节奏都还行。',
+        floorId: floorId,
         date: '2025-04-20',
       );
       await insertEntry(
         name: '《从红楼开始纵横武侠世界》',
         nameNorm: '从红楼开始纵横武侠世界',
         hash: 'h2',
-        comment: kFloorComment,
+        comment: '这本红楼同人偏武侠世界，书荒时能看。',
+        floorId: floorId,
         date: '2025-04-19',
       );
       await insertEntry(
         name: '《我在乡下种田》',
         nameNorm: '我在乡下种田',
         hash: 'h3',
-        comment: kFloorComment,
+        comment: '这本乡下种田偏日常，节奏比较慢。',
+        floorId: floorId,
         date: '2025-04-18',
       );
       // 书名命中的那一本。
@@ -159,10 +168,15 @@ void main() {
       expect(out.page.items.single.snippet, isNull, reason: '既不锚书名也不锚查询词 → null，而非正文开头');
     });
 
-    test('2 字词标题命中后，无平台字段时仍只返回书名级', () async {
+    test('2 字词标题命中保留，正文命中只补本条目', () async {
       final SearchOutcome out = await queries.searchBooks(filter('护林'));
-      expect(out.page.total, 1);
-      expect(out.page.items.single.name, contains('我一个护林员'));
+      expect(out.page.items.map((GroupHit g) => g.nameNorm), <String>[
+        '我一个护林员',
+      ]);
+      expect(
+        out.page.items.map((GroupHit g) => g.nameNorm),
+        isNot(contains('从气运词条开始成就人皇')),
+      );
       expect(out.usedFts, isFalse, reason: '2 字词 trigram 恒零命中 → LIKE');
     });
 

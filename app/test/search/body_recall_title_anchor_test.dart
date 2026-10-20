@@ -38,12 +38,14 @@ void main() {
     required String hash,
     required int? postId,
     required int? floorId,
+    String? author,
     String? comment,
     int? groupId,
   }) =>
       db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
             name: name,
             nameNorm: name.replaceAll(RegExp(r'[《》]'), ''),
+            author: Value<String?>(author),
             channel: 'yy小说吧',
             contentHash: hash,
             date: const Value<String?>('2025-04-20'),
@@ -101,18 +103,48 @@ void main() {
     );
   });
 
-  test('精确书名命中只返回标题级，不被同楼正文带出', () async {
+  test('标题命中保留，同时补充本条目正文命中的书', () async {
     final int postId = await addPost('月度扫书');
-    final int floorId = await addFloor(postId, '《甲乙丙丁》发在起点，值得一看。');
+    final int floorId = await addFloor(postId, '《甲乙丙丁》正文里提到了甲乙丙丁。');
     await addEntry(
       name: '《甲乙丙丁》',
       hash: 'anchor-exact',
       postId: postId,
       floorId: floorId,
+      comment: '《甲乙丙丁》自己的推荐语。',
+    );
+
+    final int bodyPost = await addPost('角色讨论');
+    final int bodyFloor = await addFloor(bodyPost, '正文里提到了甲乙丙丁这个角色。');
+    await addEntry(
+      name: '《正文命中书》',
+      hash: 'anchor-body-hit',
+      postId: bodyPost,
+      floorId: bodyFloor,
+      comment: '正文里提到了甲乙丙丁这个角色。',
+    );
+
+    final SearchOutcome out = await queries.searchBooks(
+      const SearchFilter(query: '甲乙丙丁'),
+    );
+    expect(
+      out.page.items.map((GroupHit g) => g.nameNorm),
+      containsAll(<String>['正文命中书', '甲乙丙丁']),
+    );
+  });
+
+  test('标题命中时仍排除同楼共享正文的邻书', () async {
+    final int postId = await addPost('多书楼');
+    final int floorId = await addFloor(postId, '《甲乙丙丁》和《邻书》都在这一楼。');
+    await addEntry(
+      name: '《甲乙丙丁》',
+      hash: 'anchor-shared-title',
+      postId: postId,
+      floorId: floorId,
     );
     await addEntry(
-      name: '《起点之外》',
-      hash: 'anchor-other',
+      name: '《邻书》',
+      hash: 'anchor-shared-neighbor',
       postId: postId,
       floorId: floorId,
     );

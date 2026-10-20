@@ -1443,22 +1443,21 @@ class Queries implements BookRepository, SearchSettingsKv {
   /// book_entries.comment 存的是**整层帖子正文**——一个扫书楼里的所有书共用同一段
   /// comment，直接参与书名检索就会把同楼其它书一并召回（搜「我一个护林员」连
   /// 《从气运词条开始成就人皇》《从红楼开始纵横武侠世界》都出来）。故：
-  ///  · 精确书名/作者命中：只返回标题级结果，不再看正文。
+  ///  · 精确书名/作者命中：标题结果保留，但不能截断其它书的正文命中。
+  ///  · 标题命中后只补本条目正文；残余词允许跨楼层召回。
   ///  · 标题命中后，另补扫书正文中的结构化平台字段（`平台：起点`）；
   ///    平台名是扫书元数据，不是书名片段，不能被标题误命中截断。
   ///  · 标题零命中、推荐人命中、普通正文命中：走通用正文召回。
   ///  · 推荐人只认 book_entries.recommender（帖子 posts.author 不参与召回）。
-  ///  · 精确书名仍优先；正文召回通过 hitCount 分组和现有排序自然排在其后。
-  /// 摘要口径同样分级：第一级以**该书书名**为锚在 comment 上截窗（[_groupedPage]），
-  /// 且不让 FTS 的 snippet(comment) 生效——列过滤下 snippet 会退回 comment 开头，
-  /// 给书名命中的书配一段无关楼层文字。
+  ///  · 标题与正文结果按书组合并；正文命中保留，标题命中只影响摘要口径。
+  /// 摘要口径：标题命中以书名本身为锚；正文命中用命中词截窗。
   @override
   Future<SearchOutcome> searchBooks(SearchFilter f) async {
     final List<String> words = tokenizeQuery(f.query);
     if (words.isEmpty) {
       return SearchOutcome(page: await _browseGroups(f), words: words);
     }
-    if (await _hasPlatformFieldMatch(words, f)) {
+    if (_isPlatformWord(words) && await _hasPlatformFieldMatch(words, f)) {
       return SearchOutcome(
         page: await _likeGroups(words, f, platformOnly: true),
         words: words,
@@ -1468,7 +1467,7 @@ class Queries implements BookRepository, SearchSettingsKv {
       // ── 第一级：仅书名/作者列（fts5 列过滤语法；trigram 分词器实测支持）──
       final SearchOutcome titleLevel = await _titleLevelFts(words, f);
       if (titleLevel.page.total > 0) {
-        return titleLevel;
+        return _mergeTitleWithBody(titleLevel, words, f);
       }
       final Paged<GroupHit> recommenderLevel = await _likeGroups(
         words,
@@ -1479,9 +1478,7 @@ class Queries implements BookRepository, SearchSettingsKv {
         return SearchOutcome(page: recommenderLevel, words: words);
       }
       // ── 未精确命中书名/作者：评语、推荐人、楼层正文合并召回 ──
-      final String match = words
-          .map((String w) => '"${w.replaceAll('"', '""')}"')
-          .join(' AND ');
+      final String match = _bodyFtsMatch(words);
       SearchOutcome? fts;
       try {
         fts = SearchOutcome(
@@ -1513,9 +1510,6 @@ class Queries implements BookRepository, SearchSettingsKv {
       f,
       titleOnly: true,
     );
-    if (titleLevel.total > 0) {
-      return SearchOutcome(page: titleLevel, words: words);
-    }
     final Paged<GroupHit> recommenderLevel = await _likeGroups(
       words,
       f,
@@ -1524,10 +1518,40 @@ class Queries implements BookRepository, SearchSettingsKv {
     if (recommenderLevel.total > 0 && titleLevel.total == 0) {
       return SearchOutcome(page: recommenderLevel, words: words);
     }
+    if (titleLevel.total > 0) {
+      return _mergeTitleWithBody(
+        SearchOutcome(page: titleLevel, words: words),
+        words,
+        f,
+        residualOnly: true,
+      );
+    }
     return SearchOutcome(
       page: await _likeGroups(words, f),
       words: words,
     );
+  }
+
+  /// 仅对明确的平台名启用“平台字段优先”，避免普通角色名被 `平台：…`
+  /// 特判截断。平台词列表与当前种子数据的 `平台：xxx` 标注同源。
+  static bool _isPlatformWord(List<String> words) {
+    if (words.length != 1) {
+      return false;
+    }
+    const Set<String> platforms = <String>{
+      '起点',
+      '番茄',
+      '飞卢',
+      '纵横',
+      '逐浪',
+      '17k',
+      '晋江',
+      '刺猬猫',
+      '掌阅',
+      'QQ阅读',
+      'qq阅读',
+    };
+    return platforms.contains(words.single.trim());
   }
 
   /// 平台字段是正文中的明确元数据（`平台：起点` / `平台:番茄`），
@@ -1553,6 +1577,15 @@ class Queries implements BookRepository, SearchSettingsKv {
     return r != null;
   }
 
+  /// 正文 FTS MATCH：每个空格分词都是短语，多个词之间 AND。
+  static String _bodyFtsMatch(List<String> words) => words
+      .map((String w) => '"${w.replaceAll('"', '""')}"')
+      .join(' AND ');
+
+  static String _titleFtsMatch(List<String> words) => words
+      .map((String w) => '{name author} : "${w.replaceAll('"', '""')}"')
+      .join(' AND ');
+
   /// 第一级（仅书名/作者）的 FTS 路径：fts5 列过滤语法 {name author} : "词"，多词 AND。
   /// 列过滤不可用（老 SQLite / MATCH 语法异常）时退回四列 LIKE，并如实记 degraded
   /// （UI 出「已降级为慢速搜索」）。抽成方法而非内联 try/catch：Dart 的 final 局部变量
@@ -1561,9 +1594,7 @@ class Queries implements BookRepository, SearchSettingsKv {
     List<String> words,
     SearchFilter f,
   ) async {
-    final String titleMatch = words
-        .map((String w) => '{name author} : "${w.replaceAll('"', '""')}"')
-        .join(' AND ');
+    final String titleMatch = _titleFtsMatch(words);
     try {
       return SearchOutcome(
         page: await _ftsGroups(titleMatch, words, f, titleOnly: true),
@@ -1577,6 +1608,130 @@ class Queries implements BookRepository, SearchSettingsKv {
         words: words,
       );
     }
+  }
+
+  /// 标题命中后，正文补充允许使用“残余词”：把标题里已明确的词去掉，
+  /// 只保留其它正文可能出现的部分（如标题含「南宫」，正文补「玉」）。
+  List<String> _residualWords(List<String> words, List<GroupHit> titleHits) {
+    if (titleHits.isEmpty) {
+      return const <String>[];
+    }
+    final String title = titleHits.first.nameNorm.toLowerCase();
+    final List<String> residual = words
+        .where((String w) => !title.contains(w.toLowerCase()))
+        .map((String w) => w.toLowerCase())
+        .toSet()
+        .toList();
+    if (residual.isEmpty) {
+      return const <String>[];
+    }
+    return residual;
+  }
+
+  /// 标题命中后的正文补充：默认只认条目自己的 comment；短词需要残余词
+  /// 跨所属楼层召回时才启用 [includeFloorText]。
+  Future<Paged<GroupHit>> _likeCommentGroups(
+    List<String> words,
+    SearchFilter f, {
+    Set<String> excludedNames = const <String>{},
+    bool includeFloorText = false,
+  }) {
+    final List<Variable<Object>> vars = <Variable<Object>>[];
+    final List<String> bodyConds = <String>[];
+    for (final String w in words) {
+      bodyConds.add(
+        includeFloorText
+            ? '(b.comment LIKE ? ESCAPE \'\\\' OR '
+                  'EXISTS (SELECT 1 FROM floors fl WHERE fl.id = b.floor_ref '
+                  'AND fl.text LIKE ? ESCAPE \'\\\'))'
+            : 'b.comment LIKE ? ESCAPE \'\\\'',
+      );
+      vars.add(Variable<String>(_likeArg(w)));
+      if (includeFloorText) {
+        vars.add(Variable<String>(_likeArg(w)));
+      }
+    }
+    final String body = bodyConds.join(' AND ');
+    final String conds = excludedNames.isEmpty
+        ? body
+        : '$body AND b.name_norm NOT IN ('
+              '${List<String>.filled(excludedNames.length, '?').join(', ')})';
+    if (excludedNames.isNotEmpty) {
+      for (final String name in excludedNames) {
+        vars.add(Variable<String>(name));
+      }
+    }
+    final String dims = _dimClauses(f, vars);
+    return _groupedPage(
+      matchedCte:
+          'WITH matched AS ('
+          'SELECT b.*, NULL AS snip, ${_flagSql()} AS flag FROM book_entries b '
+          'WHERE $conds$dims)',
+      cteVars: vars,
+      filter: f,
+      words: words,
+    );
+  }
+
+  Future<SearchOutcome> _mergeTitleWithBody(
+    SearchOutcome title,
+    List<String> words,
+    SearchFilter f, {
+    bool residualOnly = false,
+  }) async {
+    final Set<String> titleNames = <String>{
+      for (final GroupHit hit in title.page.items) hit.nameNorm,
+    };
+    final List<String> terms = residualOnly
+        ? _residualWords(words, title.page.items)
+        : words;
+    final Paged<GroupHit> body;
+    if (terms.isEmpty) {
+      body = const Paged<GroupHit>(items: <GroupHit>[], total: 0);
+    } else {
+      body = await _likeCommentGroups(
+        terms,
+        f,
+        excludedNames: titleNames,
+        includeFloorText: residualOnly,
+      );
+    }
+    return SearchOutcome(
+      page: await _mergeSearchPages(
+        f,
+        primary: title.page,
+        secondary: body,
+      ),
+      usedFts: title.usedFts,
+      degraded: title.degraded,
+      words: words,
+    );
+  }
+
+  /// 合并标题级与正文级书组结果；同一书组保留标题级卡片，正文命中只补新组。
+  Future<Paged<GroupHit>> _mergeSearchPages(
+    SearchFilter f, {
+    required Paged<GroupHit> primary,
+    required Paged<GroupHit> secondary,
+  }) async {
+    final Map<String, GroupHit> merged = <String, GroupHit>{};
+    for (final GroupHit hit in <GroupHit>[
+      ...primary.items,
+      ...secondary.items,
+    ]) {
+      merged.putIfAbsent(hit.nameNorm, () => hit);
+    }
+    final List<GroupHit> all = merged.values.toList()
+      ..sort((GroupHit a, GroupHit b) {
+        final int byDate = (b.latestDate ?? '').compareTo(a.latestDate ?? '');
+        return f.sort == SearchSort.timeAsc ? -byDate : byDate;
+      });
+    return Paged<GroupHit>(
+      items: all.skip(f.offset).take(f.limit).toList(),
+      total: merged.length,
+      limit: f.limit,
+      offset: f.offset,
+    );
   }
 
   // ── settings KV（搜索结果浏览位置记忆；复用既有 settings 表，不新造表）──
@@ -1867,6 +2022,22 @@ class Queries implements BookRepository, SearchSettingsKv {
   }) {
     final List<Variable<Object>> vars = <Variable<Object>>[];
     final List<String> conds = <String>[];
+    if (platformOnly) {
+      for (final String w in words) {
+        conds.add(_platformFieldCondition(w, vars));
+      }
+      final List<Variable<Object>> dimVars = <Variable<Object>>[];
+      final String dims = _dimClauses(f, dimVars);
+      return _groupedPage(
+        matchedCte:
+            'WITH matched AS ('
+            'SELECT b.*, NULL AS snip, ${_flagSql()} AS flag FROM book_entries b '
+            'WHERE ${conds.join(' AND ')}$dims)',
+        cteVars: <Variable<Object>>[...vars, ...dimVars],
+        filter: f,
+        words: words,
+      );
+    }
     // name_norm/author_norm：ETL 归一化列（去标点），承接归一化查询对原文的召回
     // （FTS 零命中重试与 2 字词兜底共用本路径）。
     // 推荐人语义：只认条目自己的 b.recommender（真机反例 posts.author='火舞涅槃星星'
@@ -1888,9 +2059,7 @@ class Queries implements BookRepository, SearchSettingsKv {
       final String colExpr = cols
           .map((String c) => "$c LIKE ? ESCAPE '\\'")
           .join(' OR ');
-      if (platformOnly) {
-        conds.add(_platformFieldCondition(w, vars));
-      } else if (titleOnly || recommenderOnly) {
+      if (titleOnly || recommenderOnly) {
         conds.add('($colExpr)');
         for (int i = 0; i < cols.length; i++) {
           vars.add(Variable<String>(arg));
@@ -1905,13 +2074,18 @@ class Queries implements BookRepository, SearchSettingsKv {
         }
       }
     }
-    final String dims = _dimClauses(f, vars);
+    final List<Variable<Object>> dimVars = <Variable<Object>>[];
+    final String dims = _dimClauses(f, dimVars);
+    final List<Variable<Object>> allVars = <Variable<Object>>[
+      ...vars,
+      ...dimVars,
+    ];
     return _groupedPage(
       matchedCte:
           'WITH matched AS ('
           'SELECT b.*, NULL AS snip, ${_flagSql()} AS flag FROM book_entries b '
           'WHERE ${conds.join(' AND ')}$dims)',
-      cteVars: vars,
+      cteVars: allVars,
       filter: f,
       words: words,
       excerptByName: titleOnly,
