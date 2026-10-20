@@ -223,7 +223,7 @@ jobs:
           mkdir -p dist
           tar -czf "dist/$pkg.tar.gz" -C app/build/linux/x64/release --transform "s,^bundle,$pkg," bundle
           sha256sum "dist/$pkg.tar.gz" | cut -d' ' -f1 > "dist/$pkg.tar.gz.sha256"
-          tar -tzf "dist/$pkg.tar.gz" | head -n 5
+          tar -tzf "dist/$pkg.tar.gz" | sed -n '1,5p'
           ls -l dist
 
       - name: Upload Linux artifact
