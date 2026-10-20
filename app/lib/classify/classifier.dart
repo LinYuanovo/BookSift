@@ -26,7 +26,7 @@ export 'src/engine.dart' show explicitManualKind, kRecommendKind;
 /// [classifierCoreVersion] 是 Python 冻结核心的 v3 夹具版本；此值在核心之上叠加
 /// “明确推书/无雷字段/毒点罗列”等生产校正，必须独立递增，才能让已安装库越过
 /// `needsReclassify` 闸门重新回填。
-const int classifierVersion = 4;
+const int classifierVersion = 5;
 
 /// Python classify_v3 冻结核心版本（parity 夹具锁定值，不随生产校正递增）。
 const int classifierCoreVersion = 3;

@@ -614,10 +614,15 @@ String entryKindLabel({
     if (_entryPositiveAvoidanceReview.hasMatch(ft)) {
       return kRecommendKind;
     }
-    for (final Rule rule in recommendTitlePatterns) {
-      if (rule.hasMatch(ft)) {
-        return kRecommendKind;
-      }
+    final bool hasRecommendCue = recommendTitlePatterns.any(
+      (Rule rule) => rule.hasMatch(ft),
+    );
+    if (hasRecommendCue &&
+        v2MineTitleAny.any((Rule rule) => rule.hasMatch(mineProbe))) {
+      return PostKind.mine;
+    }
+    if (hasRecommendCue) {
+      return kRecommendKind;
     }
   }
   if (category == PostKind.seek) {

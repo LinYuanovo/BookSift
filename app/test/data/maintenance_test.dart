@@ -66,6 +66,7 @@ Future<int> _addEntry(
   String? date,
   String channel = 'yy小说吧',
   String category = '扫书',
+  String? commentSrc,
   int quality = 2,
   int? postRef,
   int? floorRef,
@@ -79,6 +80,7 @@ Future<int> _addEntry(
           contentHash: _hash(),
           recommender: Value<String?>(recommender),
           comment: Value<String?>(comment),
+          commentSrc: Value<String?>(commentSrc),
           commentNormHash: Value<String?>(h16(normText(comment))),
           date: Value<String?>(date),
           category: Value<String>(category),
@@ -316,7 +318,7 @@ void main() {
               value: '3',
             ),
           );
-      expect(classifierVersion, 4);
+      expect(classifierVersion, 5);
       expect(await needsReclassify(db), isTrue);
 
       await _addPost(db, title: '排雷：旧库样例');
@@ -526,6 +528,59 @@ void main() {
       );
       expect((await _post(db, scanPost)).postKind, '排雷');
       expect(stats.protectedPosts, 1);
+    });
+
+    test('宝典 item 开头排雷只保护对应条目，其他条目继续跟随帖级规则', () async {
+      final int pid = await _addPost(
+        db,
+        title: '扫书：两本都不错',
+        firstFloor: '两本都值得看。',
+      );
+      final int curatedMine = await _addEntry(
+        db,
+        nameNorm: '人工排雷书',
+        comment: '\u3000\u3000排雷：《人工排雷书》剧毒慎入',
+        commentSrc: 'clist_item',
+        postRef: pid,
+        category: '扫书',
+      );
+      final int curatedScan = await _addEntry(
+        db,
+        nameNorm: '规则扫书',
+        comment: '普通评论里提到排雷，但开头不是人工标签',
+        commentSrc: 'clist_item',
+        postRef: pid,
+        category: '排雷',
+      );
+      final int orphanMine = await _addEntry(
+        db,
+        nameNorm: '孤立人工排雷书',
+        comment: '\u3000\u3000排雷：《孤立人工排雷书》',
+        commentSrc: 'clist_item',
+        category: '扫书',
+      );
+
+      final ReclassifyStats stats = await reclassifyPostsV3(
+        db,
+        dict: BookDict.empty(),
+      );
+
+      expect((await _post(db, pid)).postKind, '扫书');
+      expect((await _entry(db, curatedMine)).category, '排雷',
+          reason: '宝典 item 开头明确排雷，条目不得被帖级镜像覆盖');
+      expect((await _entry(db, curatedScan)).category, '扫书',
+          reason: '非开头的普通提及不构成人工保护');
+      expect((await _entry(db, orphanMine)).category, '排雷',
+          reason: '没有帖可依的人工排雷条目也必须保护');
+      expect(stats.protectedPosts, 1);
+      expect(stats.entriesUpdated, 3);
+
+      final ReclassifyStats second = await reclassifyPostsV3(
+        db,
+        dict: BookDict.empty(),
+      );
+      expect(second.postsUpdated, 0);
+      expect(second.entriesUpdated, 0, reason: '人工保护与镜像更新均应幂等');
     });
 
     test('kind=null（日常闲聊）帖的条目按当前 post_kind 镜像（updates 为空也开事务）', () async {

@@ -33,6 +33,8 @@
 ///    **人工标签优先**：首楼开头明确写 `排雷/避雷/踩雷/扫雷` 的帖子强制
 ///    `排雷/-1`；明确写 `推书/推荐` 的帖子帖级强制 `扫书/+1`，其中条目保留
 ///    `category=推书`。普通“扫书”不是人工标签，仍由分类规则根据正文细分。
+///    宝典 `clist_item` 首部明确写“排雷”的条目单独保护为 `category=排雷`，
+///    同帖其他条目仍按规则分类。
 ///
 /// 结构：纯 Dart 核心（[dedupBookEntries] / [reclassifyPostsV3] 可在任意已打开连接上
 /// 执行，测试用内存库）+ 生产后台 isolate 编排（[runMaintenance]，模式照
@@ -689,7 +691,7 @@ class ReclassifyStats {
   /// 已扫描判定的帖数。
   final int postsScanned;
 
-  /// 首楼明确标记人工排雷或推书的帖数。
+  /// 含首楼明确标记人工排雷/推书，或宝典 item 开头明确排雷的帖数。
   final int protectedPosts;
 
   /// 实际 UPDATE 的帖数（kind/flag 有变化；kind=null 的帖不计）。
@@ -740,7 +742,7 @@ Future<ReclassifyStats> reclassifyPostsV3(
       scanned = 0,
       protectedCount = 0,
       updated = 0,
-      entriesSynced = 0,
+      entriesSynced = await _protectOrphanedCuratedMineEntries(db),
       batches = 0;
   var cancelled = false;
 
@@ -781,8 +783,11 @@ Future<ReclassifyStats> reclassifyPostsV3(
       db,
       ids,
     );
+    final Map<int, List<int>> curatedMineEntriesByPost =
+        await _fetchBatchCuratedMineEntries(db, ids);
     final List<_PostKindUpdate> updates = <_PostKindUpdate>[];
     final Map<int, String> manualEntryKinds = <int, String>{};
+    final Set<int> curatedMineEntryIds = <int>{};
     for (final QueryRow p in posts) {
       final int id = p.read<int>('id');
       final List<String> floorTexts = floorsByPost[id] ?? const <String>[];
@@ -799,6 +804,12 @@ Future<ReclassifyStats> reclassifyPostsV3(
           updates.add(_PostKindUpdate(id, kind, flag));
         }
         continue;
+      }
+      final List<int> curatedMineEntries =
+          curatedMineEntriesByPost[id] ?? const <int>[];
+      if (curatedMineEntries.isNotEmpty) {
+        protectedCount++;
+        curatedMineEntryIds.addAll(curatedMineEntries);
       }
       final String title = p.read<String>('t');
       // 调用口径严格照 worker.dart analyzeThread：首楼 = seq 升序第一行；
@@ -848,6 +859,15 @@ Future<ReclassifyStats> reclassifyPostsV3(
           updateKind: UpdateKind.update,
         );
       }
+      for (final int entryId in curatedMineEntryIds) {
+        n += await db.customUpdate(
+          "UPDATE book_entries SET category = '排雷' "
+          "WHERE id = ? AND category IS NOT '排雷'",
+          variables: <Variable<Object>>[Variable.withInt(entryId)],
+          updates: <ResultSetImplementation>{db.bookEntries},
+          updateKind: UpdateKind.update,
+        );
+      }
       // category 镜像当前 post_kind：`IS NOT`（SQLite 空安全不等）滤掉已同步行 →
       // 计数 = 实际变化数、重跑幂等；post_ref IS NULL 与指向批外的条目不受影响；
       // 批内 id 均来自 posts，子查询必命中非 NULL。IN 分块 500 防变量上限
@@ -861,15 +881,25 @@ Future<ReclassifyStats> reclassifyPostsV3(
         if (chunk.isEmpty) {
           continue;
         }
+        final List<int> protectedEntryIds = <int>[
+          for (final MapEntry<int, List<int>> e
+              in curatedMineEntriesByPost.entries)
+            if (chunk.contains(e.key)) ...e.value,
+        ];
+        final String protectedEntryFilter = protectedEntryIds.isEmpty
+            ? ''
+            : 'AND id NOT IN (${List<String>.filled(protectedEntryIds.length, '?').join(',')}) ';
         n += await db.customUpdate(
           'UPDATE book_entries SET category = '
           '(SELECT post_kind FROM posts WHERE posts.id = book_entries.post_ref) '
           'WHERE post_ref IN (${List<String>.filled(chunk.length, '?').join(',')}) '
           "AND category <> '推书' "
           'AND category IS NOT '
-          '(SELECT post_kind FROM posts WHERE posts.id = book_entries.post_ref)',
+          '(SELECT post_kind FROM posts WHERE posts.id = book_entries.post_ref) '
+          '$protectedEntryFilter',
           variables: <Variable<Object>>[
             for (final int id in chunk) Variable.withInt(id),
+            for (final int id in protectedEntryIds) Variable.withInt(id),
           ],
           updates: <ResultSetImplementation>{db.bookEntries},
           updateKind: UpdateKind.update,
@@ -896,6 +926,62 @@ Future<ReclassifyStats> reclassifyPostsV3(
   final ReclassifyStats done = snapshot();
   onProgress?.call(done);
   return done;
+}
+
+/// 保护没有帖可依的宝典人工排雷条目（post_ref IS NULL，无法进入帖级批次）。
+Future<int> _protectOrphanedCuratedMineEntries(AppDatabase db) async {
+  final List<QueryRow> rows = await db
+      .customSelect(
+        'SELECT id, comment FROM book_entries '
+        'WHERE post_ref IS NULL '
+        "AND comment_src IN ('clist_item','clist_item_multibook') "
+        "AND comment LIKE '%排雷%' AND category IS NOT '排雷'",
+      )
+      .get();
+  var updated = 0;
+  for (final QueryRow r in rows) {
+    if (!r.read<String>('comment').trimLeft().startsWith('排雷')) {
+      continue;
+    }
+    updated += await db.customUpdate(
+      "UPDATE book_entries SET category = '排雷' WHERE id = ?",
+      variables: <Variable<Object>>[Variable.withInt(r.read<int>('id'))],
+      updates: <ResultSetImplementation>{db.bookEntries},
+      updateKind: UpdateKind.update,
+    );
+  }
+  return updated;
+}
+
+/// 取一批帖中宝典人工排雷条目的 id（item 经 Unicode 空白 trim 后以“排雷”开头）。
+Future<Map<int, List<int>>> _fetchBatchCuratedMineEntries(
+  AppDatabase db,
+  List<int> ids,
+) async {
+  final Map<int, List<int>> out = <int, List<int>>{};
+  for (var i = 0; i < ids.length; i += 500) {
+    final List<int> chunk = ids.sublist(i, min(i + 500, ids.length));
+    final List<QueryRow> rows = await db
+        .customSelect(
+          'SELECT id, post_ref AS pid, comment FROM book_entries '
+          'WHERE post_ref IN (${List<String>.filled(chunk.length, '?').join(',')}) '
+          "AND comment_src IN ('clist_item','clist_item_multibook') "
+          "AND comment LIKE '%排雷%'",
+          variables: <Variable>[
+            for (final int id in chunk) Variable.withInt(id),
+          ],
+        )
+        .get();
+    for (final QueryRow r in rows) {
+      if (!r.read<String>('comment').trimLeft().startsWith('排雷')) {
+        continue;
+      }
+      out
+          .putIfAbsent(r.read<int>('pid'), () => <int>[])
+          .add(r.read<int>('id'));
+    }
+  }
+  return out;
 }
 
 /// 取一批帖的全部楼层文本（post_id 分组、seq 升序；IN 分块 500 防变量上限）。

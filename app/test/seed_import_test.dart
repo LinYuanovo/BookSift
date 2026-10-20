@@ -830,7 +830,7 @@ void main() {
     final DefaultSeedImporter importer = DefaultSeedImporter(db); // rootBundle + 默认 asset key
     final SeedManifest? m = await importer.readManifest();
     expect(m, isNotNull);
-    expect(m!.version, 2);
+    expect(m!.version, 3);
     expect(m.tier, 'lite');
     expect(m.ftsPrebuilt, isFalse);
     // 2026-10-14 清洗固化（app/tool/bake_clean_seed.dart）：包内库经 drift 迁移到当期
@@ -842,9 +842,9 @@ void main() {
     expect(m.rows['book_entries'], greaterThan(0));
     expect(m.dbSha256, isNotNull);
     expect(m.zipSha256, isNotNull);
-    expect(m.fullVersion, 2); // full_pack 下载清单块
+    expect(m.fullVersion, 3); // full_pack 下载清单块
     expect(m.sha256, isNotNull);
-    expect(m.version, 2); // 数据增量随包升级时要触发已安装用户的重新导入
+    expect(m.version, 3); // 数据增量随包升级时要触发已安装用户的重新导入
     // 流式校验 asset zip（落盘后 64KB 分块 sha256）
     final Directory tmp = Directory(p.join(_root.path, 't9'))..createSync(recursive: true);
     final ByteData zip = await rootBundle.load(DefaultSeedImporter.defaultSeedZipAssetKey);
