@@ -293,6 +293,10 @@ String _writeSeedPack(
   );
   seedDbCustomizer?.call(dbPath);
   final File dbFile = File(dbPath);
+  final sql.Database metaDb = sql.sqlite3.open(dbPath);
+  final int actualPostCount =
+      metaDb.select('SELECT COUNT(*) AS n FROM posts').first['n'] as int;
+  metaDb.close();
   final String dbSha = dbSha256Override ?? sha256.convert(dbFile.readAsBytesSync()).toString();
   final Map<String, Object?> embedded = <String, Object?>{
     'pack_name': ftsPrebuilt ? 'seed_pack_test_full' : 'seed_pack_lite_test',
@@ -314,7 +318,7 @@ String _writeSeedPack(
       'pre_classified_v3': ?preClassifiedV3,
     },
     'rows': <String, int>{
-      'posts': _postCount, 'floors': _floorCount, 'images': _imageCount,
+      'posts': actualPostCount, 'floors': _floorCount, 'images': _imageCount,
       'book_entries': entryCount, 'book_groups': groupCount,
     },
   };
@@ -598,8 +602,14 @@ void main() {
     await db.into(db.bookmarks).insert(BookmarksCompanion.insert(
       title: '用户书签', postRef: Value(userPostId), createdAt: DateTime(2026, 10, 13),
     ));
+    await db.into(db.bookmarks).insert(BookmarksCompanion.insert(
+      title: '旧种子书签', postRef: const Value(1), createdAt: DateTime(2026, 10, 13),
+    ));
     await db.into(db.favorites).insert(FavoritesCompanion.insert(
       targetType: 'entry', targetId: userEntryId, title: '用户书', addedAt: DateTime(2026, 10, 13),
+    ));
+    final int userGroupFavoriteId = await db.into(db.favorites).insert(FavoritesCompanion.insert(
+      targetType: 'book_group', targetId: 3, title: 'G3', addedAt: DateTime(2026, 10, 13),
     ));
     await db.customStatement("INSERT INTO settings(key,value) VALUES('theme','dark')");
 
@@ -635,13 +645,194 @@ void main() {
     expect(await _count(db, "SELECT COUNT(*) AS n FROM posts WHERE origin='poc' AND id=$userPostId"), 1);
     expect(await _count(db, "SELECT COUNT(*) AS n FROM floors WHERE post_id=$userPostId AND text='用户楼层内容'"), 1);
     expect(await _count(db, "SELECT COUNT(*) AS n FROM book_entries WHERE id=$userEntryId AND origin='live'"), 1);
-    expect(await _count(db, 'SELECT COUNT(*) AS n FROM bookmarks'), 1);
-    expect(await _count(db, 'SELECT COUNT(*) AS n FROM favorites'), 1);
+    expect(await _count(db, 'SELECT COUNT(*) AS n FROM bookmarks'), 2);
+    expect(
+      await _count(db, "SELECT COUNT(*) AS n FROM bookmarks WHERE post_ref=1 AND title='旧种子书签'"),
+      1,
+      reason: '旧 seed 帖书签必须按 tid 映射回新 id（v2 id=1 未变）',
+    );
+    expect(await _count(db, 'SELECT COUNT(*) AS n FROM favorites'), 2);
+    final QueryRow groupFavorite = await db
+        .customSelect('SELECT target_id FROM favorites WHERE id=$userGroupFavoriteId')
+        .getSingle();
+    expect(groupFavorite.read<int>('target_id'), 13,
+        reason: 'book_group 收藏须按 name_norm 从 g3(id=3) 重挂到新 id=13');
     expect(await _setting(db, 'theme'), 'dark');
     // 用户条目按 name_norm 重挂新组（g3: id 3 → 13）
     final QueryRow userEntry = await db
         .customSelect('SELECT book_group_id FROM book_entries WHERE id=$userEntryId').getSingle();
     expect(userEntry.read<int>('book_group_id'), 13);
+  });
+
+  // 真实事故回归：10-13 老包（v1 fixture，12 posts）升级到 10-19 新包（packVersion 3）。
+  // 用户自采帖先占 id 13/14：seed 13 与用户帖同 tid → 复用；seed 14 异 tid → 重分配 id。
+  test('升级重写：13 号种子包→19 号种子包，自采帖占住新种子 id（同 tid 复用 / 异 tid 重分配）', () async {
+    final Directory env = Directory(p.join(_root.path, 't14'))..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter importer) = _newEnv(_bundleV1, env);
+    expect((await importer.importBasic().toList()).last.phase, SeedImportPhase.done);
+
+    // ── 用户自采两条：自动 id 正好占住升级包的 seed id 13/14 ──
+    final int userPostSameTid = await db.into(db.posts).insert(PostsCompanion.insert(
+      channel: 'yy小说吧',
+      tid: const Value(11113728843),
+      title: const Value('自采目标帖'),
+      origin: const Value('collected'),
+    ));
+    final int userPostConflictTid = await db.into(db.posts).insert(PostsCompanion.insert(
+      channel: 'yy小说吧',
+      tid: const Value(99900014),
+      title: const Value('自采id冲突帖'),
+      origin: const Value('collected'),
+    ));
+    expect(userPostSameTid, 13, reason: 'v1 共 12 帖，第一条自采帖的 AUTOINCREMENT id 应为 13');
+    expect(userPostConflictTid, 14, reason: '第二条自采帖的 AUTOINCREMENT id 应为 14');
+    await db.into(db.floors).insert(FloorsCompanion.insert(
+      postId: userPostSameTid, seq: 1, content: const Value('用户自采楼层'),
+    ));
+    await db.into(db.floors).insert(FloorsCompanion.insert(
+      postId: userPostConflictTid, seq: 1, content: const Value('用户自采楼层2'),
+    ));
+    await db.into(db.bookmarks).insert(BookmarksCompanion.insert(
+      title: '自采目标帖', postRef: const Value(13), createdAt: DateTime(2026, 10, 13),
+    ));
+    await db.into(db.favorites).insert(FavoritesCompanion.insert(
+      targetType: 'post', targetId: 13, title: '自采目标帖', addedAt: DateTime(2026, 10, 13),
+    ));
+
+    // ── 升级包：seed 13 与用户帖同 tid（应复用用户帖）；seed 14 异 tid（应重分配 id）──
+    final Directory bundleV2 = Directory(p.join(_root.path, 'bundle_v2_post_ref_collision'))
+      ..createSync(recursive: true);
+    _writeSeedPack(
+      bundleV2,
+      zipName: 'seed_pack_lite_v1.zip',
+      packVersion: 3,
+      entryCount: _entryCountV1,
+      groupCount: _groupCountV1,
+      kindColumns: true,
+      seedDbCustomizer: (String dbPath) {
+        final sql.Database seed = sql.sqlite3.open(dbPath);
+        try {
+          seed.execute('BEGIN');
+          seed.execute(
+            "INSERT INTO posts(id,tid,title,author,date,channel,post_type,post_kind,"
+            "recommend_flag,floor_count,origin,src_origin,src_origin_id) "
+            "VALUES(13,11113728843,'种子同tid帖','种子作者13','2026-10-19','yy小说吧',"
+            "'扫书','扫书',1,1,'seed','saoshu',13)",
+          );
+          seed.execute(
+            "INSERT INTO floors(id,post_id,seq,text,text_norm_hash,char_count,src_origin_id) "
+            "VALUES(31,13,1,'种子同tid楼层','nh31',7,31)",
+          );
+          seed.execute(
+            "INSERT INTO posts(id,tid,title,author,date,channel,post_type,post_kind,"
+            "recommend_flag,floor_count,origin,src_origin,src_origin_id) "
+            "VALUES(14,22222222,'种子id冲突帖','种子作者14','2026-10-19','yy小说吧',"
+            "'扫书','扫书',1,1,'seed','saoshu',14)",
+          );
+          seed.execute(
+            "INSERT INTO floors(id,post_id,seq,text,text_norm_hash,char_count,src_origin_id) "
+            "VALUES(32,14,1,'种子id冲突楼层','nh32',8,32)",
+          );
+          seed.execute(
+            "INSERT INTO book_entries(id,name,name_norm,author,recommender,comment,content_hash,"
+            "channel,category,post_ref,floor_ref,book_group_id,origin,comment_norm_hash,date,"
+            "word_count,quality,src_origin,src_origin_table,src_origin_id) "
+            "VALUES(24050,'种子同tid书','种子同tid书','种子作者','种子吧友','种子同tid推荐语',"
+            "'h24050','yy小说吧','扫书',13,31,1,'seed','cnh24050','2026-10-19',1000,2,"
+            "'saoshu','book',24050)",
+          );
+          seed.execute(
+            "INSERT INTO book_entries(id,name,name_norm,author,recommender,comment,content_hash,"
+            "channel,category,post_ref,floor_ref,book_group_id,origin,comment_norm_hash,date,"
+            "word_count,quality,src_origin,src_origin_table,src_origin_id) "
+            "VALUES(24051,'种子id冲突书','种子id冲突书','种子作者','种子吧友','种子id冲突推荐语',"
+            "'h24051','yy小说吧','扫书',14,32,1,'seed','cnh24051','2026-10-19',1000,2,"
+            "'saoshu','book',24051)",
+          );
+          seed.execute('COMMIT');
+        } finally {
+          seed.close();
+        }
+      },
+    );
+
+    final DefaultSeedImporter importerV2 = DefaultSeedImporter(
+      db,
+      assetBundle: _DirAssetBundle(bundleV2),
+      workDirProvider: () async => Directory(p.join(env.path, 'tmp'))..createSync(recursive: true),
+      databasePathProvider: () async => p.join(env.path, 'app.sqlite'),
+    );
+    final SeedManifest v2Manifest = (await importerV2.readManifest())!;
+    expect(v2Manifest.version, 3);
+    expect(v2Manifest.rows['posts'], 14, reason: '_writeSeedPack 应按 customizer 后的实际 posts 数写 manifest');
+    final List<SeedImportState> states = await importerV2.importBasic().toList();
+    expect(states.last.phase, SeedImportPhase.done, reason: states.last.message);
+    expect(await _setting(db, 'seed_version'), '3');
+
+    // ── id=13：同 tid 的 seed 帖复用用户自采帖；其 seed 楼层不得寄生 ──
+    final QueryRow post13 = await db.customSelect(
+      'SELECT tid,title,origin FROM posts WHERE id=13',
+    ).getSingle();
+    expect(post13.read<int>('tid'), 11113728843);
+    expect(post13.read<String>('title'), '自采目标帖');
+    expect(post13.read<String>('origin'), 'collected');
+    expect(await _count(db, 'SELECT COUNT(*) AS n FROM floors WHERE post_id=13'), 1);
+    expect(
+      await _count(db, "SELECT COUNT(*) AS n FROM floors WHERE post_id=13 AND text='用户自采楼层'"),
+      1,
+    );
+    expect(await _count(db, "SELECT COUNT(*) AS n FROM floors WHERE text='种子同tid楼层'"), 0,
+        reason: '同 tid 复用到自采帖的 seed 楼层必须整体跳过');
+
+    // ── id=14：保留用户自采帖；seed 14 重分配到 >14 的新 id，并带自己的楼层 ──
+    final QueryRow post14 = await db.customSelect(
+      'SELECT tid,title,origin FROM posts WHERE id=14',
+    ).getSingle();
+    expect(post14.read<int>('tid'), 99900014);
+    expect(post14.read<String>('title'), '自采id冲突帖');
+    expect(post14.read<String>('origin'), 'collected');
+    expect(await _count(db, 'SELECT COUNT(*) AS n FROM floors WHERE post_id=14'), 1);
+    final QueryRow relocated = await db.customSelect(
+      'SELECT id,title,origin FROM posts WHERE tid=22222222',
+    ).getSingle();
+    final int relocatedId = relocated.read<int>('id');
+    expect(relocatedId, greaterThan(14), reason: 'seed id=14 被自采帖占用且 tid 不同 → 必须分配新 id');
+    expect(relocated.read<String>('title'), '种子id冲突帖');
+    expect(relocated.read<String>('origin'), 'seed');
+    expect(
+      await _count(db, "SELECT COUNT(*) AS n FROM floors WHERE post_id=$relocatedId AND text='种子id冲突楼层'"),
+      1,
+    );
+
+    // 14 个 seed 帖中 1 个按 tid 复用到用户帖，其余 13 个实际插入
+    expect(await _count(db, "SELECT COUNT(*) AS n FROM posts WHERE origin='seed'"), 13);
+    // 24000 基础条目 + 2 条新增 - 1 条随复用帖跳过 = 24001
+    expect(await _count(db, "SELECT COUNT(*) AS n FROM book_entries WHERE origin='seed'"), _entryCountV1 + 1);
+    // 复用到用户帖的 seed 条目跳过；重分配 seed 帖的条目挂到新 id
+    expect(await _count(db, "SELECT COUNT(*) AS n FROM book_entries WHERE post_ref=13 AND origin='seed'"), 0);
+    expect(await _count(db, "SELECT COUNT(*) AS n FROM book_entries WHERE content_hash='h24050'"), 0,
+        reason: '复用到用户帖的 seed 条目应整体跳过，而不是改挂到别的帖子');
+    expect(
+      await _count(db, "SELECT COUNT(*) AS n FROM book_entries WHERE post_ref=$relocatedId AND origin='seed'"),
+      1,
+    );
+    expect(await _count(db, "SELECT COUNT(*) AS n FROM book_entries WHERE content_hash='h24051'"), 1);
+    final QueryRow relocatedEntry = await db.customSelect(
+      "SELECT post_ref,floor_ref FROM book_entries WHERE content_hash='h24051'",
+    ).getSingle();
+    expect(relocatedEntry.read<int>('post_ref'), relocatedId);
+    final int relocatedFloorRef = relocatedEntry.read<int>('floor_ref');
+    expect(
+      await _count(db, "SELECT COUNT(*) AS n FROM floors WHERE id=$relocatedFloorRef "
+          "AND post_id=$relocatedId AND text='种子id冲突楼层'"),
+      1,
+      reason: 'seed floor id=32 与用户楼层 id=32 冲突，floor_ref 必须走映射而非裸 id',
+    );
+    // 用户书签/帖子收藏仍指向用户自采帖 13
+    expect(await _count(db, 'SELECT COUNT(*) AS n FROM bookmarks WHERE post_ref=13'), 1);
+    expect(await _count(db, "SELECT COUNT(*) AS n FROM favorites WHERE target_type='post' AND target_id=13"), 1);
+    // 全库外键完整性
+    expect(await db.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
   });
 
   test('SHA256 校验失败：zip 损坏拒绝导入且无残留', () async {
@@ -753,6 +944,44 @@ void main() {
     // 完整包不存在 → 明确报错
     final List<SeedImportState> miss = await importer.importFull(p.join(env.path, '不存在.zip')).toList();
     expect(miss.single.phase, SeedImportPhase.error);
+  });
+
+  test('importFull：已有用户内容时跳过预建 FTS 影子表，避免 rowid 错位', () async {
+    final Directory env = Directory(p.join(_root.path, 't8b'))..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter liteImporter) = _newEnv(_bundleV1, env);
+    expect((await liteImporter.importBasic().toList()).last.phase, SeedImportPhase.done);
+    // 用户自采帖占一个不属于 seed 的 id；有用户内容即不允许直接复制预建 FTS。
+    await db.into(db.posts).insert(PostsCompanion.insert(
+      channel: '用户吧',
+      tid: const Value(777002),
+      title: const Value('用户预建FTS冲突帖'),
+      origin: const Value('collected'),
+    ));
+
+    final Directory fullDir = Directory(p.join(_root.path, 'full_pack_with_user'))
+      ..createSync(recursive: true);
+    _writeSeedPack(
+      fullDir,
+      zipName: 'seed_pack_v1.zip',
+      packVersion: 4,
+      entryCount: _entryCountV1,
+      groupCount: _groupCountV1,
+      ftsPrebuilt: true,
+      kindColumns: true,
+    );
+    final DefaultSeedImporter fullImporter = DefaultSeedImporter(
+      db,
+      assetBundle: _DirAssetBundle(fullDir),
+      workDirProvider: () async => Directory(p.join(env.path, 'tmp'))..createSync(recursive: true),
+      databasePathProvider: () async => p.join(env.path, 'app.sqlite'),
+    );
+    final List<SeedImportState> states =
+        await fullImporter.importFull(p.join(fullDir.path, 'seed_pack_v1.zip')).toList();
+    expect(states.last.phase, SeedImportPhase.done, reason: states.last.message);
+    expect(await _setting(db, DefaultSeedImporter.ftsRebuildDoneKey), isNull,
+        reason: '有用户内容时不能复制 seed 预建 FTS 并标记完成');
+    expect(await _count(db, 'SELECT COUNT(*) AS n FROM book_fts_docsize'), 0,
+        reason: '预建影子表应整体跳过，等待 rebuildFts');
   });
 
   // ── 维护闸门随包走（manifest.features.pre_deduped / pre_classified_v3）──

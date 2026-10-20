@@ -1,6 +1,6 @@
 /// 数据层维护任务（存量数据修复）。
 ///
-/// 两个任务，各自独立 settings 闸门，全部完成才落账（中断/失败不写，重跑幂等续跑）：
+/// 各任务独立 settings 闸门，全部完成才落账（中断/失败不写，重跑幂等续跑）：
 ///
 /// 1. **book_entries 去重**（闸门 [SettingsKeys.dedupVersion]，完成值 [dedupDoneValue]）：
 ///    种子合并 ETL 曾把同一帖子从两个上游各收一遍，产生大量存量重复。
@@ -36,10 +36,16 @@
 ///    宝典 `clist_item` 首部明确写“排雷”的条目单独保护为 `category=排雷`，
 ///    同帖其他条目仍按规则分类。
 ///
-/// 结构：纯 Dart 核心（[dedupBookEntries] / [reclassifyPostsV3] 可在任意已打开连接上
-/// 执行，测试用内存库）+ 生产后台 isolate 编排（[runMaintenance]，模式照
-/// seed_import.dart `_ftsRebuildIsolate`：控制端口 / 批式 yield / 可取消 / 失败事件，
-/// 独立连接 WAL + busy_timeout）。
+/// 3. **post 引用一次性修复**（闸门 [SettingsKeys.postRefRepairVersion]，完成值
+///    [postRefRepairDoneValue]）：种子包升级重排 `posts.id` / 自采帖占用 id 后，
+///    `bookmarks.post_ref`、`favorites.target_id` 可能悬空，`book_entries.post_ref`
+///    也可能为 NULL 但 `src_tid` 尚存。按 tid / title 回填或清除，详见
+///    [repairPostReferences]。
+///
+/// 结构：纯 Dart 核心（[dedupBookEntries] / [repairPostReferences] /
+/// [reclassifyPostsV3] 可在任意已打开连接上执行，测试用内存库）+ 生产后台 isolate
+/// 编排（[runMaintenance]，模式照 seed_import.dart `_ftsRebuildIsolate`：控制端口 /
+/// 批式 yield / 可取消 / 失败事件，独立连接 WAL + busy_timeout）。
 ///
 /// 本文件**不 import flutter**（headless 契约，见 app/HEADLESS.md）。
 library;
@@ -475,6 +481,7 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
        AND s.title IS NOT NULL
        AND s.title <> ''
        AND s.title = c.title
+       AND (s.tid IS NULL OR c.tid IS NULL OR s.tid = c.tid)
        AND (s.author IS NULL OR s.author = '' OR c.author IS NULL OR c.author = ''
             OR s.author = c.author)
       ORDER BY c.id
@@ -560,6 +567,27 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
           Variable.withInt(collectedId),
         ],
         updates: <ResultSetImplementation>{db.bookEntries},
+        updateKind: UpdateKind.update,
+      );
+      // 用户书签/帖子收藏没有外键，必须在删 collected 行前一起重挂到 keeper，
+      // 否则合并后会留下指向已删除帖子的悬空引用。
+      await db.customUpdate(
+        'UPDATE bookmarks SET post_ref = ? WHERE post_ref = ?',
+        variables: <Variable<Object>>[
+          Variable.withInt(seedId),
+          Variable.withInt(collectedId),
+        ],
+        updates: <ResultSetImplementation>{db.bookmarks},
+        updateKind: UpdateKind.update,
+      );
+      await db.customUpdate(
+        "UPDATE favorites SET target_id = ? "
+        "WHERE target_type = 'post' AND target_id = ?",
+        variables: <Variable<Object>>[
+          Variable.withInt(seedId),
+          Variable.withInt(collectedId),
+        ],
+        updates: <ResultSetImplementation>{db.favorites},
         updateKind: UpdateKind.update,
       );
       await (db.delete(
@@ -666,6 +694,446 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
     await _writeSetting(db, _legacyPostDedupSetting, _legacyPostDedupDone);
   }
   final LegacyPostDedupStats done = snapshot();
+  onProgress?.call(done);
+  return done;
+}
+
+// ───────────────────────────── post 引用一次性修复 ─────────────────────────────
+
+/// settings.post_ref_repair_v1 的完成值。
+const String postRefRepairDoneValue = '1';
+
+/// post 引用修复闸门：true = 需要执行 [repairPostReferences]。
+Future<bool> needsPostRefRepair(AppDatabase db) async =>
+    await _readSetting(db, SettingsKeys.postRefRepairVersion) !=
+    postRefRepairDoneValue;
+
+/// post 引用修复进度/结果快照（[repairPostReferences] 的 onProgress 与返回值）。
+class PostRefRepairStats {
+  const PostRefRepairStats({
+    this.entriesRepaired = 0,
+    this.bookmarksRepaired = 0,
+    this.favoritesRepaired = 0,
+    this.cancelled = false,
+    this.elapsedMs = 0,
+  });
+
+  /// book_entries.post_ref 由 src_tid 回填的行数。
+  final int entriesRepaired;
+
+  /// bookmarks 悬空 post_ref 被回填或置 NULL 的行数。
+  final int bookmarksRepaired;
+
+  /// favorites(target_type='post') 悬空 target_id 被回填或清除的行数。
+  final int favoritesRepaired;
+
+  /// 是否被中断（闸门未落，重跑续跑）。
+  final bool cancelled;
+  final int elapsedMs;
+
+  @override
+  String toString() =>
+      'PostRefRepair(条目 $entriesRepaired，书签 $bookmarksRepaired，'
+      '收藏 $favoritesRepaired，cancelled=$cancelled，${elapsedMs}ms)';
+}
+
+/// 每批候选行数（三类修复共用；IN 再按 500 分块防 SQLite 变量上限）。
+const int _postRefRepairBatch = 500;
+
+/// 修复种子包升级后遗留的 post 引用（纯 Dart，可在任意已打开连接上执行）。
+///
+/// 背景：seed_import 重写 `posts` 时按显式 id `INSERT OR IGNORE`，自采帖占用
+/// seed id / tid 会让种子帖静默跳过；`bookmarks.post_ref`、`favorites.target_id`
+/// 无外键，`book_entries.post_ref` 又可能因 id 映射失败为 NULL（`src_tid` 仍保留
+/// 贴吧 tid）。本任务按稳定度从高到低回填：
+///
+/// 1. `book_entries`：`src_tid IS NOT NULL` 且 `post_ref` 为空/悬空/指向的帖子 tid
+///    与 `src_tid` 不一致时，按 `posts.tid = src_tid` 找帖（优先 origin='collected'）
+///    回填；不一致的 floor_ref 在步骤 1b 清空。种子包内 `src_tid` 与所属帖 tid 同口径，seed v3 实测
+///    19,528 条有 src_tid 的条目里 18,661 条同 tid、867 条 post_ref 为空、0 条错配，
+///    因此「当前帖 tid != src_tid」可以安全视为错配。
+/// 2. `bookmarks`：`post_ref` 为空/悬空/标题不符时，按 title（+channel）找唯一候选；
+///    同名多候选不 `LIMIT 1` 猜帖，置 NULL 让 UI 提示可溯源失败。
+/// 3. `favorites`：`target_type='post'` 同理按 title（+subtitle）找唯一候选；
+///    `book_group` 按《书名》+作者找唯一组；无匹配删除该行（target_id NOT NULL）。
+///
+/// 全部更新参数化；分批提交，批间与步骤间检查 [isCancelled]，取消时已提交批次
+/// 不回滚（幂等）、闸门不落。全部完成才写 [SettingsKeys.postRefRepairVersion]。
+Future<PostRefRepairStats> repairPostReferences(
+  AppDatabase db, {
+  bool Function()? isCancelled,
+  void Function(PostRefRepairStats)? onProgress,
+}) async {
+  final Stopwatch sw = Stopwatch()..start();
+  var entriesRepaired = 0;
+  var bookmarksRepaired = 0;
+  var favoritesRepaired = 0;
+  var cancelled = false;
+
+  PostRefRepairStats snapshot() => PostRefRepairStats(
+    entriesRepaired: entriesRepaired,
+    bookmarksRepaired: bookmarksRepaired,
+    favoritesRepaired: favoritesRepaired,
+    cancelled: cancelled,
+    elapsedMs: sw.elapsedMilliseconds,
+  );
+
+  // 1) book_entries：src_tid → posts.tid（tid 唯一；仍按 collected 优先排序）。
+  var entryCursor = 0;
+  while (true) {
+    if (isCancelled?.call() ?? false) {
+      cancelled = true;
+      break;
+    }
+    final List<QueryRow> batch = await db
+        .customSelect(
+          'SELECT id FROM book_entries '
+          'WHERE src_tid IS NOT NULL AND id > ? '
+          'AND (post_ref IS NULL '
+          '     OR NOT EXISTS (SELECT 1 FROM posts p WHERE p.id = book_entries.post_ref '
+          '                    AND p.tid = book_entries.src_tid)) '
+          'ORDER BY id LIMIT ?',
+          variables: <Variable>[
+            Variable.withInt(entryCursor),
+            Variable.withInt(_postRefRepairBatch),
+          ],
+        )
+        .get();
+    if (batch.isEmpty) {
+      break;
+    }
+    final List<int> ids = <int>[
+      for (final QueryRow r in batch) r.read<int>('id'),
+    ];
+    entryCursor = ids.last;
+    entriesRepaired += await db.transaction(() async {
+      var n = 0;
+      for (var i = 0; i < ids.length; i += 500) {
+        final List<int> chunk = ids.sublist(i, min(i + 500, ids.length));
+        n += await db.customUpdate(
+          'UPDATE book_entries SET post_ref = ('
+          'SELECT p.id FROM posts p WHERE p.tid = book_entries.src_tid '
+          "ORDER BY CASE WHEN p.origin = 'collected' THEN 0 ELSE 1 END, p.id "
+          'LIMIT 1) '
+          'WHERE id IN (${List<String>.filled(chunk.length, '?').join(',')}) '
+          'AND src_tid IS NOT NULL '
+          'AND (post_ref IS NULL '
+          '     OR NOT EXISTS (SELECT 1 FROM posts cur WHERE cur.id = book_entries.post_ref '
+          '                    AND cur.tid = book_entries.src_tid)) '
+          'AND EXISTS (SELECT 1 FROM posts p WHERE p.tid = book_entries.src_tid)',
+          variables: <Variable<Object>>[
+            for (final int id in chunk) Variable.withInt(id),
+          ],
+          updates: <ResultSetImplementation>{db.bookEntries},
+          updateKind: UpdateKind.update,
+        );
+      }
+      return n;
+    });
+    onProgress?.call(snapshot());
+    await Future<void>.delayed(Duration.zero);
+  }
+  if (cancelled) {
+    onProgress?.call(snapshot());
+    return snapshot();
+  }
+
+  // 1b) floor_ref 必须属于当前 post_ref；旧坏导入可能把条目挂到错误帖的楼层，
+  //     修复 post_ref 后统一清掉不一致的 floor_ref（UI 会从帖首开始，不会跳错楼）。
+  await db.customUpdate(
+    'UPDATE book_entries SET floor_ref = NULL '
+    'WHERE floor_ref IS NOT NULL '
+    'AND NOT EXISTS (SELECT 1 FROM floors f '
+    '                WHERE f.id = book_entries.floor_ref '
+    '                  AND f.post_id = book_entries.post_ref)',
+    updates: <ResultSetImplementation>{db.bookEntries},
+    updateKind: UpdateKind.update,
+  );
+
+  // 2) bookmarks：悬空/标题不符 post_ref → title（+channel）唯一候选 → posts.id。
+  //    多候选时置 NULL（不猜），避免同名帖串书签。
+  var bookmarkCursor = 0;
+  while (true) {
+    if (isCancelled?.call() ?? false) {
+      cancelled = true;
+      break;
+    }
+    final List<QueryRow> batch = await db
+        .customSelect(
+          'SELECT id FROM bookmarks b WHERE b.post_ref IS NOT NULL '
+          'AND b.title <> \'\' '
+          'AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.id = b.post_ref '
+          '                AND p.title = b.title '
+          "                AND (COALESCE(b.channel, '') = '' OR p.channel = b.channel)) "
+          'AND b.id > ? ORDER BY b.id LIMIT ?',
+          variables: <Variable>[
+            Variable.withInt(bookmarkCursor),
+            Variable.withInt(_postRefRepairBatch),
+          ],
+        )
+        .get();
+    if (batch.isEmpty) {
+      break;
+    }
+    final List<int> ids = <int>[
+      for (final QueryRow r in batch) r.read<int>('id'),
+    ];
+    bookmarkCursor = ids.last;
+    bookmarksRepaired += await db.transaction(() async {
+      var n = 0;
+      for (var i = 0; i < ids.length; i += 500) {
+        final List<int> chunk = ids.sublist(i, min(i + 500, ids.length));
+        final String placeholders =
+            List<String>.filled(chunk.length, '?').join(',');
+        final List<Variable<Object>> variables = <Variable<Object>>[
+          for (final int id in chunk) Variable.withInt(id),
+        ];
+        // 唯一候选才回填；同名多帖留到下一步清空，绝不 LIMIT 1 猜一条。
+        n += await db.customUpdate(
+          '''UPDATE bookmarks SET post_ref = (
+               SELECT p.id FROM posts p
+               WHERE p.title = bookmarks.title
+                 AND (COALESCE(bookmarks.channel, '') = ''
+                      OR p.channel = bookmarks.channel)
+               ORDER BY CASE WHEN p.origin = 'collected' THEN 0 ELSE 1 END,
+                        CASE WHEN COALESCE(bookmarks.author, '') <> ''
+                                  AND p.author = bookmarks.author
+                             THEN 0 ELSE 1 END,
+                        p.id
+               LIMIT 1)
+             WHERE id IN ($placeholders)
+               AND post_ref IS NOT NULL
+               AND (
+                 (SELECT COUNT(*) FROM posts p
+                  WHERE p.title = bookmarks.title
+                    AND (COALESCE(bookmarks.channel, '') = ''
+                         OR p.channel = bookmarks.channel)
+                    AND p.origin = 'collected') = 1
+                 OR (
+                   (SELECT COUNT(*) FROM posts p
+                    WHERE p.title = bookmarks.title
+                      AND (COALESCE(bookmarks.channel, '') = ''
+                           OR p.channel = bookmarks.channel)
+                      AND p.origin = 'collected') = 0
+                   AND (SELECT COUNT(*) FROM posts p
+                        WHERE p.title = bookmarks.title
+                          AND (COALESCE(bookmarks.channel, '') = ''
+                               OR p.channel = bookmarks.channel)) = 1
+                 )
+               )''',
+          variables: variables,
+          updates: <ResultSetImplementation>{db.bookmarks},
+          updateKind: UpdateKind.update,
+        );
+        // 无匹配 / 多候选：不保留错误的旧 post_ref，置 NULL 让 UI 提示可溯源失败。
+        n += await db.customUpdate(
+          '''UPDATE bookmarks SET post_ref = NULL
+             WHERE id IN ($placeholders)
+               AND post_ref IS NOT NULL
+               AND NOT EXISTS (
+                 SELECT 1 FROM posts p
+                 WHERE p.id = bookmarks.post_ref
+                   AND p.title = bookmarks.title
+                   AND (COALESCE(bookmarks.channel, '') = ''
+                        OR p.channel = bookmarks.channel))''',
+          variables: variables,
+          updates: <ResultSetImplementation>{db.bookmarks},
+          updateKind: UpdateKind.update,
+        );
+      }
+      return n;
+    });
+    onProgress?.call(snapshot());
+    await Future<void>.delayed(Duration.zero);
+  }
+  if (cancelled) {
+    onProgress?.call(snapshot());
+    return snapshot();
+  }
+
+  // 3) favorites：悬空/标题不符 post 收藏 → title（+subtitle）唯一候选 → posts.id。
+  //    无匹配/多候选删除（target_id NOT NULL，无法置 NULL；保留旧 id 会串到别的帖）。
+  var favoriteCursor = 0;
+  while (true) {
+    if (isCancelled?.call() ?? false) {
+      cancelled = true;
+      break;
+    }
+    final List<QueryRow> batch = await db
+        .customSelect(
+          "SELECT id FROM favorites WHERE target_type = 'post' "
+          "AND title <> '' "
+          'AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.id = favorites.target_id '
+          '                AND p.title = favorites.title) '
+          'AND id > ? ORDER BY id LIMIT ?',
+          variables: <Variable>[
+            Variable.withInt(favoriteCursor),
+            Variable.withInt(_postRefRepairBatch),
+          ],
+        )
+        .get();
+    if (batch.isEmpty) {
+      break;
+    }
+    final List<int> ids = <int>[
+      for (final QueryRow r in batch) r.read<int>('id'),
+    ];
+    favoriteCursor = ids.last;
+    favoritesRepaired += await db.transaction(() async {
+      var n = 0;
+      for (var i = 0; i < ids.length; i += 500) {
+        final List<int> chunk = ids.sublist(i, min(i + 500, ids.length));
+        final String placeholders =
+            List<String>.filled(chunk.length, '?').join(',');
+        final List<Variable<Object>> variables = <Variable<Object>>[
+          for (final int id in chunk) Variable.withInt(id),
+        ];
+        n += await db.customUpdate(
+          '''UPDATE favorites SET target_id = (
+               SELECT p.id FROM posts p
+               WHERE p.title = favorites.title
+                 AND (COALESCE(favorites.subtitle, '') = ''
+                      OR p.author = favorites.subtitle
+                      OR p.channel = favorites.subtitle)
+               ORDER BY CASE WHEN p.origin = 'collected' THEN 0 ELSE 1 END,
+                        p.id
+               LIMIT 1)
+             WHERE id IN ($placeholders)
+               AND target_type = 'post'
+               AND (
+                 (SELECT COUNT(*) FROM posts p
+                  WHERE p.title = favorites.title
+                    AND (COALESCE(favorites.subtitle, '') = ''
+                         OR p.author = favorites.subtitle
+                         OR p.channel = favorites.subtitle)
+                    AND p.origin = 'collected') = 1
+                 OR (
+                   (SELECT COUNT(*) FROM posts p
+                    WHERE p.title = favorites.title
+                      AND (COALESCE(favorites.subtitle, '') = ''
+                           OR p.author = favorites.subtitle
+                           OR p.channel = favorites.subtitle)
+                      AND p.origin = 'collected') = 0
+                   AND (SELECT COUNT(*) FROM posts p
+                        WHERE p.title = favorites.title
+                          AND (COALESCE(favorites.subtitle, '') = ''
+                               OR p.author = favorites.subtitle
+                               OR p.channel = favorites.subtitle)) = 1
+                 )
+               )''',
+          variables: variables,
+          updates: <ResultSetImplementation>{db.favorites},
+          updateKind: UpdateKind.update,
+        );
+        n += await db.customUpdate(
+          '''DELETE FROM favorites
+             WHERE id IN ($placeholders)
+               AND target_type = 'post'
+               AND NOT EXISTS (
+                 SELECT 1 FROM posts p
+                 WHERE p.id = favorites.target_id
+                   AND p.title = favorites.title)''',
+          variables: variables,
+          updates: <ResultSetImplementation>{db.favorites},
+          updateKind: UpdateKind.delete,
+        );
+      }
+      return n;
+    });
+    onProgress?.call(snapshot());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  // 4) book_group 收藏：组 id 同样会随种子重排；按去掉《》后的书名匹配
+  //    book_groups.name_display / name_norm（唯一候选才改，避免同名书串收藏）。
+  var groupFavoriteCursor = 0;
+  while (true) {
+    if (isCancelled?.call() ?? false) {
+      cancelled = true;
+      break;
+    }
+    final List<QueryRow> batch = await db
+        .customSelect(
+          "SELECT id FROM favorites WHERE target_type = 'book_group' "
+          "AND title <> '' AND id > ? "
+          'AND NOT EXISTS ('
+          '  SELECT 1 FROM book_groups g WHERE g.id = favorites.target_id '
+          "    AND TRIM(REPLACE(REPLACE(favorites.title, '《', ''), '》', '')) "
+          '        = COALESCE(g.name_display, g.name_norm)) '
+          'ORDER BY id LIMIT ?',
+          variables: <Variable>[
+            Variable.withInt(groupFavoriteCursor),
+            Variable.withInt(_postRefRepairBatch),
+          ],
+        )
+        .get();
+    if (batch.isEmpty) {
+      break;
+    }
+    final List<int> ids = <int>[
+      for (final QueryRow r in batch) r.read<int>('id'),
+    ];
+    groupFavoriteCursor = ids.last;
+    favoritesRepaired += await db.transaction(() async {
+      var n = 0;
+      for (var i = 0; i < ids.length; i += 500) {
+        final List<int> chunk = ids.sublist(i, min(i + 500, ids.length));
+        final String placeholders =
+            List<String>.filled(chunk.length, '?').join(',');
+        final List<Variable<Object>> variables = <Variable<Object>>[
+          for (final int id in chunk) Variable.withInt(id),
+        ];
+        n += await db.customUpdate(
+          '''UPDATE favorites SET target_id = (
+               SELECT g.id FROM book_groups g
+               WHERE TRIM(REPLACE(REPLACE(favorites.title, '《', ''), '》', ''))
+                     = COALESCE(g.name_display, g.name_norm)
+                 AND (COALESCE(favorites.subtitle, '') = ''
+                      OR g.author_display = favorites.subtitle)
+               LIMIT 1)
+             WHERE id IN ($placeholders)
+               AND target_type = 'book_group'
+               AND (SELECT COUNT(*) FROM book_groups g
+                    WHERE TRIM(REPLACE(REPLACE(favorites.title, '《', ''), '》', ''))
+                          = COALESCE(g.name_display, g.name_norm)
+                      AND (COALESCE(favorites.subtitle, '') = ''
+                           OR g.author_display = favorites.subtitle)) = 1''',
+          variables: variables,
+          updates: <ResultSetImplementation>{db.favorites},
+          updateKind: UpdateKind.update,
+        );
+        n += await db.customUpdate(
+          '''DELETE FROM favorites
+             WHERE id IN ($placeholders)
+               AND target_type = 'book_group'
+               AND NOT EXISTS (
+                 SELECT 1 FROM book_groups g
+                 WHERE g.id = favorites.target_id
+                   AND TRIM(REPLACE(REPLACE(favorites.title, '《', ''), '》', ''))
+                       = COALESCE(g.name_display, g.name_norm))''',
+          variables: variables,
+          updates: <ResultSetImplementation>{db.favorites},
+          updateKind: UpdateKind.delete,
+        );
+      }
+      return n;
+    });
+    onProgress?.call(snapshot());
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  // 最后一步提交后、落闸门前再检查一次，避免晚到的取消仍把任务标记为完成。
+  if (!cancelled && (isCancelled?.call() ?? false)) {
+    cancelled = true;
+  }
+  if (!cancelled) {
+    await _writeSetting(
+      db,
+      SettingsKeys.postRefRepairVersion,
+      postRefRepairDoneValue,
+    );
+  }
+  final PostRefRepairStats done = snapshot();
   onProgress?.call(done);
   return done;
 }
@@ -1014,7 +1482,7 @@ Future<Map<int, List<String>>> _fetchBatchFloors(
 // ───────────────────────────── 生产后台 isolate 编排 ─────────────────────────────
 
 /// 维护阶段（progress 事件归属）。
-enum MaintenancePhase { dedup, reclassify }
+enum MaintenancePhase { repair, dedup, reclassify }
 
 /// [runMaintenance] 事件类型。
 enum MaintenanceEventKind { ready, progress, done, failed }
@@ -1063,8 +1531,8 @@ class _MaintenanceJob {
   final SendPort events;
 }
 
-/// 后台执行全部待办维护（先合并存量重复帖，再 dedup，最后 reclassify；
-/// 各自独立闸门，全部完成才落账）。
+/// 后台执行全部待办维护（先修复 post 引用，再合并存量重复帖，再 dedup，
+/// 最后 reclassify；各自独立闸门，全部完成才落账）。
 ///
 /// 模式照 seed_import.dart `_ftsRebuildIsolate`：独立 isolate 开第二个 drift 连接
 /// （WAL + busy_timeout，与主连接并发安全），控制端口可中断，批间 yield 进度；
@@ -1135,8 +1603,8 @@ Stream<MaintenanceEvent> runMaintenance({
   }
 }
 
-/// 维护 isolate 入口：先合并存量重复帖，再 dedup，最后 reclassify；
-/// 各自闸门判定，全部完成才落账。
+/// 维护 isolate 入口：先修复 post 引用，再合并存量重复帖，再 dedup，最后
+/// reclassify；各自闸门判定，全部完成才落账。
 Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
   final ReceivePort control = ReceivePort();
   job.events.send(
@@ -1161,7 +1629,34 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
   final Stopwatch sw = Stopwatch()..start();
   try {
     var didWork = false;
-    // 1) 存量自采/种子重复帖合并（legacy_post_dedup_v2 闸门）。
+    // 1) post 引用一次性修复（post_ref_repair_v1 闸门；须在种子导入完成后）。
+    if (await needsPostRefRepair(db)) {
+      final PostRefRepairStats stats = await repairPostReferences(
+        db,
+        isCancelled: () => cancelled,
+        onProgress: (PostRefRepairStats s) => job.events.send(
+          MaintenanceEvent(
+            MaintenanceEventKind.progress,
+            phase: MaintenancePhase.repair,
+            message: 'repair $s',
+          ),
+        ),
+      );
+      if (stats.cancelled) {
+        job.events.send(
+          const MaintenanceEvent(
+            MaintenanceEventKind.done,
+            cancelled: true,
+            message: '已取消（repair 中断，闸门未落）',
+          ),
+        );
+        return;
+      }
+      didWork = stats.entriesRepaired > 0 ||
+          stats.bookmarksRepaired > 0 ||
+          stats.favoritesRepaired > 0;
+    }
+    // 2) 存量自采/种子重复帖合并（legacy_post_dedup_v2 闸门）。
     if (await needsLegacyPostDedup(db)) {
       final LegacyPostDedupStats stats = await dedupLegacyCollectedPosts(
         db,
@@ -1184,9 +1679,10 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
         );
         return;
       }
-      didWork = stats.postsMerged > 0 || stats.entriesDeleted > 0;
+      didWork =
+          didWork || stats.postsMerged > 0 || stats.entriesDeleted > 0;
     }
-    // 2) book_entries 去重（dedup_version 闸门）。
+    // 3) book_entries 去重（dedup_version 闸门）。
     if (await needsDedup(db)) {
       final DedupStats stats = await dedupBookEntries(
         db,
@@ -1211,7 +1707,7 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
       }
       didWork = didWork || stats.rowsDeleted > 0;
     }
-    // 3) 存量帖 v3 分类回填（classifier_version 闸门；词典一次构建复用）。
+    // 4) 存量帖 v3 分类回填（classifier_version 闸门；词典一次构建复用）。
     if (await needsReclassify(db)) {
       final BookDict dict = job.dictLines.isEmpty
           ? BookDict.empty()

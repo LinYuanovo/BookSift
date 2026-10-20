@@ -24,7 +24,7 @@ export 'fts_mode.dart' show FtsMode;
 // M1-③ 种子数据包导入。流程对标 原型 §7.5 / 种子包说明.md §6.2–§6.3：
 //   版本闸门(settings.seed_version vs manifest.pack_version)
 //   → asset/文件 流式解压(cacheDir) → SHA256 校验(zip + seed.db)
-//   → ATTACH seed.db → 单事务清理重写(INSERT OR IGNORE, origin='seed')
+//   → ATTACH seed.db → 单事务清理重写（稳定键映射 seed→main，origin='seed'）
 //   → 闸门落账(版本 + 随包维护闸门) → DETACH → (lite) 后台 isolate 批式重建 FTS。
 // 压缩格式注记：Dart archive 4.x 的 ZIP 解码不支持 method-14 (Zip-LZMA)
 // （CompressionType 仅 none/deflate/bzip2/zstd），故内置 lite 档由
@@ -603,6 +603,13 @@ class DefaultSeedImporter implements SeedImporter {
     );
     try {
       final bool seedHasKindColumns = await _seedPostsHasKindColumns();
+      // 预建 FTS 影子表的 rowid 是 seed 库里的 posts/floors/book_entries id。
+      // 只要本地已有任何用户行（自采帖/用户条目），本次导入就可能重分配 id；
+      // 此时复制影子表会让 FTS 命中到错误内容，故一律跳过、走后台 rebuildFts。
+      final int userContentRows = await _countOne(
+        "SELECT (SELECT COUNT(*) FROM posts WHERE origin <> '$seedOrigin') + "
+        "(SELECT COUNT(*) FROM book_entries WHERE origin <> '$seedOrigin') AS n",
+      );
       // 批量拷贝期间摘除 FTS 同步触发器（触发器逐行同步会把导入拖慢 ~30s 桌面口径，
       // lite 走后台重建、full 走影子表复制；DDL 与 app_database._createFts 保持一致）。
       await _dropFtsTriggers();
@@ -615,10 +622,14 @@ class DefaultSeedImporter implements SeedImporter {
         await _createFtsTriggers();
       }
       // full 档：复制 seed 预建 FTS 影子表（独立事务，失败整体回滚 → rebuildFts() 兜底自愈）。
+      // 有用户内容时绝不能复制：`_entry_map` / `_floor_map` 可能已重分配 rowid。
       var ftsReady = false;
       String? ftsError;
       final FtsMode desired = await readFtsMode() ?? FtsMode.full;
-      if (full && manifest.ftsPrebuilt && desired != FtsMode.off) {
+      if (full &&
+          manifest.ftsPrebuilt &&
+          userContentRows == 0 &&
+          desired != FtsMode.off) {
         try {
           await _db.transaction(() async {
             await _copyFtsShadowTables(book: true, floor: desired == FtsMode.full);
@@ -646,14 +657,36 @@ class DefaultSeedImporter implements SeedImporter {
     }
   }
 
-  /// 单事务：保住用户组引用 → 清理旧 seed 行 → INSERT OR IGNORE 拷贝（显式 drift 列名单，
-  /// seed-only 溯源列忽略）→ 用户条目按 name_norm 重挂组 → 闸门落账（§6.2 步骤 1–5）。
-  /// 首启时清理步骤为空操作；重跑幂等（显式 id + 唯一键 + OR IGNORE + 事务原子性）。
+  /// 单事务：保住用户引用 → 清理旧 seed 行 → 按稳定键建 seed→main 映射 →
+  /// 重写内容表 → 回挂用户引用 → 用户条目按 name_norm 重挂组 → 闸门落账。
+  ///
+  /// 关键不变量：`seed.posts.id` 不再假设等于 `main.posts.id`。所有 floors /
+  /// book_entries 都经 `_seed_post_map` 取目标 post id；`tid` 已存在于用户自采帖的
+  /// seed 帖不重复插入，而是把 seed id 映射到既有 main id。
   Future<Map<String, int>> _copyInTransaction(
     SeedManifest manifest,
     bool full,
     bool seedHasKindColumns,
   ) async {
+    // 0) 清理上次异常中断可能残留的 temp 表。
+    for (final String table in <String>[
+      '_ug',
+      '_old_post',
+      '_old_user_entry',
+      '_old_bookmark',
+      '_old_favorite',
+      '_old_group_favorite',
+      '_old_ref_ids',
+      '_seed_post_map',
+      '_seed_id_conflict',
+      '_floor_map',
+      '_image_map',
+      '_entry_map',
+      '_old_to_new',
+    ]) {
+      await _db.customStatement('DROP TABLE IF EXISTS $table');
+    }
+
     // 1) 保住用户条目→组的引用（组即将被全删重写；种子完全持有 book_groups，§6.1）。
     await _db.customStatement('''
       CREATE TEMP TABLE _ug AS
@@ -661,42 +694,169 @@ class DefaultSeedImporter implements SeedImporter {
       FROM book_entries b JOIN book_groups g ON g.id = b.book_group_id
       WHERE b.origin <> '$seedOrigin'
     ''');
-    // 2) 清理旧 seed 内容行；用户表与 origin<>'seed' 行永不触碰。
+
+    // 2) 在删除旧 seed 行前快照用户引用。bookmarks/favorites 没有外键，
+    //    删除后再找就只剩悬空 id；book_entries 的 FK 会在删除后 SET NULL，
+    //    也需要先把旧 post_ref / floor_seq 留下来。
+    await _db.customStatement('''
+      CREATE TEMP TABLE _old_post AS
+      SELECT id, tid, channel, title, author, date
+      FROM posts WHERE origin = '$seedOrigin'
+    ''');
+    await _db.customStatement('''
+      CREATE TEMP TABLE _old_user_entry AS
+      SELECT b.id AS entry_id, b.post_ref AS old_post_id, f.seq AS old_floor_seq
+      FROM book_entries b LEFT JOIN floors f ON f.id = b.floor_ref
+      WHERE b.origin <> '$seedOrigin'
+        AND b.post_ref IN (SELECT id FROM _old_post)
+    ''');
+    await _db.customStatement('''
+      CREATE TEMP TABLE _old_bookmark AS
+      SELECT b.id AS bookmark_id, b.post_ref AS old_post_id
+      FROM bookmarks b
+      WHERE b.post_ref IN (SELECT id FROM _old_post)
+    ''');
+    await _db.customStatement('''
+      CREATE TEMP TABLE _old_favorite AS
+      SELECT f.id AS favorite_id, f.target_id AS old_post_id
+      FROM favorites f
+      WHERE f.target_type = 'post'
+        AND f.target_id IN (SELECT id FROM _old_post)
+    ''');
+    await _db.customStatement('''
+      CREATE TEMP TABLE _old_group_favorite AS
+      SELECT f.id AS favorite_id, g.name_norm
+      FROM favorites f JOIN book_groups g ON g.id = f.target_id
+      WHERE f.target_type = 'book_group'
+    ''');
+    // 只对真有用户引用的旧 seed id 建映射：全量 _old_post × seed.posts 的 OR 连接
+    // 在 3.9 万行现场库要约 18s，而绝大多数升级根本没有这三类引用。
+    await _db.customStatement('''
+      CREATE TEMP TABLE _old_ref_ids AS
+      SELECT old_post_id AS id FROM _old_user_entry
+      UNION SELECT old_post_id FROM _old_bookmark
+      UNION SELECT old_post_id FROM _old_favorite
+    ''');
+
+    // 3) 清理旧 seed 内容行；用户表与 origin<>'seed' 行永不触碰。
     //    posts 级联清 floors/images（FK ON DELETE CASCADE）；用户条目 post_ref/floor_ref 走 SET NULL。
     await _db.customStatement(
       "DELETE FROM book_entries WHERE origin = '$seedOrigin'",
     );
     await _db.customStatement("DELETE FROM posts WHERE origin = '$seedOrigin'");
     await _db.customStatement('DELETE FROM book_groups');
-    // 3) 重写内容表（FK 依赖序：posts → floors → images → book_groups → book_entries）。
-    //    OR IGNORE：显式 id/唯一键冲突行让位给先在库行（用户行零损伤）；
-    //    EXISTS 过滤防「用户先占 id」时 FK 违例中断整包导入（悬空引用置 NULL，同 SET NULL 语义）。
+
+    // 4) 建 seed.posts → main.posts 映射。
+    //    4a) tid 已存在于用户自采/导入帖 → 复用既有行（不重复插 seed 帖，也不把
+    //        seed 楼层/条目塞进用户帖；仅保留映射供旧引用回挂）。
+    //    4b) id 空闲 → 保持原 id。
+    //    4c) id 被自采帖占用且 tid 不同 → 分配一个高于 main/seed 最大 id 的新 id。
+    await _db.customStatement('''
+      CREATE TEMP TABLE _seed_post_map (
+        seed_id INTEGER PRIMARY KEY,
+        main_id INTEGER NOT NULL,
+        inserted INTEGER NOT NULL
+      )
+    ''');
+    await _db.customStatement('''
+      INSERT INTO _seed_post_map(seed_id, main_id, inserted)
+      SELECT s.id, p.id, 0
+      FROM seed.posts s
+      JOIN main.posts p ON p.tid = s.tid
+      WHERE s.tid IS NOT NULL
+    ''');
+    await _db.customStatement('''
+      INSERT INTO _seed_post_map(seed_id, main_id, inserted)
+      SELECT s.id, s.id, 1
+      FROM seed.posts s
+      WHERE NOT EXISTS (SELECT 1 FROM _seed_post_map m WHERE m.seed_id = s.id)
+        AND NOT EXISTS (SELECT 1 FROM main.posts p WHERE p.id = s.id)
+    ''');
+    await _db.customStatement('''
+      CREATE TEMP TABLE _seed_id_conflict AS
+      SELECT s.id AS seed_id, ROW_NUMBER() OVER (ORDER BY s.id) AS rn
+      FROM seed.posts s
+      WHERE NOT EXISTS (SELECT 1 FROM _seed_post_map m WHERE m.seed_id = s.id)
+        AND EXISTS (SELECT 1 FROM main.posts p WHERE p.id = s.id)
+    ''');
+    await _db.customStatement('''
+      INSERT INTO _seed_post_map(seed_id, main_id, inserted)
+      SELECT c.seed_id,
+             (SELECT MAX(x) FROM (
+                SELECT COALESCE(MAX(id), 0) AS x FROM main.posts
+                UNION ALL
+                SELECT COALESCE(MAX(id), 0) FROM seed.posts
+             )) + c.rn,
+             1
+      FROM _seed_id_conflict c
+    ''');
+
+    // 5) 写 posts（只写实际新增的 seed 行；tid 已存在的 seed 行复用用户帖）。
     final String kindSelect = seedHasKindColumns
         ? 'post_kind, recommend_flag'
         : '''post_type,
            CASE post_type WHEN '扫书' THEN 1 WHEN '排雷' THEN -1 ELSE 0 END''';
     await _db.customStatement('''
-      INSERT OR IGNORE INTO main.posts
+      INSERT INTO main.posts
         (id,tid,title,author,author_name,user_id,portrait,date,date_raw,channel,sub_channel,
          post_type,post_kind,recommend_flag,floor_count,image_count,origin,collected_at)
-      SELECT id,tid,title,author,author_name,user_id,portrait,date,date_raw,channel,sub_channel,
-             post_type,$kindSelect,floor_count,image_count,origin,collected_at
-      FROM seed.posts
+      SELECT m.main_id,s.tid,s.title,s.author,s.author_name,s.user_id,s.portrait,s.date,s.date_raw,
+             s.channel,s.sub_channel,s.post_type,$kindSelect,s.floor_count,s.image_count,
+             s.origin,s.collected_at
+      FROM seed.posts s
+      JOIN _seed_post_map m ON m.seed_id = s.id
+      WHERE m.inserted = 1
     ''');
+
+    // 6) floors / images 只跟随「实际新增」的 seed 帖；id 冲突时重新分配，
+    //    并留 seed_floor_id → main_floor_id 映射给 book_entries.floor_ref。
     await _db.customStatement('''
-      INSERT OR IGNORE INTO main.floors
-        (id,post_id,seq,pid,text,text_norm_hash,char_count,created_at,author_id)
-      SELECT f.id,f.post_id,f.seq,f.pid,f.text,f.text_norm_hash,f.char_count,f.created_at,f.author_id
+      CREATE TEMP TABLE _floor_map AS
+      SELECT f.id AS seed_floor_id,
+             CASE WHEN NOT EXISTS (SELECT 1 FROM main.floors mf WHERE mf.id = f.id)
+                  THEN f.id
+                  ELSE (SELECT MAX(x) FROM (
+                         SELECT COALESCE(MAX(id), 0) AS x FROM main.floors
+                         UNION ALL
+                         SELECT COALESCE(MAX(id), 0) FROM seed.floors
+                       )) + ROW_NUMBER() OVER (ORDER BY f.id)
+             END AS main_floor_id
       FROM seed.floors f
-      WHERE EXISTS (SELECT 1 FROM main.posts mp WHERE mp.id = f.post_id)
+      JOIN _seed_post_map m ON m.seed_id = f.post_id AND m.inserted = 1
     ''');
     await _db.customStatement('''
-      INSERT OR IGNORE INTO main.images
-        (id,floor_id,url_original,url_permanent,width,height)
-      SELECT i.id,i.floor_id,i.url_original,i.url_permanent,i.width,i.height
-      FROM seed.images i
-      WHERE EXISTS (SELECT 1 FROM main.floors mf WHERE mf.id = i.floor_id)
+      INSERT INTO main.floors
+        (id,post_id,seq,pid,text,text_norm_hash,char_count,created_at,author_id)
+      SELECT fm.main_floor_id,m.main_id,f.seq,f.pid,f.text,f.text_norm_hash,f.char_count,
+             f.created_at,f.author_id
+      FROM seed.floors f
+      JOIN _floor_map fm ON fm.seed_floor_id = f.id
+      JOIN _seed_post_map m ON m.seed_id = f.post_id AND m.inserted = 1
     ''');
+    await _db.customStatement('''
+      CREATE TEMP TABLE _image_map AS
+      SELECT i.id AS seed_image_id,
+             CASE WHEN NOT EXISTS (SELECT 1 FROM main.images mi WHERE mi.id = i.id)
+                  THEN i.id
+                  ELSE (SELECT MAX(x) FROM (
+                         SELECT COALESCE(MAX(id), 0) AS x FROM main.images
+                         UNION ALL
+                         SELECT COALESCE(MAX(id), 0) FROM seed.images
+                       )) + ROW_NUMBER() OVER (ORDER BY i.id)
+             END AS main_image_id
+      FROM seed.images i
+      JOIN _floor_map fm ON fm.seed_floor_id = i.floor_id
+    ''');
+    await _db.customStatement('''
+      INSERT INTO main.images
+        (id,floor_id,url_original,url_permanent,width,height)
+      SELECT im.main_image_id,fm.main_floor_id,i.url_original,i.url_permanent,i.width,i.height
+      FROM seed.images i
+      JOIN _image_map im ON im.seed_image_id = i.id
+      JOIN _floor_map fm ON fm.seed_floor_id = i.floor_id
+    ''');
+
+    // 7) book_groups（组已全删重写，seed 组 id 不会和用户组冲突）。
     await _db.customStatement('''
       INSERT OR IGNORE INTO main.book_groups
         (id,name_norm,author_eff_norm,name_display,author_display,entry_total,
@@ -706,19 +866,129 @@ class DefaultSeedImporter implements SeedImporter {
       FROM seed.book_groups
     ''');
     await _db.customStatement('''
+      UPDATE favorites
+      SET target_id = (
+        SELECT g.id FROM book_groups g
+        JOIN _old_group_favorite og ON og.name_norm = g.name_norm
+        WHERE og.favorite_id = favorites.id
+        LIMIT 1)
+      WHERE id IN (SELECT favorite_id FROM _old_group_favorite)
+        AND EXISTS (
+          SELECT 1 FROM book_groups g
+          JOIN _old_group_favorite og ON og.name_norm = g.name_norm
+          WHERE og.favorite_id = favorites.id)
+    ''');
+    await _db.customStatement('''
+      DELETE FROM favorites
+      WHERE id IN (SELECT favorite_id FROM _old_group_favorite)
+        AND NOT EXISTS (
+          SELECT 1 FROM book_groups g
+          JOIN _old_group_favorite og ON og.name_norm = g.name_norm
+          WHERE og.favorite_id = favorites.id)
+    ''');
+
+    // 8) book_entries：id 冲突时重新分配；post_ref / floor_ref 一律走映射。
+    //    post_ref 指向既有自采帖的 seed 条目直接跳过（避免把种子书目重复塞进用户帖）。
+    await _db.customStatement('''
+      CREATE TEMP TABLE _entry_map AS
+      SELECT s.id AS seed_entry_id,
+             CASE WHEN NOT EXISTS (SELECT 1 FROM main.book_entries b WHERE b.id = s.id)
+                  THEN s.id
+                  ELSE (SELECT MAX(x) FROM (
+                         SELECT COALESCE(MAX(id), 0) AS x FROM main.book_entries
+                         UNION ALL
+                         SELECT COALESCE(MAX(id), 0) FROM seed.book_entries
+                       )) + ROW_NUMBER() OVER (ORDER BY s.id)
+             END AS main_entry_id
+      FROM seed.book_entries s
+    ''');
+    await _db.customStatement('''
       INSERT OR IGNORE INTO main.book_entries
         (id,name,name_norm,author,author_norm,author_kind,recommender,comment,comment_src,
          comment_norm_hash,date,date_raw,channel,sub_channel,category,post_ref,floor_ref,
          src_tid,src_url,word_count,book_grade,quality,content_hash,book_group_id,origin,collected_at)
-      SELECT s.id,s.name,s.name_norm,s.author,s.author_norm,s.author_kind,s.recommender,s.comment,
-             s.comment_src,s.comment_norm_hash,s.date,s.date_raw,s.channel,s.sub_channel,s.category,
-             (SELECT mp.id FROM main.posts mp WHERE mp.id = s.post_ref),
-             (SELECT mf.id FROM main.floors mf WHERE mf.id = s.floor_ref),
+      SELECT em.main_entry_id,s.name,s.name_norm,s.author,s.author_norm,s.author_kind,s.recommender,
+             s.comment,s.comment_src,s.comment_norm_hash,s.date,s.date_raw,s.channel,s.sub_channel,
+             s.category,
+             (SELECT m.main_id FROM _seed_post_map m WHERE m.seed_id = s.post_ref),
+             (SELECT fm.main_floor_id FROM _floor_map fm WHERE fm.seed_floor_id = s.floor_ref),
              s.src_tid,s.src_url,s.word_count,s.book_grade,s.quality,s.content_hash,
              s.book_group_id,s.origin,s.collected_at
       FROM seed.book_entries s
+      JOIN _entry_map em ON em.seed_entry_id = s.id
+      LEFT JOIN _seed_post_map m ON m.seed_id = s.post_ref
+      WHERE s.post_ref IS NULL OR m.inserted = 1
     ''');
-    // 4) 用户条目按 name_norm 重挂新组（组已消失则置 NULL，App 容忍悬空，§6.2）。
+
+    // 9) 旧 seed 引用 → 新 main id 映射。真实帖按 tid；占位帖按「渠道+标题+作者+日期」指纹。
+    //    这一步在 seed 行删除后仍可用（旧值已保存在 _old_post）。
+    await _db.customStatement('''
+      CREATE TEMP TABLE _old_to_new AS
+      SELECT o.id AS old_id, MIN(m.main_id) AS new_id
+      FROM _old_ref_ids r
+      JOIN _old_post o ON o.id = r.id
+      JOIN seed.posts s ON (
+        (o.tid IS NOT NULL AND s.tid = o.tid)
+        OR (
+          o.tid IS NULL AND s.tid IS NULL
+          AND COALESCE(s.channel, '') = COALESCE(o.channel, '')
+          AND COALESCE(s.title, '') = COALESCE(o.title, '')
+          AND COALESCE(s.author, '') = COALESCE(o.author, '')
+          AND COALESCE(s.date, '') = COALESCE(o.date, '')
+        )
+      )
+      JOIN _seed_post_map m ON m.seed_id = s.id
+      GROUP BY o.id
+    ''');
+    await _db.customStatement('''
+      UPDATE book_entries
+      SET post_ref = (
+            SELECT n.new_id FROM _old_to_new n
+            JOIN _old_user_entry ue ON ue.old_post_id = n.old_id
+            WHERE ue.entry_id = book_entries.id
+          ),
+          floor_ref = (
+            SELECT nf.id FROM floors nf
+            JOIN _old_to_new n ON n.new_id = nf.post_id
+            JOIN _old_user_entry ue ON ue.old_post_id = n.old_id
+            WHERE ue.entry_id = book_entries.id
+              AND ue.old_floor_seq IS NOT NULL
+              AND nf.seq = ue.old_floor_seq
+            LIMIT 1
+          )
+      WHERE id IN (SELECT entry_id FROM _old_user_entry)
+    ''');
+    await _db.customStatement('''
+      UPDATE bookmarks
+      SET post_ref = (
+        SELECT n.new_id FROM _old_to_new n
+        JOIN _old_bookmark ob ON ob.old_post_id = n.old_id
+        WHERE ob.bookmark_id = bookmarks.id
+      )
+      WHERE id IN (SELECT bookmark_id FROM _old_bookmark)
+    ''');
+    await _db.customStatement('''
+      UPDATE favorites
+      SET target_id = COALESCE((
+        SELECT n.new_id FROM _old_to_new n
+        JOIN _old_favorite ofv ON ofv.old_post_id = n.old_id
+        WHERE ofv.favorite_id = favorites.id
+      ), target_id)
+      WHERE id IN (SELECT favorite_id FROM _old_favorite)
+    ''');
+    // 旧 seed 帖在新包中已不存在且没有映射：target_id NOT NULL 不能置空，删除该
+    // 收藏行，避免旧 id 被新帖复用时静默指向另一条帖子（随后 repair 也无法识别）。
+    await _db.customStatement('''
+      DELETE FROM favorites
+      WHERE id IN (SELECT favorite_id FROM _old_favorite)
+        AND NOT EXISTS (
+          SELECT 1 FROM _old_to_new n
+          JOIN _old_favorite ofv ON ofv.old_post_id = n.old_id
+          WHERE ofv.favorite_id = favorites.id
+        )
+    ''');
+
+    // 10) 用户条目按 name_norm 重挂新组（组已消失则置 NULL，App 容忍悬空，§6.2）。
     await _db.customStatement('''
       UPDATE book_entries SET book_group_id =
         (SELECT g.id FROM book_groups g WHERE g.name_norm = _ug.name_norm)
@@ -750,13 +1020,49 @@ class DefaultSeedImporter implements SeedImporter {
     await _db.customStatement(
       "DELETE FROM settings WHERE key = '$ftsRebuildDoneKey'",
     );
-    await _db.customStatement('DROP TABLE IF EXISTS _ug');
+    // 本次导入可能修复/重排了 post 引用：清掉一次性修复闸门，让后台维护在新库上
+    // 再跑一遍 repairPostReferences（幂等；无问题则 0 修复）。
+    await _db.customStatement(
+      "DELETE FROM settings WHERE key = '${SettingsKeys.postRefRepairVersion}'",
+    );
 
-    // 行数对账（信息性，写进 done message；硬性一致性由 zip/db sha256 保证）。
+    // 行数对账：seed posts 必须等于 manifest 行数减去「tid 已存在、复用到用户帖」
+    // 的 seed 行数；任何其他差额都说明映射/插入有漏洞，直接回滚报错。
     final Map<String, int> counts = <String, int>{
       for (final MapEntry<String, String> e in _seedCountQueries.entries)
         e.key: await _countOne(e.value),
     };
+    final int expectedPosts = manifest.rows['posts'] ?? 0;
+    if (expectedPosts > 0) {
+      final int reused = await _countOne(
+        'SELECT COUNT(*) AS n FROM _seed_post_map WHERE inserted = 0',
+      );
+      final int actual = counts['posts'] ?? 0;
+      if (actual != expectedPosts - reused) {
+        throw SeedImportException(
+          '种子包导入不完整：manifest posts=$expectedPosts，'
+          '复用到用户帖=$reused，实际 seed posts=$actual',
+        );
+      }
+    }
+
+    for (final String table in <String>[
+      '_ug',
+      '_old_post',
+      '_old_user_entry',
+      '_old_bookmark',
+      '_old_favorite',
+      '_old_group_favorite',
+      '_old_ref_ids',
+      '_seed_post_map',
+      '_seed_id_conflict',
+      '_floor_map',
+      '_image_map',
+      '_entry_map',
+      '_old_to_new',
+    ]) {
+      await _db.customStatement('DROP TABLE IF EXISTS $table');
+    }
     return counts;
   }
 

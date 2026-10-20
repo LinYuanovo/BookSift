@@ -2,6 +2,8 @@
 ///
 /// - dedupBookEntries：前缀链/同文判重、分叉保守保留、keeper 次序、组聚合重算、
 ///   FTS 删除触发器同步、闸门与幂等、中断续跑；
+/// - repairPostReferences：种子升级后 book_entries(src_tid)、bookmarks、
+///   favorites 的悬空 post 引用修复、闸门与幂等、中断续跑；
 /// - reclassifyPostsV3：存量帖 v3 回填（空词典 = v2 行为即可覆盖 T1a 标题规则）、
 ///   kind=null 不动、book_entries.category 镜像同步（post_ref IS NULL 不动、
 ///   已同步不重复计）、首楼人工排雷保护、推书条目保留、闸门落账与幂等；
@@ -70,6 +72,7 @@ Future<int> _addEntry(
   int quality = 2,
   int? postRef,
   int? floorRef,
+  int? srcTid,
   int? groupId,
   String origin = 'builtin',
 }) =>
@@ -87,6 +90,7 @@ Future<int> _addEntry(
           quality: Value<int>(quality),
           postRef: Value<int?>(postRef),
           floorRef: Value<int?>(floorRef),
+          srcTid: Value<int?>(srcTid),
           bookGroupId: Value<int?>(groupId),
           wordCount: Value<int?>(comment.length),
           origin: Value<String>(origin),
@@ -106,6 +110,42 @@ Future<Post> _post(AppDatabase db, int id) =>
 
 Future<Floor> _floorOf(AppDatabase db, int postId) =>
     (db.select(db.floors)..where((Floors t) => t.postId.equals(postId))).getSingle();
+
+Future<int> _addBookmark(
+  AppDatabase db, {
+  required int? postRef,
+  required String title,
+  String? author,
+  String? channel,
+}) =>
+    db.into(db.bookmarks).insert(BookmarksCompanion.insert(
+          postRef: Value<int?>(postRef),
+          title: title,
+          author: Value<String?>(author),
+          channel: Value<String?>(channel),
+          createdAt: DateTime(2026, 1, 1),
+        ));
+
+Future<Bookmark> _bookmark(AppDatabase db, int id) =>
+    (db.select(db.bookmarks)..where((Bookmarks t) => t.id.equals(id))).getSingle();
+
+Future<int> _addFavorite(
+  AppDatabase db, {
+  required String targetType,
+  required int targetId,
+  required String title,
+  String? subtitle,
+}) =>
+    db.into(db.favorites).insert(FavoritesCompanion.insert(
+          targetType: targetType,
+          targetId: targetId,
+          title: title,
+          subtitle: Value<String?>(subtitle),
+          addedAt: DateTime(2026, 1, 1),
+        ));
+
+Future<Favorite> _favorite(AppDatabase db, int id) =>
+    (db.select(db.favorites)..where((Favorites t) => t.id.equals(id))).getSingle();
 
 Future<int> _ftsCount(AppDatabase db, String term) async => (await db
             .customSelect('SELECT COUNT(*) AS c FROM book_fts WHERE book_fts MATCH ?',
@@ -280,6 +320,18 @@ void main() {
         groupId: gid,
         origin: 'collected',
       );
+      final int bookmarkId = await _addBookmark(
+        db,
+        postRef: collectedPost,
+        title: '月度扫书',
+        channel: 'yy小说吧',
+      );
+      final int favoriteId = await _addFavorite(
+        db,
+        targetType: 'post',
+        targetId: collectedPost,
+        title: '月度扫书',
+      );
 
       final LegacyPostDedupStats stats = await dedupLegacyCollectedPosts(db);
 
@@ -305,6 +357,265 @@ void main() {
       expect(entry.floorRef, seedFloor.id);
       expect(entry.origin, 'collected');
       expect((await _group(db, gid)).entryTotal, 1);
+      expect(
+        (await _bookmark(db, bookmarkId)).postRef,
+        seedPost,
+        reason: '书签须从被删 collected 帖重挂到 seed keeper',
+      );
+      expect(
+        (await _favorite(db, favoriteId)).targetId,
+        seedPost,
+        reason: '帖子收藏须从被删 collected 帖重挂到 seed keeper',
+      );
+    });
+    test('同标题但双方 tid 都非空且不同：不得合并', () async {
+      await _addPost(db, title: '同名不同帖', tid: 100, origin: 'seed');
+      await _addPost(db, title: '同名不同帖', tid: 200, origin: 'collected');
+
+      final LegacyPostDedupStats stats = await dedupLegacyCollectedPosts(db);
+
+      expect(stats.postsMerged, 0);
+      expect(await db.posts.count().getSingle(), 2);
+    });
+  });
+
+  group('repairPostReferences', () {
+    test('src_tid 回填条目；悬空书签/收藏按标题回填；闸门落账且二次幂等', () async {
+      // 同标题 seed 行先插入（id 更小），验证匹配优先 origin='collected'。
+      await _addPost(db, title: '种子升级样例帖', origin: 'seed');
+      final int postId = await _addPost(
+        db,
+        title: '种子升级样例帖',
+        tid: 11113728843,
+        origin: 'collected',
+      );
+      final int entryId = await _addEntry(
+        db,
+        nameNorm: '样例书',
+        comment: '样例推荐语',
+        postRef: null,
+        srcTid: 11113728843,
+        origin: 'seed',
+      );
+      final int bookmarkId = await _addBookmark(
+        db,
+        postRef: 999999,
+        title: '种子升级样例帖',
+        channel: 'yy小说吧',
+      );
+      final int favoriteId = await _addFavorite(
+        db,
+        targetType: 'post',
+        targetId: 999999,
+        title: '种子升级样例帖',
+      );
+
+      expect(await needsPostRefRepair(db), isTrue);
+      final PostRefRepairStats stats = await repairPostReferences(db);
+
+      expect(stats.cancelled, false);
+      expect(stats.entriesRepaired, 1);
+      expect(stats.bookmarksRepaired, 1);
+      expect(stats.favoritesRepaired, 1);
+      expect((await _entry(db, entryId)).postRef, postId);
+      expect((await _bookmark(db, bookmarkId)).postRef, postId);
+      expect((await _favorite(db, favoriteId)).targetId, postId);
+      expect(await needsPostRefRepair(db), isFalse);
+      expect(
+        (await db.customSelect(
+          'SELECT value AS v FROM settings WHERE key = ?',
+          variables: <Variable>[
+            Variable.withString(SettingsKeys.postRefRepairVersion),
+          ],
+        ).getSingle())
+            .read<String>('v'),
+        '1',
+      );
+
+      final PostRefRepairStats second = await repairPostReferences(db);
+      expect(second.cancelled, false);
+      expect(second.entriesRepaired, 0);
+      expect(second.bookmarksRepaired, 0);
+      expect(second.favoritesRepaired, 0);
+      expect(await needsPostRefRepair(db), isFalse);
+    });
+
+    test('post_ref 指向错误 tid 时按 src_tid 重挂（旧版按 id 串帖）', () async {
+      final int wrongPost = await _addPost(
+        db,
+        title: '错误种子帖',
+        tid: 11113728840,
+        origin: 'seed',
+      );
+      final int targetPost = await _addPost(
+        db,
+        title: '正确自采帖',
+        tid: 11113728841,
+        origin: 'collected',
+      );
+      final int entryId = await _addEntry(
+        db,
+        nameNorm: '错配书',
+        comment: '错配推荐语',
+        postRef: wrongPost,
+        srcTid: 11113728841,
+        origin: 'seed',
+      );
+
+      final PostRefRepairStats stats = await repairPostReferences(db);
+
+      expect(stats.entriesRepaired, 1);
+      expect((await _entry(db, entryId)).postRef, targetPost);
+    });
+
+    test('id 存在但标题不符：书签/收藏按标题改挂，错误 floor_ref 清空', () async {
+      final int wrongPost = await _addPost(
+        db,
+        title: '旧标题占位帖',
+        tid: 11113728842,
+        origin: 'seed',
+        firstFloor: '旧楼层',
+      );
+      final Floor wrongFloor = await _floorOf(db, wrongPost);
+      final int targetPost = await _addPost(
+        db,
+        title: '正确标题自采帖',
+        tid: 11113728843,
+        origin: 'collected',
+      );
+      final int bookmarkId = await _addBookmark(
+        db,
+        postRef: wrongPost,
+        title: '正确标题自采帖',
+        channel: 'yy小说吧',
+      );
+      final int favoriteId = await _addFavorite(
+        db,
+        targetType: 'post',
+        targetId: wrongPost,
+        title: '正确标题自采帖',
+      );
+      final int entryId = await _addEntry(
+        db,
+        nameNorm: '楼层错配书',
+        comment: '楼层错配推荐语',
+        postRef: targetPost,
+        floorRef: wrongFloor.id,
+        origin: 'seed',
+      );
+
+      final PostRefRepairStats stats = await repairPostReferences(db);
+
+      expect(stats.bookmarksRepaired, 1);
+      expect(stats.favoritesRepaired, 1);
+      expect((await _bookmark(db, bookmarkId)).postRef, targetPost);
+      expect((await _favorite(db, favoriteId)).targetId, targetPost);
+      expect((await _entry(db, entryId)).floorRef, isNull,
+          reason: 'floor_ref 不属于 post_ref 时必须清空，避免跳错楼');
+    });
+
+    test('同名多候选：书签置 NULL、收藏删除，不 LIMIT 1 猜帖', () async {
+      await _addPost(db, title: '同名候选帖', tid: 11113728844, origin: 'collected');
+      await _addPost(db, title: '同名候选帖', tid: 11113728845, origin: 'collected');
+      final int bookmarkId = await _addBookmark(
+        db,
+        postRef: 999997,
+        title: '同名候选帖',
+        channel: 'yy小说吧',
+      );
+      final int favoriteId = await _addFavorite(
+        db,
+        targetType: 'post',
+        targetId: 999997,
+        title: '同名候选帖',
+      );
+
+      await repairPostReferences(db);
+
+      expect((await _bookmark(db, bookmarkId)).postRef, isNull);
+      expect(
+        await (db.select(db.favorites)
+              ..where((Favorites t) => t.id.equals(favoriteId)))
+            .getSingleOrNull(),
+        isNull,
+      );
+    });
+
+    test('book_group 收藏按《书名》+作者回挂到新组 id', () async {
+      final int gid = await db.into(db.bookGroups).insert(BookGroupsCompanion.insert(
+            nameNorm: '组修复书',
+            nameDisplay: const Value<String?>('组修复书'),
+            authorDisplay: const Value<String?>('组作者'),
+          ));
+      final int favoriteId = await _addFavorite(
+        db,
+        targetType: 'book_group',
+        targetId: 999996,
+        title: '《组修复书》',
+        subtitle: '组作者',
+      );
+
+      await repairPostReferences(db);
+
+      expect((await _favorite(db, favoriteId)).targetId, gid);
+    });
+
+    test('无匹配：书签置 NULL；收藏按 schema 约束删除（target_id NOT NULL）', () async {
+      final int bookmarkId = await _addBookmark(
+        db,
+        postRef: 999998,
+        title: '已不存在的帖子',
+      );
+      final int favoriteId = await _addFavorite(
+        db,
+        targetType: 'post',
+        targetId: 999998,
+        title: '已不存在的帖子',
+      );
+
+      final PostRefRepairStats stats = await repairPostReferences(db);
+
+      expect(stats.bookmarksRepaired, 1);
+      expect(stats.favoritesRepaired, 1);
+      expect((await _bookmark(db, bookmarkId)).postRef, isNull);
+      expect(
+        await (db.select(db.favorites)
+              ..where((Favorites t) => t.id.equals(favoriteId)))
+            .getSingleOrNull(),
+        isNull,
+        reason: 'target_id 为 NOT NULL，无法置 NULL，只能删除悬空收藏行',
+      );
+      expect(await needsPostRefRepair(db), isFalse);
+    });
+
+    test('中断：不落闸门，重跑可继续修复', () async {
+      final int postId = await _addPost(
+        db,
+        title: '中断样例帖',
+        tid: 11113728844,
+        origin: 'collected',
+      );
+      final int entryId = await _addEntry(
+        db,
+        nameNorm: '中断样例书',
+        comment: '中断样例推荐语',
+        srcTid: 11113728844,
+        origin: 'seed',
+      );
+
+      final PostRefRepairStats partial = await repairPostReferences(
+        db,
+        isCancelled: () => true,
+      );
+      expect(partial.cancelled, true);
+      expect(await needsPostRefRepair(db), isTrue);
+      expect((await _entry(db, entryId)).postRef, isNull);
+
+      final PostRefRepairStats resumed = await repairPostReferences(db);
+      expect(resumed.cancelled, false);
+      expect(resumed.entriesRepaired, 1);
+      expect((await _entry(db, entryId)).postRef, postId);
+      expect(await needsPostRefRepair(db), isFalse);
     });
   });
 
@@ -646,6 +957,7 @@ void main() {
       expect(events.where((e) => e.kind == MaintenanceEventKind.failed), isEmpty);
 
       final AppDatabase verifyDb = AppDatabase(NativeDatabase(File(path)));
+      expect(await needsPostRefRepair(verifyDb), false);
       expect(await needsDedup(verifyDb), false);
       expect(await needsReclassify(verifyDb), false);
       expect(await needsLegacyPostDedup(verifyDb), false);

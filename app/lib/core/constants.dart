@@ -28,6 +28,10 @@ abstract final class SettingsKeys {
   /// 中断/失败不写，下次启动重跑——重跑幂等应 0 删除）。
   static const String dedupVersion = 'dedup_version';
 
+  /// 种子包升级后 post 引用一次性修复完成标记（lib/data/maintenance.dart 的
+  /// repairPostReferences；'1' = 已完成，中断/失败不写，下次启动重跑——重跑幂等）。
+  static const String postRefRepairVersion = 'post_ref_repair_v1';
+
   /// 搜索结果浏览位置（features/search/search_state.dart 的 SearchPositionStore）。
   /// 值 = JSON map「条件签名 → 结果列表滚动偏移 px」，LRU 上限 32 条（关 App 重开仍在）。
   static const String searchPositions = 'search_positions';
