@@ -1,7 +1,5 @@
 #include "my_application.h"
 
-#include <flutter/method_channel.h>
-#include <flutter/standard_method_codec.h>
 #include <flutter_linux/flutter_linux.h>
 #include <sys/stat.h>
 #include <unistd.h>

@@ -309,6 +309,14 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      - name: Diagnose macOS pods
+        working-directory: app
+        run: |
+          set -euo pipefail
+          find macos/Pods -maxdepth 3 -iname '*url_launcher*' -print
+          grep -R -n 'url_launcher_macos_privacy' macos/Pods/Pods.xcodeproj/project.pbxproj || true
+          xcodebuild -workspace macos/Runner.xcworkspace -scheme Runner -showBuildSettings | grep -E 'CONFIGURATION_BUILD_DIR|UNLOCALIZED_RESOURCES_FOLDER_PATH|TARGET_NAME' | head -80
+
       - name: flutter build macos --release
         working-directory: app
         env:
