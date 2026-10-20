@@ -11,6 +11,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:booksift/classify/classifier.dart';
+import 'package:booksift/classify/src/engine.dart' show classifyV3Core;
 
 import 'support.dart';
 
@@ -70,12 +71,14 @@ void main() {
               '  dart=$extracted\n  py  =$booknames');
         }
 
-        final ClassifyResult res = classifyV3(
+        // 本测试锁定 Python v3 核心语义；生产入口的“明确无雷/推书”后处理在
+        // 下方独立回归，不能改变冻结 parity 的结果。
+        final ClassifyResult res = classifyV3Core(
           title: title,
           firstFloor: firstFloor,
           fullText: fullText,
           booknames: booknames,
-          dict: dict,
+          dict: bookDictCoreForTest(dict),
         );
 
         final String? expKind = exp['kind'] as String?;
@@ -133,12 +136,12 @@ void main() {
       expect(evalRecords.length, 420);
       final Stopwatch sw = Stopwatch()..start();
       for (final Map<String, dynamic> r in evalRecords) {
-        classifyV3(
+        classifyV3Core(
           title: r['title'] as String,
           firstFloor: r['first_floor'] as String,
           fullText: r['full_text'] as String,
           booknames: (r['booknames'] as List<dynamic>).cast<String>(),
-          dict: dict,
+          dict: bookDictCoreForTest(dict),
         );
       }
       sw.stop();
@@ -162,6 +165,89 @@ void main() {
       );
       expect(res.dictAnchor, '');
       expect(res.kind, '排雷'); // 1A 标题起首，不依赖词典
+    });
+
+    test('存量误判：无雷字段、吐槽与明确推书/扫书首楼不应判排雷', () {
+      final BookDict empty = BookDict.empty();
+      ClassifyResult run(String title, String firstFloor) => classifyV3(
+            title: title,
+            firstFloor: firstFloor,
+            fullText: '$title\n$firstFloor',
+            booknames: extractBooknames('$title\n$firstFloor'),
+            dict: empty,
+          );
+
+      for (final String field in <String>[
+        '雷点：无',
+        '雷点:无',
+        '郁闷：无',
+        '郁闷:无',
+        '毒点：无',
+        '毒点:无',
+      ]) {
+        final ClassifyResult res = run(
+          '《测试书名》',
+          '书名：《测试书名》，平台：番茄\n$field\n作者：测试作者',
+        );
+        expect(res.kind, PostKind.scan, reason: field);
+      }
+      for (final String title in <String>[
+        '雷点：无',
+        '毒点:无',
+        '郁闷：无',
+      ]) {
+        expect(
+          run(title, '《测试书名》作者：某人，整体尚可。').kind,
+          PostKind.scan,
+          reason: '标题字段本身不是排雷证据：$title',
+        );
+      }
+      expect(
+        run('吐槽《测试书名》', '吐槽《测试书名》\n前两章设定有点尬，但整体能看。').kind,
+        PostKind.scan,
+      );
+      expect(
+        run('推书：《养成系反派大小姐》', '推书：《养成系反派大小姐》，都市后宫\n平台：番茄').kind,
+        PostKind.scan,
+      );
+      expect(
+        run('扫书：《养成系反派大小姐》', '扫书：《养成系反派大小姐》\n平台：番茄\n毒点：女配戏份略少。')
+            .kind,
+        PostKind.scan,
+      );
+      expect(
+        run('《测试书名》', '毒点：女配戏份略少。').kind,
+        PostKind.scan,
+        reason: '单纯罗列毒点不是排雷结论',
+      );
+      expect(
+        run('《测试书名》', '郁闷：女主戏份略少。').kind,
+        PostKind.scan,
+        reason: '单纯罗列郁闷不是排雷结论',
+      );
+      expect(
+        run(
+          '扫书：《养成系反派大小姐》',
+          '扫书：《养成系反派大小姐》\n作者：传说树下\n平台：番茄\n字数：67.4w\n'
+              '文笔：前期用力过猛，中后期不错\n毒点：女配戏份略少。',
+        ).kind,
+        PostKind.scan,
+        reason: '扫书总览中的毒点字段不是独立排雷帖',
+      );
+      expect(
+        run('扫书：《测试书名》', '扫书：《测试书名》\n毒点很多，劝退，已弃书。').kind,
+        PostKind.mine,
+        reason: '扫书模板不能吞掉明确负评结论',
+      );
+      expect(
+        run('《测试书名》', '书名：《测试书名》\n毒点：主角降智，剧情劝退。\n雷点：无').kind,
+        PostKind.mine,
+        reason: '具体毒点不能被另一条“雷点：无”整体抹掉',
+      );
+      expect(
+        run('吐槽《测试书名》', '吐槽《测试书名》\n毒点很多，劝退，已弃书。').kind,
+        PostKind.mine,
+      );
     });
   });
 }

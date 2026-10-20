@@ -80,6 +80,7 @@ class EntryDraft {
     required this.floorPid,
     required this.floorSeq,
     required this.quality,
+    this.manualCategory,
   });
 
   final String name;
@@ -98,6 +99,9 @@ class EntryDraft {
 
   /// 3=作者+推荐语 2=推荐语 1=仅推荐人（§7.2 quality 口径）。
   final int quality;
+
+  /// 首楼显式 `推书/推荐` 时写 `category=推书`；null = 沿用帖分类。
+  final String? manualCategory;
 }
 
 /// 单帖分析产物（分类 + 抽取；ingest 侧只消费本对象）。
@@ -117,6 +121,7 @@ class ThreadAnalysis {
   final List<String> hitRules;
   final List<String> booknames;
   final String dictAnchor;
+
   final List<EntryDraft> entries;
 }
 
@@ -158,28 +163,38 @@ ThreadAnalysis analyzeThread(
   ].join('\n');
   final List<String> booknames = extractBookNames(fullText);
 
-  final ClassifyResult cr = classify(
-    title: input.title,
-    firstFloor: firstFloor,
-    fullText: fullText,
-    booknames: booknames,
-  );
-
+  final String? directKind = explicitManualKind(firstFloor);
+  final ClassifyResult analyzed = directKind == null
+      ? classify(
+          title: input.title,
+          firstFloor: firstFloor,
+          fullText: fullText,
+          booknames: booknames,
+        )
+      : _directResult(directKind, booknames);
   // 日常闲聊整帖丢弃（entries 不抽）；求书不触发书名抽取（§8.9 处置表）。
   final List<EntryDraft> entries =
-      (cr.kind == null || cr.kind == PostKind.seek)
+      (analyzed.kind == null || analyzed.kind == PostKind.seek)
           ? const <EntryDraft>[]
           : _extractEntries(input);
 
   return ThreadAnalysis(
-    kind: cr.kind,
-    flag: cr.flag,
-    hitRules: cr.hitRules,
-    booknames: cr.booknames,
-    dictAnchor: cr.dictAnchor,
+    kind: analyzed.kind,
+    flag: analyzed.flag,
+    hitRules: analyzed.hitRules,
+    booknames: analyzed.booknames,
+    dictAnchor: analyzed.dictAnchor,
     entries: entries,
   );
 }
+
+ClassifyResult _directResult(String kind, List<String> booknames) => ClassifyResult(
+      kind: kind == kRecommendKind ? PostKind.scan : kind,
+      flag: kind == kRecommendKind ? kindFlag[PostKind.scan]! : kindFlag[kind]!,
+      hitRules: <String>['MANUAL:首楼显式$kind'],
+      booknames: booknames,
+      dictAnchor: '',
+    );
 
 /// 逐楼层抽取（§8.7：每个含书名的楼层 → 0..N 条 book_entry）。
 List<EntryDraft> _extractEntries(ThreadInput input) {
@@ -216,6 +231,10 @@ List<EntryDraft> _extractEntries(ThreadInput input) {
               .trim();
       if (comment.isEmpty) continue;
 
+      // 首楼开头明确写推书/推荐时，这一段分享的人工意图属于其中的每本书，
+      // 不受帖标题“扫书/记录”字样影响。
+      final String? floorKind = explicitManualKind(f.text);
+
       final String nameNorm = normName(name);
       if (nameNorm.isEmpty) continue;
       final String authorNorm = normPerson(author ?? '');
@@ -238,6 +257,7 @@ List<EntryDraft> _extractEntries(ThreadInput input) {
         floorPid: f.pid,
         floorSeq: f.seq,
         quality: (author != null && author.isNotEmpty) ? 3 : 2,
+        manualCategory: floorKind == kRecommendKind ? kRecommendKind : null,
       ));
     }
   }

@@ -30,6 +30,10 @@
 ///    仍是上游 ETL 旧值的条目；kind=null 帖的条目同样按当前 post_kind 镜像，不开
 ///    特例；`post_ref IS NULL` 的条目**不动**（无帖可依）。
 ///
+///    **人工标签优先**：首楼开头明确写 `排雷/避雷/踩雷/扫雷` 的帖子强制
+///    `排雷/-1`；明确写 `推书/推荐` 的帖子帖级强制 `扫书/+1`，其中条目保留
+///    `category=推书`。普通“扫书”不是人工标签，仍由分类规则根据正文细分。
+///
 /// 结构：纯 Dart 核心（[dedupBookEntries] / [reclassifyPostsV3] 可在任意已打开连接上
 /// 执行，测试用内存库）+ 生产后台 isolate 编排（[runMaintenance]，模式照
 /// seed_import.dart `_ftsRebuildIsolate`：控制端口 / 批式 yield / 可取消 / 失败事件，
@@ -161,6 +165,7 @@ class _DupMember {
   final int quality;
   final int? postRef;
   final int? groupId;
+
 }
 
 class _DupVerdict {
@@ -670,6 +675,7 @@ class ReclassifyStats {
   const ReclassifyStats({
     this.totalPosts = 0,
     this.postsScanned = 0,
+    this.protectedPosts = 0,
     this.postsUpdated = 0,
     this.entriesUpdated = 0,
     this.batches = 0,
@@ -682,6 +688,9 @@ class ReclassifyStats {
 
   /// 已扫描判定的帖数。
   final int postsScanned;
+
+  /// 首楼明确标记人工排雷或推书的帖数。
+  final int protectedPosts;
 
   /// 实际 UPDATE 的帖数（kind/flag 有变化；kind=null 的帖不计）。
   final int postsUpdated;
@@ -698,7 +707,7 @@ class ReclassifyStats {
 
   @override
   String toString() =>
-      'ReclassifyStats(帖 $postsScanned/$totalPosts，更新 $postsUpdated，'
+      'ReclassifyStats(帖 $postsScanned/$totalPosts，保护 $protectedPosts，更新 $postsUpdated，'
       '条目 $entriesUpdated，批 $batches，cancelled=$cancelled，${elapsedMs}ms)';
 }
 
@@ -727,12 +736,18 @@ Future<ReclassifyStats> reclassifyPostsV3(
   final int total =
       (await db.customSelect('SELECT COUNT(*) AS n FROM posts').getSingle())
           .read<int>('n');
-  var cursor = 0, scanned = 0, updated = 0, entriesSynced = 0, batches = 0;
+  var cursor = 0,
+      scanned = 0,
+      protectedCount = 0,
+      updated = 0,
+      entriesSynced = 0,
+      batches = 0;
   var cancelled = false;
 
   ReclassifyStats snapshot() => ReclassifyStats(
     totalPosts: total,
     postsScanned: scanned,
+    protectedPosts: protectedCount,
     postsUpdated: updated,
     entriesUpdated: entriesSynced,
     batches: batches,
@@ -753,6 +768,7 @@ Future<ReclassifyStats> reclassifyPostsV3(
             Variable.withInt(cursor),
             Variable.withInt(batchSize),
           ],
+          readsFrom: <TableInfo<Table, Object?>>{db.posts},
         )
         .get();
     if (posts.isEmpty) {
@@ -766,13 +782,27 @@ Future<ReclassifyStats> reclassifyPostsV3(
       ids,
     );
     final List<_PostKindUpdate> updates = <_PostKindUpdate>[];
+    final Map<int, String> manualEntryKinds = <int, String>{};
     for (final QueryRow p in posts) {
       final int id = p.read<int>('id');
-      final String title = p.read<String>('t');
       final List<String> floorTexts = floorsByPost[id] ?? const <String>[];
+      final String firstFloor = floorTexts.isEmpty ? '' : floorTexts.first;
+      final String? manualKind = explicitManualKind(firstFloor);
+      if (manualKind != null) {
+        protectedCount++;
+        manualEntryKinds[id] = manualKind;
+        final String kind = manualKind == kRecommendKind
+            ? PostKind.scan
+            : manualKind;
+        final int flag = kindFlag[kind]!;
+        if (kind != p.read<String>('k') || flag != p.read<int>('f')) {
+          updates.add(_PostKindUpdate(id, kind, flag));
+        }
+        continue;
+      }
+      final String title = p.read<String>('t');
       // 调用口径严格照 worker.dart analyzeThread：首楼 = seq 升序第一行；
       // 全文 = 标题 + 全楼层 '\n' 拼接；书名抽取 = parse.dart extractBookNames。
-      final String firstFloor = floorTexts.isEmpty ? '' : floorTexts.first;
       final String fullText = <String>[title, ...floorTexts].join('\n');
       final ClassifyResult cr = classifyV3(
         title: title,
@@ -805,16 +835,37 @@ Future<ReclassifyStats> reclassifyPostsV3(
           updateKind: UpdateKind.update,
         );
       }
+      for (final MapEntry<int, String> e in manualEntryKinds.entries) {
+        n += await db.customUpdate(
+          'UPDATE book_entries SET category = ? '
+          'WHERE post_ref = ? AND category IS NOT ?',
+          variables: <Variable<Object>>[
+            Variable.withString(e.value),
+            Variable.withInt(e.key),
+            Variable.withString(e.value),
+          ],
+          updates: <ResultSetImplementation>{db.bookEntries},
+          updateKind: UpdateKind.update,
+        );
+      }
       // category 镜像当前 post_kind：`IS NOT`（SQLite 空安全不等）滤掉已同步行 →
       // 计数 = 实际变化数、重跑幂等；post_ref IS NULL 与指向批外的条目不受影响；
       // 批内 id 均来自 posts，子查询必命中非 NULL。IN 分块 500 防变量上限
-      // （同 _fetchBatchFloors 惯例）。
+      // （同 _fetchBatchFloors 惯例）。上一步已把人工标签帖子内所有条目写成
+      // 推书/排雷；镜像只为规则判定的帖子服务，不覆盖人工条目事实。
       for (var i = 0; i < ids.length; i += 500) {
-        final List<int> chunk = ids.sublist(i, min(i + 500, ids.length));
+        final List<int> chunk = ids
+            .sublist(i, min(i + 500, ids.length))
+            .where((int id) => !manualEntryKinds.containsKey(id))
+            .toList(growable: false);
+        if (chunk.isEmpty) {
+          continue;
+        }
         n += await db.customUpdate(
           'UPDATE book_entries SET category = '
           '(SELECT post_kind FROM posts WHERE posts.id = book_entries.post_ref) '
           'WHERE post_ref IN (${List<String>.filled(chunk.length, '?').join(',')}) '
+          "AND category <> '推书' "
           'AND category IS NOT '
           '(SELECT post_kind FROM posts WHERE posts.id = book_entries.post_ref)',
           variables: <Variable<Object>>[

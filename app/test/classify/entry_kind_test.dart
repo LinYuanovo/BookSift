@@ -71,6 +71,30 @@ void main() {
       );
     });
 
+    test('毒点、郁闷、吐槽不是排雷充分条件；明确负面才判排雷', () {
+      for (final String title in <String>[
+        '毒点',
+        '吐槽一下这本书',
+        '郁闷',
+        '毒点算不算排雷',
+        '有个毒点想聊聊',
+      ]) {
+        expect(
+          entryKindLabel(category: '扫书', flag: 0, title: title),
+          PostKind.scan,
+          reason: title,
+        );
+      }
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '毒点列了很多，这书真劝退'),
+        PostKind.mine,
+      );
+      expect(
+        entryKindLabel(category: '扫书', flag: 0, title: '郁闷得看不下去，弃了'),
+        PostKind.mine,
+      );
+    });
+
     test('避雷语境按评价对象区分推荐、元讨论与书籍排雷', () {
       expect(
         entryKindLabel(category: '扫书', flag: 0, title: '作者避雷不错'),
@@ -148,6 +172,15 @@ void main() {
         0,
         0,
         1,
+      ));
+      expect(
+        Queries.kindCountsOf('扫书\u001f0\u001f毒点列了很多，这本书真劝退\u001f'),
+        (0, 0, 1),
+      );
+      expect(Queries.kindCountsOf('扫书\u001f0\u001f吐槽一下这本书\u001f'), (
+        1,
+        0,
+        0,
       ));
     });
 

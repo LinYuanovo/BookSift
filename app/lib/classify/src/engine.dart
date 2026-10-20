@@ -535,7 +535,8 @@ final RegExp _entryNonBookMineMention = RegExp(
 final RegExp _entryBookNegativeEvaluation = RegExp(
   r'(?:《[^》]{1,40}》|这本(?:书)?|本书|这部(?:小说|作品))'
   r'[^，,。！？!?；;]{0,12}(?:很|太|真|有点|非常|实在|简直)?'
-  r'(?:雷|毒|烂|降智|恶心|难绷|难蚌|垃圾|劝退)(?:啊|了|至极)?',
+  r'(?:雷|毒|烂|降智|恶心|难绷|难蚌|垃圾|劝退)(?:啊|了|至极)?'
+    r'(?![^，,。！？!?；;]{0,4}(?:短|少|一般|还行|可以接受))',
 );
 
 final RegExp _entryNegatedBookNegativeEvaluation = RegExp(
@@ -545,12 +546,33 @@ final RegExp _entryNegatedBookNegativeEvaluation = RegExp(
   r'(?:雷|毒|烂|降智|恶心|难绷|难蚌|垃圾|劝退)',
 );
 
+final RegExp _entryExplicitNegativeConclusion = RegExp(
+  r'(?:毒点|郁闷)[^。]{0,20}'
+  r'(?:真劝退|劝退|弃书|弃了|看不下去|忍不了|没法忍)',
+);
+
+/// 首楼开头明确写出的帖子类型；只认人工标签，避免正文普通提及触发。
+String? explicitManualKind(String firstFloor) {
+  final String body = firstFloor.trimLeft();
+  if (<String>['排雷', '避雷', '踩雷', '扫雷'].any(body.startsWith)) {
+    return PostKind.mine;
+  }
+  if (<String>['推书', '推荐'].any(body.startsWith)) {
+    return kRecommendKind;
+  }
+  return null;
+}
+
 String entryKindLabel({
   required String category,
   required int flag,
   String? title,
   String? bookGrade,
 }) {
+  // 条目级人工推书是显式事实；其余类别仍走标题/标记三分。
+  if (category == kRecommendKind) {
+    return kRecommendKind;
+  }
   if (flag == 1) {
     return kRecommendKind;
   }
@@ -586,10 +608,8 @@ String entryKindLabel({
     if (hasBookNegative || v2MineTitlePrefix.hasMatch(mineProbe)) {
       return PostKind.mine;
     }
-    for (final Rule rule in v2MineTitleAny) {
-      if (rule.hasMatch(mineProbe)) {
-        return PostKind.mine;
-      }
+    if (_entryExplicitNegativeConclusion.hasMatch(titleClean)) {
+      return PostKind.mine;
     }
     if (_entryPositiveAvoidanceReview.hasMatch(ft)) {
       return kRecommendKind;

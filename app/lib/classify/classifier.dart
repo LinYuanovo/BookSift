@@ -15,9 +15,21 @@ library;
 import 'src/book_dict.dart';
 import 'src/engine.dart';
 import 'src/norm.dart';
+import 'src/py_regex.dart' show foldText;
+import 'src/rules.dart' show v2MineTitleAny, v2MineTitlePrefix;
+import 'src/py_regex.dart' show Rule;
 
-/// settings.classifier_version 落库值（§8.9：规则版本号写入 settings）。
-const int classifierVersion = 3;
+export 'src/engine.dart' show explicitManualKind, kRecommendKind;
+
+/// settings.classifier_version 落库的门禁版本。
+///
+/// [classifierCoreVersion] 是 Python 冻结核心的 v3 夹具版本；此值在核心之上叠加
+/// “明确推书/无雷字段/毒点罗列”等生产校正，必须独立递增，才能让已安装库越过
+/// `needsReclassify` 闸门重新回填。
+const int classifierVersion = 4;
+
+/// Python classify_v3 冻结核心版本（parity 夹具锁定值，不随生产校正递增）。
+const int classifierCoreVersion = 3;
 
 /// post_kind → recommend_flag 映射（§8.9 表：扫书+1 / 排雷-1 / 求书0；日常=null 丢弃）。
 const Map<String, int> kindFlag = <String, int>{'扫书': 1, '排雷': -1, '求书': 0};
@@ -91,6 +103,9 @@ class BookDict {
   bool get isEmpty => anchorCount == 0;
 }
 
+/// 仅用于 parity 测试直接驱动冻结核心；生产调用仍走 [classifyV3]。
+BookDictCore bookDictCoreForTest(BookDict dict) => dict._core;
+
 /// v3 分类主入口（= Python classify_v3）。
 ///
 /// [booknames] 为《》抽取结果（调用方先跑 [extractBooknames]，与 Python 管线一致：
@@ -102,14 +117,108 @@ ClassifyResult classifyV3({
   required String fullText,
   required List<String> booknames,
   required BookDict dict,
-}) =>
-    classifyV3Core(
-      title: title,
-      firstFloor: firstFloor,
-      fullText: fullText,
-      booknames: booknames,
-      dict: dict._core,
+}) {
+  final ClassifyResult base = classifyV3Core(
+    title: title,
+    firstFloor: firstFloor,
+    fullText: fullText,
+    booknames: booknames,
+    dict: dict._core,
+  );
+  // 生产口径校正：明确写“雷点/毒点/郁闷：无”的扫书帖，不因字段名被冻结规则升格排雷。
+  final String foldedTitle = foldText(title);
+  final String foldedFloor = foldText(firstFloor);
+  final bool titleNeutralField = _neutralMineField.hasMatch(foldedTitle);
+  final bool titleNegative =
+      !titleNeutralField &&
+      (v2MineTitlePrefix.hasMatch(foldedTitle) ||
+          v2MineTitleAny.any((Rule r) => r.hasMatch(foldedTitle)));
+  // 标题/首楼只写“雷点/毒点/郁闷：无”时，字段名本身不是排雷证据。
+  if (base.kind == PostKind.mine &&
+      !titleNegative &&
+      (titleNeutralField ||
+          (_neutralMineField.hasMatch(foldedFloor) &&
+              !_strongNegative.hasMatch(foldedFloor)))) {
+    return ClassifyResult(
+      kind: PostKind.scan,
+      flag: kindFlag[PostKind.scan]!,
+      hitRules: const <String>['T2a:明确无雷字段'],
+      booknames: base.booknames,
+      dictAnchor: base.dictAnchor,
     );
+  }
+  // 扫书模板可能先于负评规则命中；“毒点很多，劝退/弃书”等明确结论仍是排雷。
+  if (base.kind == PostKind.scan &&
+      !titleNegative &&
+      _explicitNegativeConclusion.hasMatch(foldedFloor)) {
+    return ClassifyResult(
+      kind: PostKind.mine,
+      flag: kindFlag[PostKind.mine]!,
+      hitRules: const <String>['T2a:明确负评结论'],
+      booknames: base.booknames,
+      dictAnchor: base.dictAnchor,
+    );
+  }
+  // `毒点/郁闷` 只是字段名或观察项，单独出现不构成“排雷”结论；
+  // 只有伴随劝退/弃书等明确评价时才走上面的升格。
+  if (base.kind == PostKind.mine &&
+      !titleNegative &&
+      !_explicitNegativeConclusion.hasMatch(foldedFloor) &&
+      !_strongNegative.hasMatch(foldedFloor) &&
+      _bareMineField.hasMatch(foldedFloor)) {
+    return ClassifyResult(
+      kind: PostKind.scan,
+      flag: kindFlag[PostKind.scan]!,
+      hitRules: const <String>['T2a:罗列毒点/郁闷不判排雷'],
+      booknames: base.booknames,
+      dictAnchor: base.dictAnchor,
+    );
+  }
+  // 扫书总览（书名/作者/平台/字数/文笔等字段）中的毒点段落只是观察项；
+  // 没有明确劝退结论时不把整帖升格为排雷。
+  if (base.kind == PostKind.mine &&
+      !titleNegative &&
+      _scanOverviewField.hasMatch(foldedFloor)) {
+    return ClassifyResult(
+      kind: PostKind.scan,
+      flag: kindFlag[PostKind.scan]!,
+      hitRules: const <String>['T2a:扫书总览字段'],
+      booknames: base.booknames,
+      dictAnchor: base.dictAnchor,
+    );
+  }
+  if (base.kind == null && booknames.isNotEmpty) {
+    return ClassifyResult(
+      kind: PostKind.scan,
+      flag: kindFlag[PostKind.scan]!,
+      hitRules: const <String>['T2b:书目评价兜底'],
+      booknames: base.booknames,
+      dictAnchor: base.dictAnchor,
+    );
+  }
+  return base;
+}
+
+final RegExp _neutralMineField = RegExp(
+  r'(?:雷点|毒点|郁闷(?:点)?)[:：]\s*'
+  r'(?:无|没有|没|没什么|不多|较少|极少|基本没有|全无)',
+);
+
+final RegExp _strongNegative = RegExp(
+  r'劝退|慎入|毒点如下|毒点盘点|剧毒|弃书|弃了|看不下去|忍不了|恶心|降智',
+);
+
+final RegExp _explicitNegativeConclusion = RegExp(
+  r'(?:毒点|郁闷)[^。\n]{0,24}'
+  r'(?:真劝退|劝退|弃书|弃了|看不下去|忍不了|没法忍)',
+);
+
+final RegExp _bareMineField = RegExp(r'(?:毒点|郁闷(?:点)?)[:：]');
+
+final RegExp _scanOverviewField = RegExp(
+  r'书名[:：].*作者[:：]|平台[:：].*字数[:：]|文笔[:：].*(?:毒点|郁闷)',
+  dotAll: true,
+);
 
 /// 提取《》内书名，保序去重（Python extract_booknames 同款：BOOKNAME_RE=《([^《》\r\n]{1,40})》，
 /// 去重键 = 去空白后的名字）。

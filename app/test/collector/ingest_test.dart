@@ -158,6 +158,26 @@ void main() {
     expect(ftsHits, 1);
   });
 
+  test('首楼显式推书 → 条目 category=推书，帖级仍兼容扫书', () async {
+    final IngestResult r = await ingestOne(
+      rec: _record(
+        title: '记录楼',
+        floorText: '推书：《雪中悍刀行》 作者：烽火戏诸侯 值得一看',
+      ),
+    );
+
+    expect(r.entriesAdded, 1);
+    final Post post = await db.select(db.posts).getSingle();
+    final BookEntry entry = await db.select(db.bookEntries).getSingle();
+    expect(post.postKind, PostKind.scan);
+    expect(entry.category, kRecommendKind);
+    expect(Queries.kindCountsOf('${entry.category}\u001f1\u001f记录楼\u001f'), (
+      0,
+      1,
+      0,
+    ));
+  });
+
   test('幂等：同数据二遍 → 全 skippedDup、行数不变（§8.7 去重三层）', () async {
     final IngestResult r1 = await ingestOne();
     final IngestResult r2 = await ingestOne();

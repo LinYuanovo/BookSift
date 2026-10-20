@@ -513,8 +513,8 @@ BookEntriesCompanion _entryValues({
       commentNormHash: Value<String?>(e.commentNormHash),
       date: Value<String?>(dateStr.isEmpty ? null : dateStr),
       dateRaw: Value<String?>('${rec.createTime}'),
-      // category 冗余自 posts.post_kind（§7.2：避免搜索 join）。
-      category: Value<String>(kind),
+      // 首楼显式推书/推荐是条目级人工事实；其余仍冗余自 posts.post_kind。
+      category: Value<String>(e.manualCategory ?? kind),
       postRef: Value<int?>(postId),
       floorRef: Value<int?>(floorId),
       srcTid: Value<int?>(rec.tid),

@@ -34,7 +34,7 @@ void main() {
   final String? path = Platform.environment['BOOKSIFT_SMOKE_DB'];
   test(
     '真实库 dedup + reclassify 冒烟',
-    // 真实库体量（53441 entries / 38905 posts）：远超默认 30s 用例超时。
+    // 真实库体量：远超默认 30s 用例超时。
     timeout: const Timeout(Duration(minutes: 10)),
     skip: path == null ? 'BOOKSIFT_SMOKE_DB 未设置（用法见文件头）' : null,
     () async {
@@ -94,6 +94,19 @@ void main() {
         out.writeln('post_kind_after: $kindAfter');
         out.writeln('category_after: $categoryAfter');
 
+        // 首楼明确人工标签：
+        // 排雷类强制排雷，推书类强制条目标推书；普通 Baodian 扫书记录继续按规则细化。
+        final int protectedPosts =
+            (await db.customSelect(
+              "SELECT COUNT(*) AS n FROM posts p WHERE EXISTS ("
+              "SELECT 1 FROM floors f WHERE f.post_id = p.id AND f.seq = 1 "
+              "AND (trim(f.text) LIKE '排雷%' OR trim(f.text) LIKE '避雷%' "
+              "OR trim(f.text) LIKE '踩雷%' OR trim(f.text) LIKE '扫雷%' "
+              "OR trim(f.text) LIKE '推书%' OR trim(f.text) LIKE '推荐%'))",
+            ).getSingle()).read<int>('n');
+        out.writeln('protected_posts: $protectedPosts');
+        expect(rc.protectedPosts, protectedPosts);
+
         // 已知样本：post_type=扫书 但 v3 判为排雷的标题帖（基线调查实测存在）。
         final List<QueryRow> sample = await db
             .customSelect("SELECT id, post_kind AS k, recommend_flag AS f FROM posts "
@@ -119,7 +132,7 @@ void main() {
         expect(kindAfter, kindBaked,
             reason: '重置后重跑 v3 必须逐档复原发行包固化的 post_kind 分布（不一致 = 分类器/词典口径漂移）');
         expect(categoryAfter, categoryBaked,
-            reason: 'category 镜像同步后必须复原发行包固化的分布');
+            reason: 'category 镜像同步后必须复原发行包固化的分布（含精校保护）');
         expect(await needsDedup(db), false);
         expect(await needsReclassify(db), false);
       } finally {

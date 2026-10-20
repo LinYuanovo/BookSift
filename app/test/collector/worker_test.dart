@@ -99,6 +99,41 @@ void main() {
       expect(a.flag, -1);
       expect(a.entries.length, 1);
     });
+
+    test('首楼显式三分：推书/推荐 → 推书，排雷 → 排雷，其他 → 扫书', () {
+      final ThreadAnalysis push = analyzeThread(
+        _input(title: '普通标题', floors: <FloorInput>[
+          const FloorInput(pid: 1, seq: 1, text: '　推书：《甲》作者：某人 好看'),
+        ]),
+        classify: fakeClassify,
+      );
+      expect(push.kind, PostKind.scan, reason: '帖级兼容扫书枚举');
+      expect(push.entries.single.manualCategory, kRecommendKind);
+
+      final ThreadAnalysis recommend = analyzeThread(
+        _input(title: '普通标题', floors: <FloorInput>[
+          const FloorInput(pid: 1, seq: 1, text: '推荐：《乙》作者：某人 好看'),
+        ]),
+        classify: fakeClassify,
+      );
+      expect(recommend.entries.single.manualCategory, kRecommendKind);
+
+      final ThreadAnalysis mine = analyzeThread(
+        _input(title: '普通标题', floors: <FloorInput>[
+          const FloorInput(pid: 1, seq: 1, text: '避雷：《丙》作者：某人 剧毒'),
+        ]),
+        classify: fakeClassify,
+      );
+      expect(mine.kind, PostKind.mine);
+
+      final ThreadAnalysis ordinary = analyzeThread(
+        _input(title: '普通标题', floors: <FloorInput>[
+          const FloorInput(pid: 1, seq: 1, text: '《丁》作者：某人 剧情尚可'),
+        ]),
+        classify: fakeClassify,
+      );
+      expect(ordinary.kind, PostKind.scan);
+    });
   });
 
   group('书目抽取（§8.7：《》书名 + 作者 30 字窗口 + 推荐语窗口）', () {

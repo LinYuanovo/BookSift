@@ -65,6 +65,8 @@ const List<(String, String?, int)> kFlagCases = <(String, String?, int)>[
   (CategoryKind.scan, '', 0),
   (CategoryKind.avoid, null, -1),
   (CategoryKind.avoid, '', -1),
+  ('推书', null, 1),
+  ('推书', '', 1),
   (CategoryKind.ask, null, 0),
   (CategoryKind.daily, null, 0),
   ('未知类', null, 0),

@@ -4,7 +4,7 @@
 ///   FTS 删除触发器同步、闸门与幂等、中断续跑；
 /// - reclassifyPostsV3：存量帖 v3 回填（空词典 = v2 行为即可覆盖 T1a 标题规则）、
 ///   kind=null 不动、book_entries.category 镜像同步（post_ref IS NULL 不动、
-///   已同步不重复计）、闸门落账与幂等；
+///   已同步不重复计）、首楼人工排雷保护、推书条目保留、闸门落账与幂等；
 /// - runMaintenance：文件库 + 后台 isolate 端到端（plain test 真实 IO，
 ///   同 seed_import_test 的 isolate 先例）。
 ///
@@ -307,6 +307,31 @@ void main() {
   });
 
   group('reclassifyPostsV3', () {
+    test('旧分类器闸门 3 在版本 4 下触发重跑', () async {
+      await db
+          .into(db.settings)
+          .insertOnConflictUpdate(
+            SettingsCompanion.insert(
+              key: SettingsKeys.classifierVersion,
+              value: '3',
+            ),
+          );
+      expect(classifierVersion, 4);
+      expect(await needsReclassify(db), isTrue);
+
+      await _addPost(db, title: '排雷：旧库样例');
+      final ReclassifyStats stats =
+          await reclassifyPostsV3(db, dict: BookDict.empty());
+      expect(stats.postsUpdated, 1);
+      expect(await needsReclassify(db), isFalse);
+      expect(
+        (await db.customSelect(
+          "SELECT value AS v FROM settings WHERE key = '${SettingsKeys.classifierVersion}'",
+        ).getSingle()).read<String>('v'),
+        '$classifierVersion',
+      );
+    });
+
     test('排雷标题帖回填为 排雷/-1；未变不动；kind=null 保持原样；闸门落账', () async {
       // CLI 实测（空词典）：排雷：… → 排雷/-1（T1a）；月度扫书：… → 扫书/1（T1d）；
       // 闲聊标题 → kind=null。
@@ -394,6 +419,113 @@ void main() {
       expect((await _entry(db, e4)).category, '排雷');
       expect(snaps.last.entriesUpdated, 1, reason: 'onProgress 快照带 entriesUpdated');
       expect(await needsReclassify(db), false, reason: '闸门照旧落账');
+    });
+
+    test('首楼明确排雷强制校正 post 与普通条目，人工推书条目保留', () async {
+      final int pid = await _addPost(
+        db,
+        title: '普通标题',
+        firstFloor: '避雷：《人工书》剧毒慎入',
+      );
+      final int curated = await _addEntry(
+        db,
+        nameNorm: '人工书',
+        comment: '人工记录',
+        postRef: pid,
+        category: '排雷',
+      );
+      final int stale = await _addEntry(
+        db,
+        nameNorm: '旧条目',
+        comment: '旧分类',
+        postRef: pid,
+        category: '扫书',
+      );
+
+      final ReclassifyStats stats = await reclassifyPostsV3(
+        db,
+        dict: BookDict.empty(),
+      );
+      final Post post = await _post(db, pid);
+      expect(post.postKind, '排雷', reason: '人工排雷标签强制覆盖规则');
+      expect(post.recommendFlag, -1);
+      expect((await _entry(db, curated)).category, '排雷');
+      expect((await _entry(db, stale)).category, '排雷');
+      expect(stats.postsScanned, 1);
+      expect(stats.protectedPosts, 1);
+      expect(stats.postsUpdated, 1);
+      expect(stats.entriesUpdated, 1);
+    });
+
+    test('首楼明确推书帖级强制扫书，条目 category=推书 不被镜像覆盖', () async {
+      final int pid = await _addPost(
+        db,
+        title: '普通标题',
+        kind: '排雷',
+        flag: -1,
+        firstFloor: '推书：《人工推书》节奏不错',
+      );
+      final int recommend = await _addEntry(
+        db,
+        nameNorm: '人工推书',
+        comment: '节奏不错',
+        postRef: pid,
+        category: '推书',
+      );
+
+      final ReclassifyStats stats = await reclassifyPostsV3(
+        db,
+        dict: BookDict.empty(),
+      );
+      final Post post = await _post(db, pid);
+      expect(post.postKind, '扫书');
+      expect(post.recommendFlag, 1);
+      expect((await _entry(db, recommend)).category, '推书');
+      expect(stats.protectedPosts, 1);
+      expect(stats.postsUpdated, 1);
+      expect(stats.entriesUpdated, 0, reason: '已经是推书，不重复计');
+    });
+
+    test('人工标签按楼层前缀写条目，不把普通“扫书”当保护标签', () async {
+      final int pushPost = await _addPost(
+        db,
+        title: '普通标题',
+        firstFloor: '推书：《推书甲》好看',
+      );
+      final int pushEntry = await _addEntry(
+        db,
+        nameNorm: '推书甲',
+        comment: '好看',
+        postRef: pushPost,
+        category: '排雷',
+      );
+      final int scanPost = await _addPost(
+        db,
+        title: '扫书：九月合集',
+        firstFloor: '扫书：《扫书乙》毒点很多，劝退。',
+      );
+      final int scanEntry = await _addEntry(
+        db,
+        nameNorm: '扫书乙',
+        comment: '毒点很多，劝退。',
+        postRef: scanPost,
+        category: '扫书',
+      );
+
+      final ReclassifyStats stats = await reclassifyPostsV3(
+        db,
+        dict: BookDict.empty(),
+      );
+
+      expect((await _entry(db, pushEntry)).category, '推书');
+      expect((await _post(db, pushPost)).postKind, '扫书');
+      expect(
+        (await _entry(db, scanEntry)).category,
+        '排雷',
+        reason: '普通扫书不是人工保护标签，仍由规则细化',
+      );
+      expect((await _post(db, scanPost)).postKind, '排雷');
+      expect(stats.protectedPosts, 1);
     });
 
     test('kind=null（日常闲聊）帖的条目按当前 post_kind 镜像（updates 为空也开事务）', () async {

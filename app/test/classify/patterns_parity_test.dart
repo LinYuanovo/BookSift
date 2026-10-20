@@ -47,7 +47,7 @@ void main() {
     }
 
     test('版本 / kindFlag / PostKind', () {
-      expect(classifierVersion, p['classifier_version'] as int);
+      expect(classifierCoreVersion, p['classifier_version'] as int);
       final Map<String, dynamic> kf = p['kind_flag'] as Map<String, dynamic>;
       expect(kindFlag.length, kf.length);
       kf.forEach((String k, dynamic v) => expect(kindFlag[k], v as int));

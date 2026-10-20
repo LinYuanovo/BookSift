@@ -125,6 +125,9 @@ int entryFlagOf({required String category, String? bookGrade}) {
         return 0;
       }
   }
+  if (category == kRecommendKind) {
+    return 1;
+  }
   // grade 为空：只有「排雷」类算负面；扫书/求书/日常一律中性。
   return category == CategoryKind.avoid ? -1 : 0;
 }
@@ -1435,18 +1438,17 @@ class Queries implements BookRepository, SearchSettingsKv {
 
   // ── 搜索（§7.3：≥3 字 FTS trigram，2 字词 LIKE 兜底，FTS 异常降级）──
 
-  /// 六维搜索（两级检索）。
+  /// 六维搜索（标题优先 + 正文补充）。
   ///
-  /// 为什么要分级（真机反馈修复）：book_entries.comment 存的是**整层帖子正文**——
-  /// 一个扫书楼里的所有书共用同一段 comment，让它直接参与匹配就会把同楼的其它书
-  /// 一并召回（搜「我一个护林员」连《从气运词条开始成就人皇》《从红楼开始纵横武侠世界》
-  /// 都出来，而且每张卡是同一段高亮摘要）。故：
-  ///  · 第一级：只匹配书名/作者（FTS 用列过滤 {name author}，LIKE 用四列
-  ///    name/name_norm/author/author_norm）；有命中就地收口，不再看正文。
-  ///  · 推荐人兜底（第一级零命中）：只匹配 b.recommender ——「扫书贴作者」的条目级语义，
-  ///    命中即收口（帖子 posts.author 不参与召回，见 [_likeGroups]）。
-  ///  · 第二级（前两级零命中）：维持现状全列匹配（含 recommender/comment），
-  ///    保住「按推荐语/推荐人找书」这类真实召回。
+  /// book_entries.comment 存的是**整层帖子正文**——一个扫书楼里的所有书共用同一段
+  /// comment，直接参与书名检索就会把同楼其它书一并召回（搜「我一个护林员」连
+  /// 《从气运词条开始成就人皇》《从红楼开始纵横武侠世界》都出来）。故：
+  ///  · 精确书名/作者命中：只返回标题级结果，不再看正文。
+  ///  · 标题命中后，另补扫书正文中的结构化平台字段（`平台：起点`）；
+  ///    平台名是扫书元数据，不是书名片段，不能被标题误命中截断。
+  ///  · 标题零命中、推荐人命中、普通正文命中：走通用正文召回。
+  ///  · 推荐人只认 book_entries.recommender（帖子 posts.author 不参与召回）。
+  ///  · 精确书名仍优先；正文召回通过 hitCount 分组和现有排序自然排在其后。
   /// 摘要口径同样分级：第一级以**该书书名**为锚在 comment 上截窗（[_groupedPage]），
   /// 且不让 FTS 的 snippet(comment) 生效——列过滤下 snippet 会退回 comment 开头，
   /// 给书名命中的书配一段无关楼层文字。
@@ -1456,30 +1458,31 @@ class Queries implements BookRepository, SearchSettingsKv {
     if (words.isEmpty) {
       return SearchOutcome(page: await _browseGroups(f), words: words);
     }
+    if (await _hasPlatformFieldMatch(words, f)) {
+      return SearchOutcome(
+        page: await _likeGroups(words, f, platformOnly: true),
+        words: words,
+      );
+    }
     if (words.every((String w) => w.runes.length >= 3)) {
       // ── 第一级：仅书名/作者列（fts5 列过滤语法；trigram 分词器实测支持）──
       final SearchOutcome titleLevel = await _titleLevelFts(words, f);
       if (titleLevel.page.total > 0) {
         return titleLevel;
       }
-      // 推荐人兜底（LIKE）：FTS 的 {name author} 列过滤覆盖不到 book_entries.recommender。
-      // 语义口径（用户确认）：按「扫书贴作者」搜 = 按**条目级** recommender 搜；
-      // 帖子作者 posts.author / posts.author_name 不参与召回——真机反例：posts.author=
-      // '火舞涅槃星星' 的帖子里 335 条条目 recommender='黄颢晨123'，按帖子作者召回整帖
-      // 等于把别人扫的书算到他头上。命中即收口，避免第二级 comment/floor 带出同楼其它书。
       final Paged<GroupHit> recommenderLevel = await _likeGroups(
         words,
         f,
         recommenderOnly: true,
       );
-      if (recommenderLevel.total > 0) {
+      if (recommenderLevel.total > 0 && titleLevel.page.total == 0) {
         return SearchOutcome(page: recommenderLevel, words: words);
       }
-      // ── 第二级：评语 / 楼层正文（角色名、楼内提及都走这里）──
+      // ── 未精确命中书名/作者：评语、推荐人、楼层正文合并召回 ──
       final String match = words
           .map((String w) => '"${w.replaceAll('"', '""')}"')
           .join(' AND ');
-      final SearchOutcome fts;
+      SearchOutcome? fts;
       try {
         fts = SearchOutcome(
           page: await _ftsGroups(match, words, f),
@@ -1487,23 +1490,24 @@ class Queries implements BookRepository, SearchSettingsKv {
           words: words,
         );
       } on Object {
-        // FTS 查询异常自动降级 LIKE（§5.3 错误态）。
-        return SearchOutcome(
-          page: await _likeGroups(words, f),
-          degraded: true,
-          words: words,
-        );
+        fts = null;
       }
-      if (fts.page.total > 0) {
+      if (fts != null && fts.page.total > 0) {
         return fts;
       }
-      // FTS 零命中 → LIKE 兜底重试（含 *_norm 列 + 楼层正文）：trigram 索引建在原文上，
+      // FTS 零命中或 lite 无 FTS 表 → LIKE 兜底重试（含 *_norm 列 + 楼层正文）：
+      // trigram 索引建在原文上，
       // 归一化书名查询（无标点）会因标点差异零召回——含标点书名占 20.6%，
       // norm 词采样零命中 86%（实测见 docs/质量预算复核.md F-2）。
       // 置于 try 外：重试自身的异常按未预期错误传播，不误用「FTS 降级」语义。
-      return SearchOutcome(page: await _likeGroups(words, f), words: words);
+      return SearchOutcome(
+        page: await _likeGroups(words, f),
+        degraded: fts == null,
+        words: words,
+      );
     }
-    // 含 2 字词（trigram 恒零命中）：第一级四列 LIKE → recommender 兜底 → 零命中才放开全列。
+    // 含 2 字词（trigram 恒零命中）：第一级四列 LIKE；精确书名返回，
+    // 否则合并正文/推荐人召回。
     final Paged<GroupHit> titleLevel = await _likeGroups(
       words,
       f,
@@ -1517,10 +1521,36 @@ class Queries implements BookRepository, SearchSettingsKv {
       f,
       recommenderOnly: true,
     );
-    if (recommenderLevel.total > 0) {
+    if (recommenderLevel.total > 0 && titleLevel.total == 0) {
       return SearchOutcome(page: recommenderLevel, words: words);
     }
-    return SearchOutcome(page: await _likeGroups(words, f), words: words);
+    return SearchOutcome(
+      page: await _likeGroups(words, f),
+      words: words,
+    );
+  }
+
+  /// 平台字段是正文中的明确元数据（`平台：起点` / `平台:番茄`），
+  /// 与普通书名片段共用标题时不提前收口。
+  Future<bool> _hasPlatformFieldMatch(
+    List<String> words,
+    SearchFilter f,
+  ) async {
+    final List<Variable<Object>> vars = <Variable<Object>>[];
+    final List<String> conds = <String>[];
+    for (final String w in words) {
+      conds.add(_platformFieldCondition(w, vars));
+    }
+    final String dims = _dimClauses(f, vars);
+    final QueryRow? r = await db
+        .customSelect(
+          'SELECT 1 AS hit FROM book_entries b '
+          'WHERE ${conds.join(' AND ')}$dims LIMIT 1',
+          variables: vars,
+          readsFrom: <TableInfo<Table, Object?>>{db.bookEntries},
+        )
+        .getSingleOrNull();
+    return r != null;
   }
 
   /// 第一级（仅书名/作者）的 FTS 路径：fts5 列过滤语法 {name author} : "词"，多词 AND。
@@ -1754,8 +1784,9 @@ class Queries implements BookRepository, SearchSettingsKv {
     );
   }
 
-  /// FTS 检索路径（book_fts trigram）。[match] 由调用方拼好：第二级是裸短语 AND，
-  /// 第一级带 {name author} 列过滤（[titleOnly]）。
+  /// FTS 检索路径（book_fts + floor_fts trigram）。[match] 由调用方拼好：
+  /// 书名级只查 book_fts 并带 {name author} 列过滤（[titleOnly]）；
+  /// 正文级合并 book_fts 与 floor_fts，同一本书可能从多个楼层命中。
   Future<Paged<GroupHit>> _ftsGroups(
     String match,
     List<String> words,
@@ -1765,13 +1796,47 @@ class Queries implements BookRepository, SearchSettingsKv {
     final List<Variable<Object>> vars = <Variable<Object>>[
       Variable<String>(match),
     ];
-    final String dims = _dimClauses(f, vars);
     // 第一级（titleOnly）恒取 NULL AS snip：snippet(book_fts, 3, …) 取的是 comment 列，
     // 而第一级 MATCH 被列过滤限制在 name/author，snippet 在 comment 里找不到命中词就会
     // 退回该列开头——正好是「同楼无关正文」（见 searchBooks 的两级检索注释）。
     final String snipExpr = titleOnly
         ? 'NULL'
         : 'snippet(book_fts, 3, \'[\', \']\', \'…\', 16)';
+    if (!titleOnly) {
+      final List<Variable<Object>> bookVars = <Variable<Object>>[];
+      final String bookDims = _dimClauses(f, bookVars);
+      final List<Variable<Object>> floorVars = <Variable<Object>>[];
+      final String floorDims = _dimClauses(f, floorVars);
+      return _groupedPage(
+        matchedCte:
+            'WITH book_hits AS ('
+            'SELECT b.id, b.book_group_id, b.date, b.channel, b.quality, '
+            'b.name, b.name_norm, b.author, b.comment, b.floor_ref, '
+            'b.category, b.book_grade, b.post_ref, '
+            '$snipExpr AS snip, ${_flagSql()} AS flag '
+            'FROM book_fts JOIN book_entries b ON b.id = book_fts.rowid '
+            'WHERE book_fts MATCH ?$bookDims), '
+            'floor_hits AS ('
+            'SELECT b.id, b.book_group_id, b.date, b.channel, b.quality, '
+            'b.name, b.name_norm, b.author, b.comment, b.floor_ref, '
+            'b.category, b.book_grade, b.post_ref, '
+            'NULL AS snip, ${_flagSql()} AS flag '
+            'FROM floor_fts JOIN floors fl ON fl.id = floor_fts.rowid '
+            'JOIN book_entries b ON b.floor_ref = fl.id '
+            'WHERE floor_fts MATCH ?$floorDims), '
+            'matched AS ('
+            'SELECT * FROM book_hits UNION SELECT * FROM floor_hits)',
+        cteVars: <Variable<Object>>[
+          Variable<String>(match),
+          ...bookVars,
+          Variable<String>(match),
+          ...floorVars,
+        ],
+        filter: f,
+        words: words,
+      );
+    }
+    final String dims = _dimClauses(f, vars);
     return _groupedPage(
       matchedCte:
           'WITH matched AS ('
@@ -1791,13 +1856,14 @@ class Queries implements BookRepository, SearchSettingsKv {
   /// [recommenderOnly] = 推荐人兜底：只匹配 b.recommender ——「扫书贴作者」的语义归属列
   /// （条目级；帖子 posts.author / posts.author_name 不参与召回）。
   /// 前两级命中即收口：不得放开到评语级，否则同楼其它书的 comment 会被带出。
-  /// 第二级放开到 recommender/comment，并 OR 进所属楼层正文（floor_fts）：
+  /// 第二级放开到书名/作者/推荐人/评语，并 OR 进所属楼层正文（floor_fts）：
   /// 角色名经常只出现在楼层正文、不在条目评语里。
   Future<Paged<GroupHit>> _likeGroups(
     List<String> words,
     SearchFilter f, {
     bool titleOnly = false,
     bool recommenderOnly = false,
+    bool platformOnly = false,
   }) {
     final List<Variable<Object>> vars = <Variable<Object>>[];
     final List<String> conds = <String>[];
@@ -1822,7 +1888,9 @@ class Queries implements BookRepository, SearchSettingsKv {
       final String colExpr = cols
           .map((String c) => "$c LIKE ? ESCAPE '\\'")
           .join(' OR ');
-      if (titleOnly || recommenderOnly) {
+      if (platformOnly) {
+        conds.add(_platformFieldCondition(w, vars));
+      } else if (titleOnly || recommenderOnly) {
         conds.add('($colExpr)');
         for (int i = 0; i < cols.length; i++) {
           vars.add(Variable<String>(arg));
@@ -1865,6 +1933,27 @@ class Queries implements BookRepository, SearchSettingsKv {
 
   static String _likeArg(String w) =>
       '%${w.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_')}%';
+
+  static String _platformFieldCondition(
+    String word,
+    List<Variable<Object>> vars,
+  ) {
+    final String escaped = word
+        .replaceAll(r'\', r'\\')
+        .replaceAll('%', r'\%')
+        .replaceAll('_', r'\_');
+    final String colonArg = '%平台：$escaped%';
+    final String asciiArg = '%平台:$escaped%';
+    vars.addAll(<Variable<Object>>[
+      Variable<String>(colonArg),
+      Variable<String>(asciiArg),
+      Variable<String>(colonArg),
+      Variable<String>(asciiArg),
+    ]);
+    return "(b.comment LIKE ? ESCAPE '\\' OR b.comment LIKE ? ESCAPE '\\' "
+        "OR EXISTS (SELECT 1 FROM floors fl WHERE fl.id = b.floor_ref "
+        "AND (fl.text LIKE ? ESCAPE '\\' OR fl.text LIKE ? ESCAPE '\\')))";
+  }
 
   /// 书级分组分页：聚合计数 → 页内 gid 取最佳条目（quality↓+推荐语长↓）二段查询。
   ///

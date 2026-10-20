@@ -49,17 +49,38 @@ void main() {
     String? recommender,
     String? comment,
     String? date = '2025-04-20',
+    String? floorText,
   }) =>
-      db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
-            name: name,
-            nameNorm: nameNorm,
-            author: Value<String?>(author),
-            recommender: Value<String?>(recommender),
-            comment: Value<String?>(comment),
-            channel: 'yy小说吧',
-            contentHash: hash,
-            date: Value<String?>(date),
-          ));
+      (() async {
+        int? floorId;
+        if (floorText != null) {
+          final int postId = await db.into(db.posts).insert(
+                PostsCompanion.insert(
+                  channel: 'yy小说吧',
+                  title: const Value<String?>('正文召回夹具'),
+                  date: Value<String?>(date),
+                ),
+              );
+          floorId = await db.into(db.floors).insert(
+                FloorsCompanion.insert(
+                  postId: postId,
+                  seq: 1,
+                  content: Value<String>(floorText),
+                ),
+              );
+        }
+        await db.into(db.bookEntries).insert(BookEntriesCompanion.insert(
+              name: name,
+              nameNorm: nameNorm,
+              author: Value<String?>(author),
+              recommender: Value<String?>(recommender),
+              comment: Value<String?>(comment),
+              channel: 'yy小说吧',
+              contentHash: hash,
+              date: Value<String?>(date),
+              floorRef: Value<int?>(floorId),
+            ));
+      })();
 
   SearchFilter filter(String q) => SearchFilter(query: q);
 
@@ -138,7 +159,7 @@ void main() {
       expect(out.page.items.single.snippet, isNull, reason: '既不锚书名也不锚查询词 → null，而非正文开头');
     });
 
-    test('2 字词 LIKE 路径同样只匹配书名/作者四列', () async {
+    test('2 字词标题命中后，无平台字段时仍只返回书名级', () async {
       final SearchOutcome out = await queries.searchBooks(filter('护林'));
       expect(out.page.total, 1);
       expect(out.page.items.single.name, contains('我一个护林员'));
@@ -287,14 +308,22 @@ void main() {
         nameNorm: '从气运词条开始成就人皇',
         hash: 'h1',
         comment: kFloorComment,
+        floorText: kFloorComment,
       );
       await insertEntry(
         name: '《从红楼开始纵横武侠世界》',
         nameNorm: '从红楼开始纵横武侠世界',
         hash: 'h2',
         comment: kFloorComment,
+        floorText: kFloorComment,
       );
-      await insertEntry(name: '《我在乡下种田》', nameNorm: '我在乡下种田', hash: 'h3', comment: kFloorComment);
+      await insertEntry(
+        name: '《我在乡下种田》',
+        nameNorm: '我在乡下种田',
+        hash: 'h3',
+        comment: kFloorComment,
+        floorText: kFloorComment,
+      );
       await insertEntry(
         name: '《雪原往事》',
         nameNorm: '雪原往事',
