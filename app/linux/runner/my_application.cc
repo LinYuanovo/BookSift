@@ -86,7 +86,9 @@ void HandleUpdateMethodCall(
   const gchar* argv[] = {"/bin/sh", helper, archive, bundle, pid, nullptr};
   g_autoptr(GError) error = nullptr;
   if (!g_spawn_async(bundle, const_cast<gchar**>(argv), nullptr,
-                     G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_SEARCH_PATH, nullptr,
+                     static_cast<GSpawnFlags>(G_SPAWN_DO_NOT_REAP_CHILD |
+                                               G_SPAWN_SEARCH_PATH),
+                     nullptr,
                      nullptr, nullptr, nullptr, &error)) {
     response = FL_METHOD_RESPONSE(fl_method_error_response_new(
         "update_failed", error != nullptr ? error->message : "spawn failed",
