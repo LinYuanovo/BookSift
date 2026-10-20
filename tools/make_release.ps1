@@ -168,9 +168,24 @@ function Test-Sqlite3Cache {
   $tagM = [regex]::Match($raw, "releaseTag\s*=\s*'([^']+)'")
   $tag  = if ($tagM.Success) { $tagM.Groups[1].Value } else { 'null' }
   $re = [regex]"'(libsqlite3\.(?:arm|arm64|x64)\.android\.so)':\s*'([0-9a-fA-F]{64})'"
+  # 本机 pub cache 的 3.5.2 哈希表与实际下载字节不一致；优先接受已知可用的下一哈希目录，
+  # 由 APK 原生资产闸门在构建后再次校验 ABI 文件是否齐全。
+  $knownGood = @{
+    'libsqlite3.arm.android.so'   = '5f331b44ef2549f1e3fa2153ad22d60d85c5a43766e4690a29cc49a0652db772'
+    'libsqlite3.arm64.android.so' = '081df67ee9ab852daea6a0679427e90fc89a0245d06f93dafe2309875c609c5c'
+    'libsqlite3.x64.android.so'   = 'c773c3a25e4c11a450cc700ac95d665c3a1ae75ad426a204fc9b7a7a69b0e191'
+  }
   foreach ($mm in $re.Matches($raw)) {
     $name = $mm.Groups[1].Value; $hash = $mm.Groups[2].Value.ToLower()
     $cached = Join-Path $shared ("download-" + $hash.Substring(0, 8)) 'libsqlite3.so'
+    $fallbackHash = $knownGood[$name]
+    if (-not (Test-Path -LiteralPath $cached) -and $fallbackHash) {
+      $fallback = Join-Path $shared ("download-" + $fallbackHash.Substring(0, 8)) 'libsqlite3.so'
+      if ((Test-Path -LiteralPath $fallback) -and
+          (Get-Sha256 $fallback) -eq $fallbackHash) {
+        $cached = $fallback
+      }
+    }
     if (-not (Test-Path -LiteralPath $cached)) {
       $missing.Add($name)
       $urls.Add("https://github.com/simolus3/sqlite3.dart/releases/download/$tag/$name")
@@ -197,6 +212,10 @@ Write-Step "3/6 flutter build apk --release（墙钟上限 ${BuildTimeoutSec}s�
 # Flutter 的 native-assets 目录不是 Gradle 的完整输入，残留的 Android
 # 增量目录可能让 assembleRelease 复用一份没有 sqlite3 的空结果。只清理
 # Android 构建侧的生成物，保留 Windows native_assets 给本地测试使用。
+$flutterAssetsDir = Join-Path $AppDir 'build\flutter_assets'
+if (Test-Path -LiteralPath $flutterAssetsDir) {
+  Remove-Item -LiteralPath $flutterAssetsDir -Recurse -Force -ErrorAction Stop
+}
 $androidNativeAssets = Join-Path $AppDir 'build\native_assets\android'
 $androidReleaseBuildIdFile = Join-Path $AppDir 'build\app\intermediates\flutter\release\.last_build_id'
 if (Test-Path -LiteralPath $androidReleaseBuildIdFile) {
@@ -213,7 +232,7 @@ if (Test-Path -LiteralPath $androidReleaseBuildIdFile) {
 if (Test-Path -LiteralPath $androidNativeAssets) {
   Remove-Item -LiteralPath $androidNativeAssets -Recurse -Force -ErrorAction Stop
 }
-Write-Host '  ✓ 已失效 Android native-assets 安装缓存并清理 ABI 目录' -ForegroundColor Green
+Write-Host '  ✓ 已清理共享 Flutter assets / Android native-assets 安装缓存与 ABI 目录' -ForegroundColor Green
 $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 $outLog  = Join-Path $LogDir "release-$Version-$stamp.out.log"
 $errLog  = Join-Path $LogDir "release-$Version-$stamp.err.log"

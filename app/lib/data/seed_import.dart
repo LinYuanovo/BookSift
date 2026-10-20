@@ -700,6 +700,7 @@ class DefaultSeedImporter implements SeedImporter {
       "DELETE FROM settings WHERE key = '$ftsRebuildDoneKey'",
     );
     await _db.customStatement('DROP TABLE IF EXISTS _ug');
+
     // 行数对账（信息性，写进 done message；硬性一致性由 zip/db sha256 保证）。
     final Map<String, int> counts = <String, int>{
       for (final MapEntry<String, String> e in _seedCountQueries.entries)
