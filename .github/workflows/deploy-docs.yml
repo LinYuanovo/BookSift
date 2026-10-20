@@ -1,0 +1,73 @@
+# 构建文档站并部署到 GitHub Pages
+# 触发条件：main / master 分支上 website/ 或本工作流发生变更时；也支持手动触发
+# 访问地址：https://linyuanovo.github.io/BookSift/（站点 base 见 website/.vitepress/config.mts）
+name: Deploy Docs to GitHub Pages
+
+on:
+  push:
+    # 远端默认分支是 main；本地 checkout 仍叫 master，两者都放行，避免推错分支时静默不部署
+    branches: [main, master]
+    paths:
+      - 'website/**'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+
+# 设置 GITHUB_TOKEN 的权限，允许部署到 GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同时只允许一个部署，进行中的部署不会被取消（避免 Pages 部署中断）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # lastUpdated 需要完整 git 历史
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Install dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Sync documented version from pubspec.yaml
+        run: node tools/render_docs.js
+
+      - name: Build with VitePress
+        working-directory: website
+        run: npm run docs:build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/.vitepress/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+    name: Deploy
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

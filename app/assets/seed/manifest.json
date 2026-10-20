@@ -1,0 +1,130 @@
+{
+  "pack_name": "seed_pack_lite",
+  "pack_version": 3,
+  "tier": "lite",
+  "schema_version": 4,
+  "min_app_version": "1.0.0",
+  "built_at": "2026-10-20T11:09:56+08:00",
+  "builder": "repack_deflate.py (from _build/seed_lite.db)",
+  "source": {
+    "db": "work\\unified\\unified_v2.db",
+    "size_bytes": 910835712,
+    "sha256": "b67cadfaaf58fd5249e288251b6379ee14305943f54f6b238d314098aa885f19",
+    "unified_built_at": "2026-10-12 16:23:52"
+  },
+  "db_file": "seed.db",
+  "db_size_bytes": 174555136,
+  "db_sha256": "e54b8ba88c20f906abc77ad6b6fbd2d0f313f9130a2ed792f834bf6038dbd8ee",
+  "features": {
+    "fts_prebuilt": false,
+    "raw_content": false,
+    "url_original": false,
+    "comment_max_chars": 300,
+    "src_trace_columns": true,
+    "post_kind_columns": true,
+    "comment_max_chars_actual": 300,
+    "pre_deduped": true,
+    "pre_classified_v3": 5
+  },
+  "rows": {
+    "posts": 39348,
+    "floors": 170996,
+    "images": 21549,
+    "book_entries": 53591,
+    "book_groups": 25965,
+    "experts": 10,
+    "nouns": 89,
+    "site_links": 10,
+    "search_history": 0,
+    "bookmarks": 0,
+    "favorites": 0,
+    "collection_state": 0,
+    "collection_logs": 0,
+    "settings": 0
+  },
+  "data_window": {
+    "entry_date_min": "2010-02-04",
+    "entry_date_max": "2026-10-19",
+    "post_date_min": "2010-02-04",
+    "post_date_max": "2026-10-19"
+  },
+  "build_seconds": null,
+  "lite_target_bytes": 73400320,
+  "clean": {
+    "mode": "recompute",
+    "classifier_version": 5,
+    "comment_trimmed_rows": 0,
+    "dedup": {
+      "groups_total": 394,
+      "groups_scanned": 394,
+      "dup_groups": 0,
+      "rows_deleted": 0,
+      "groups_refreshed": 0,
+      "batches": 0,
+      "elapsed_ms": 275
+    },
+    "reclassify": {
+      "classifier_version": 5,
+      "dict_lines": 22001,
+      "dict_anchors": 21913,
+      "posts_total": 39348,
+      "posts_scanned": 39348,
+      "posts_updated": 11992,
+      "entries_category_synced": 6,
+      "batches": 20,
+      "elapsed_ms": 5428
+    },
+    "tool": "app/tool/bake_clean_seed.dart",
+    "cleaned_at": "2026-10-20T11:08:56.424445",
+    "tier": "lite",
+    "order": "先裁 comment≤300 → dedup → v3 回填 + category 镜像（与真机首启维护同序，故装机后维护为 no-op）",
+    "source_db": "work\\seed_pack\\_build\\seed_lite.db",
+    "book_entries_before": 53591,
+    "book_entries_after": 53591,
+    "idempotent_second_pass": {
+      "dedup_rows_deleted": 0,
+      "dedup_dup_groups": 0,
+      "reclassify_posts_updated": 0,
+      "reclassify_entries_updated": 0,
+      "dedup_elapsed_ms": 234,
+      "reclassify_elapsed_ms": 4256
+    },
+    "elapsed_seconds": 12.663
+  },
+  "fts_rebuild_desktop_seconds": {
+    "book_fts": 7.5,
+    "floor_fts": 16.3,
+    "create_and_rebuild_total": 23.8,
+    "db_size_after_rebuild": 243265536
+  },
+  "repack_reason": "Dart archive 无 Zip-LZMA 解码 → lite 换 deflate；裁剪阶梯取中档 comment≤300、保留 seed-only 溯源列（体积上限 70MiB）",
+  "full_pack": {
+    "pack_name": "seed_pack",
+    "pack_version": 3,
+    "zip_file": "seed_pack_v3.zip",
+    "zip_size_bytes": 334423097,
+    "zip_sha256": "62b2adb887334545a771156d3e2ebffa09ac3c3f4e6624c9218ac5c96935ec52",
+    "db_sha256": "fde50f170f1efe6c671cc5f937272df6cd8996e5f419058ce009c0eb829df87d",
+    "fts_prebuilt": true
+  },
+  "compression": {
+    "method": "deflate",
+    "method_choice_reason": "Dart archive 不支持 Zip-LZMA → deflate（App 端解压兼容唯一稳妥项）",
+    "zip_file": "seed_pack_lite_v1.zip",
+    "zip_size_bytes": 64120012,
+    "zip_sha256": "ce08414681d95cc3502edab2985411e88c745ecf232eb3e85a8d3b8279974f92",
+    "seconds": 4.6
+  },
+  "lite_target_met": true,
+  "repack_attempts": [
+    {
+      "comment_max_chars": 300,
+      "drop_trace_columns": false,
+      "db_size_bytes": 174555136,
+      "zip_size_bytes": 64120012,
+      "seconds": 4.6,
+      "sha256": "ce08414681d95cc3502edab2985411e88c745ecf232eb3e85a8d3b8279974f92",
+      "target_met": true
+    }
+  ]
+}

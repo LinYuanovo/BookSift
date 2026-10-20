@@ -1,0 +1,193 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+
+String _readRepoFile(String relativePath) {
+  final String separator = Platform.pathSeparator;
+  String root = Directory.current.path;
+  for (int i = 0; i < 5; i++) {
+    final String pubspec =
+        '$root$separator'
+        'app$separator'
+        'pubspec.yaml';
+    if (File(pubspec).existsSync()) {
+      final File file = File('$root$separator$relativePath');
+      if (!file.existsSync()) {
+        throw StateError('缺少契约文件：$relativePath');
+      }
+      return file.readAsStringSync();
+    }
+    root = Directory(root).parent.path;
+  }
+  throw StateError('无法定位 BooksSift 仓库根目录：${Directory.current.path}');
+}
+
+void _expectAll(String source, Iterable<String> fragments, String scope) {
+  for (final String fragment in fragments) {
+    expect(source, contains(fragment), reason: '$scope 缺少契约片段：$fragment');
+  }
+}
+
+void main() {
+  test('更新服务声明五平台字段、静态 JSON 字段和固定资产名', () {
+    final String service = _readRepoFile(
+      'app/lib/core/update/update_service.dart',
+    );
+
+    _expectAll(service, <String>[
+      'this.apkUrl',
+      'this.iosUrl',
+      'this.windowsUrl',
+      'this.macosUrl',
+      'this.linuxUrl',
+      'this.apkSha256',
+      'this.iosSha256',
+      'this.windowsSha256',
+      'this.macosSha256',
+      'this.linuxSha256',
+      'apk_url',
+      'apk_sha256',
+      'ios_url',
+      'ios_sha256',
+      'windows_url',
+      'windows_sha256',
+      'macos_url',
+      'macos_sha256',
+      'linux_url',
+      'linux_sha256',
+    ], 'update_service 五平台字段');
+    _expectAll(service, <String>[
+      r'BookSift-android-v$version.apk',
+      r'BookSift-ios-v$version.ipa',
+      r'BookSift-windows-x64-v$version.zip',
+      r'BookSift-macos-universal-v$version.zip',
+      r'BookSift-linux-x64-v$version.tar.gz',
+    ], 'update_service 固定资产名');
+  });
+
+  test('工作流与发布脚本使用同一套五平台包名', () {
+    final String workflow = _readRepoFile(
+      '.github/workflows/build-release.yml',
+    );
+    final String scripts = <String>[
+      _readRepoFile('tools/make_release.ps1'),
+      _readRepoFile('tools/make_release_linux.sh'),
+    ].join('\n');
+
+    _expectAll(workflow, <String>[
+      r'BookSift-android-v${VERSION}.apk',
+      r'BookSift-ios-v${VERSION}.ipa',
+      r'$pkg = "BookSift-windows-x64-v$env:VERSION"',
+      r'BookSift-macos-universal-v${VERSION}.zip',
+      r'pkg="BookSift-linux-x64-v${VERSION}"',
+    ], 'build-release 工作流包名');
+    _expectAll(workflow, <String>[
+      '生成带真实摘要的 version.json',
+      'apk_sha256',
+      'ios_sha256',
+      'windows_sha256',
+      'macos_sha256',
+      'linux_sha256',
+    ], 'build-release version.json');
+    _expectAll(scripts, <String>[
+      r'BookSift-android-v$Version.apk',
+      r'BookSift-ios-v$Version.ipa',
+      r'BookSift-windows-x64-v$Version.zip',
+      r'BookSift-macos-universal-v$Version.zip',
+      r'PKG_NAME="BookSift-linux-x64-v$VERSION"',
+      r'$PKG_NAME.tar.gz',
+    ], '发布脚本包名');
+  });
+
+  test('README 五平台下载链接与当前版本资产名一致', () {
+    final String pubspec = _readRepoFile('app/pubspec.yaml');
+    final String template = _readRepoFile('docs-content/readme.md.tpl');
+    final RegExp versionPattern = RegExp(
+      r'^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+[0-9]+$',
+      multiLine: true,
+    );
+    final RegExpMatch? versionMatch = versionPattern.firstMatch(pubspec);
+    expect(versionMatch, isNotNull, reason: 'pubspec.yaml 缺少版本号');
+    final String version = versionMatch!.group(1)!;
+    final String readme = _readRepoFile('README.md');
+    final String expectedReadme = template.replaceAll('{{version}}', version);
+
+    expect(
+      readme,
+      expectedReadme,
+      reason: 'README.md 应与 docs-content/readme.md.tpl 渲染结果一致',
+    );
+  });
+
+  test('使用指南源码使用版本占位符，不写死版本号', () {
+    final String guide = _readRepoFile(
+      'docs-content/guide-getting-started.md',
+    );
+
+    _expectAll(guide, <String>[
+      r'BookSift-android-v{{version}}.apk',
+      r'BookSift-windows-x64-v{{version}}.zip',
+      r'certutil -hashfile .\BookSift-android-v{{version}}.apk SHA256',
+    ], '使用指南源码');
+    expect(
+      RegExp(r'v1\.0\.\d+').hasMatch(guide),
+      isFalse,
+      reason: '使用指南源码不应写死版本号',
+    );
+  });
+
+  test('桌面更新助手随 Windows 与 Linux 发行包一起安装', () {
+    final String windows = _readRepoFile('app/windows/CMakeLists.txt');
+    final String linux = _readRepoFile('app/linux/CMakeLists.txt');
+    final String windowsHelper = _readRepoFile(
+      'app/windows/updater/booksift_updater.ps1',
+    );
+    final String linuxHelper = _readRepoFile(
+      'app/linux/updater/booksift_updater.sh',
+    );
+
+    _expectAll(windows, <String>[
+      'updater/booksift_updater.ps1',
+      r'${INSTALL_BUNDLE_DATA_DIR}/update',
+    ], 'Windows updater install');
+    _expectAll(linux, <String>[
+      'updater/booksift_updater.sh',
+      r'${INSTALL_BUNDLE_DATA_DIR}/update',
+    ], 'Linux updater install');
+    _expectAll(windowsHelper, <String>[
+      'Expand-Archive',
+      'Move-Item',
+      'Start-Process',
+      'AppPid',
+    ], 'Windows updater helper');
+    _expectAll(linuxHelper, <String>[
+      'tar -xzf',
+      'BACKUP',
+      r'mv "$SOURCE" "$BUNDLE"',
+      'APP_PID',
+    ], 'Linux updater helper');
+  });
+
+  test('更新文档覆盖双源、断点续传、校验、缓存和平台动作', () {
+    final String docs = _readRepoFile('website/guide/update.md');
+    _expectAll(docs, <String>[
+      'GitHub Releases',
+      'version.json',
+      'HTTP `Range`',
+      '分块并发',
+      'manifest',
+      '.part',
+      '取消下载或断网后',
+      '断点续传',
+      'SHA-256 校验',
+      '完整文件',
+      'update-cache',
+      '唤起系统安装器',
+      '桌面程序包',
+      '分享或导出',
+      '手动安装',
+      '不提供 iOS 静默安装承诺',
+      '种子数据包',
+    ], '在线更新文档');
+  });
+}

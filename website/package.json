@@ -1,0 +1,14 @@
+{
+  "name": "booksift-docs",
+  "version": "1.0.0",
+  "private": true,
+  "description": "扫书汇（BookSift）文档站",
+  "scripts": {
+    "docs:dev": "node ../tools/render_docs.js && vitepress dev .",
+    "docs:build": "node ../tools/render_docs.js && vitepress build .",
+    "docs:preview": "vitepress preview ."
+  },
+  "devDependencies": {
+    "vitepress": "^1.6.3"
+  }
+}
