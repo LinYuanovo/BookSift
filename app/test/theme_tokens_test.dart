@@ -112,11 +112,55 @@ void main() {
       expect(s.cardPadding, 20);
       expect(s.cardGap, 16);
       expect(s.sectionGap, 32);
+      expect(AppMetrics.buttonHeight, 48);
+      expect(AppMetrics.buttonHeightSmall, 40);
+      expect(AppMetrics.buttonPaddingH, 24);
+      expect(AppMetrics.buttonSmallPaddingH, 20);
+      expect(AppMetrics.fontPickerDialogWidth, 420);
+      expect(AppMetrics.fontPickerDialogHeight, 380);
+      expect(AppMetrics.fontSlotDropdownMaxWidth, 150);
+      expect(
+        <double>[
+          AppMetrics.iconXs,
+          AppMetrics.iconSm,
+          AppMetrics.iconBase,
+          AppMetrics.iconLg,
+        ],
+        <double>[13, 16, 20, 24],
+      );
       expect(AppRadius.sm, 10);
       expect(AppRadius.md, 14);
       expect(AppRadius.lg, 20);
       expect(AppRadius.xl, 24);
       expect(AppRadius.pill, 999);
+    });
+
+    test('按钮族主题：三套按钮共用 r14 / h48 / 水平 24', () {
+      for (final ThemeData theme in <ThemeData>[BookTheme.light, BookTheme.dark]) {
+        for (final ButtonStyle? style in <ButtonStyle?>[
+          theme.textButtonTheme.style,
+          theme.outlinedButtonTheme.style,
+          theme.filledButtonTheme.style,
+        ]) {
+          expect(style, isNotNull);
+          expect(
+            style!.padding!.resolve(const <WidgetState>{}),
+            const EdgeInsets.symmetric(horizontal: AppMetrics.buttonPaddingH),
+          );
+          expect(
+            style.minimumSize!.resolve(const <WidgetState>{}),
+            const Size(64, AppMetrics.buttonHeight),
+          );
+          expect(
+            style.shape!.resolve(const <WidgetState>{}),
+            const RoundedRectangleBorder(borderRadius: AppRadius.mdBorder),
+          );
+          expect(
+            style.textStyle!.resolve(const <WidgetState>{}),
+            theme.extension<AppTypography>()!.bodyStrong,
+          );
+        }
+      }
     });
 
     test('同心圆角 helper：inner = outer − padding，下限 0', () {

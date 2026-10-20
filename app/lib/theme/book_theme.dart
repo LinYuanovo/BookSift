@@ -81,6 +81,18 @@ abstract final class BookTheme {
       labelMedium: inked(typography.label),
       labelSmall: inked(typography.label),
     );
+    // 按钮族几何：r14 / 水平 padding 24（§4）。字号保持 Material textTheme
+    // 既有映射，仅让框架按 token 字号缩放标准水平 padding。
+    final ButtonStyle buttonStyle = ButtonStyle(
+      textStyle: WidgetStatePropertyAll<TextStyle?>(typography.bodyStrong),
+      padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
+        EdgeInsets.symmetric(horizontal: AppMetrics.buttonPaddingH),
+      ),
+      minimumSize: const WidgetStatePropertyAll<Size>(Size(64, AppMetrics.buttonHeight)),
+      shape: const WidgetStatePropertyAll<OutlinedBorder>(
+        RoundedRectangleBorder(borderRadius: AppRadius.mdBorder),
+      ),
+    );
 
     return ThemeData(
       useMaterial3: true,
@@ -120,6 +132,9 @@ abstract final class BookTheme {
         titleTextStyle: inked(typography.headline), // AppBar 标题 = headline（§2.2）
         toolbarHeight: AppMetrics.appBarHeight,
       ),
+      textButtonTheme: TextButtonThemeData(style: buttonStyle),
+      outlinedButtonTheme: OutlinedButtonThemeData(style: buttonStyle),
+      filledButtonTheme: FilledButtonThemeData(style: buttonStyle),
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: colors.surface,
         surfaceTintColor: Colors.transparent,

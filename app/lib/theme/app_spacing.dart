@@ -146,6 +146,8 @@ abstract final class AppMetrics {
   static const double suggestionRowHeight = 52; // §2.3 sg 联想行
   static const double buttonHeight = 48; // §4 btn
   static const double buttonHeightSmall = 40; // §4 btn-sm
+  static const double buttonPaddingH = 24; // §4 btn（水平 padding）
+  static const double buttonSmallPaddingH = 20; // §4 btn-sm（水平 padding）
   static const double chipHeight = 44; // §4 筛选 chip
   static const double chipHeightCompact = 36; // §4 compact chip
   static const double bookChipHeight = 32; // §4 书名 chip
@@ -157,6 +159,15 @@ abstract final class AppMetrics {
   static const double accordionHeaderHeight = 60; // §4 手风琴组头（MI-8）
   static const double rankRowMinHeight = 64; // §4 榜单行
   static const double emptyStateIconSize = 64; // §4 空态线稿插画 64px
+  static const double fontPickerDialogWidth = 420;
+  static const double fontPickerDialogHeight = 380;
+  static const double fontSlotDropdownMaxWidth = 150;
+
+  /// 结构图标尺寸四档（§4 / §7.2）：xs 13 / sm 16 / base 20 / lg 24。
+  static const double iconXs = 13;
+  static const double iconSm = 16;
+  static const double iconBase = 20;
+  static const double iconLg = 24;
 
   /// 目录类底部弹层的高度上限系数（× 屏幕可用高度）：isScrollControlled 的弹层默认
   /// 可铺满全屏，长目录会顶到状态栏、丢掉「这是一层浮层」的视觉线索；短目录仍按内容收缩。

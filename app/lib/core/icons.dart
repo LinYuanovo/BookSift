@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_spacing.dart';
 
 /// 全仓结构图标单一出口（M2-①）。
 ///
@@ -13,12 +14,13 @@ import '../theme/app_colors.dart';
 /// 尺寸档位（设计规范 v1.1 §阴影/描边/图标统一策略）：24（导航）/ 20（base）/ 16（sm）/ 13（xs）。
 /// 原始 SVG 为纯黑 stroke，运行时用 [ColorFilter] sourceIn 染色到语义色 token。
 class AppIcon extends StatelessWidget {
-  const AppIcon(this.name, {super.key, this.size = 20, this.color});
+  const AppIcon(this.name, {super.key, this.size = AppMetrics.iconBase, this.color});
 
   /// symbol 名（不带 `i-` 前缀 / 不带扩展名），如 `home`、`check`、`clock`。
   final String name;
 
-  /// 边长（设计档位 24/20/16/13；≤13 自动选 `-s` stroke2 变体）。
+  /// 边长（设计档位 [AppMetrics.iconLg]/[AppMetrics.iconBase]/[AppMetrics.iconSm]/
+  /// [AppMetrics.iconXs]；≤13 自动选 `-s` stroke2 变体）。
   final double size;
 
   /// 染色；null 时回退环境 IconTheme 色，再回退主文字色 token。

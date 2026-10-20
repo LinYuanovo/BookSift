@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,8 +9,12 @@ import 'package:booksift/core/fonts/font_registry.dart';
 import 'package:booksift/core/fonts/font_service.dart';
 import 'package:booksift/core/fonts/font_tokens.dart';
 import 'package:booksift/core/fonts/system_font_catalog.dart';
+import 'package:booksift/core/icons.dart';
 import 'package:booksift/features/profile/font_manage_page.dart';
 import 'package:booksift/features/profile/settings_page.dart';
+import 'package:booksift/theme/app_colors.dart';
+import 'package:booksift/theme/app_radius.dart';
+import 'package:booksift/theme/app_spacing.dart';
 import 'package:booksift/theme/app_typography.dart';
 import 'package:booksift/theme/book_theme.dart';
 
@@ -83,6 +88,22 @@ void useTallViewport(WidgetTester tester) {
 }
 
 void main() {
+  test('字体管理页：无设计数值/颜色字面量，统一引用 token', () {
+    final RegExp forbidden = RegExp(
+      r'(?:fontSize|fontWeight|letterSpacing|width|height|size|radius|borderRadius|padding|margin|inset|indent|spacing|gap|thickness)'
+      r'\s*:\s*(?:const\s+)?(?:AppIcon\()?[0-9]',
+      caseSensitive: false,
+    );
+    final RegExp colorLiteral = RegExp(r'Color\(0[xX]|\bColors\.');
+    final List<String> source = File('lib/features/profile/font_manage_page.dart').readAsLinesSync();
+    final List<String> offenders = <String>[
+      for (int i = 0; i < source.length; i++)
+        if (forbidden.hasMatch(source[i]) || colorLiteral.hasMatch(source[i]))
+          'lib/features/profile/font_manage_page.dart:${i + 1}: ${source[i].trim()}',
+    ];
+    expect(offenders, isEmpty, reason: '字体管理页新增几何/颜色必须走 AppMetrics/AppSpacing/AppRadius/AppColors');
+  });
+
   testWidgets('设置页：字体管理入口 + 摘要；点击进入字体管理页', (WidgetTester tester) async {
     useTallViewport(tester);
     final b = uiService();
@@ -144,6 +165,83 @@ void main() {
     expect(sampleFamily(tester, 22), 'MySerif');
     final Map<String, dynamic> roles = jsonDecode(b.store.data[FontSettingsKeys.roles]!) as Map<String, dynamic>;
     expect(roles['title'], 'imported:f1');
+  });
+
+  testWidgets('角色下拉：触发区遵循输入控件 token', (WidgetTester tester) async {
+    useTallViewport(tester);
+    final b = uiService(withFont: true);
+    await b.service.bootstrap();
+    await tester.pumpWidget(wrap(const FontManagePage(), b.service));
+    await tester.pumpAndSettle();
+
+    final Finder dropdown = find.byType(DropdownButton<FontSlot>).first;
+    final Finder box = find.ancestor(of: dropdown, matching: find.byType(Container)).first;
+    final Container container = tester.widget<Container>(box);
+    final BoxDecoration decoration = container.decoration! as BoxDecoration;
+    final AppColors colors = AppColors.of(tester.element(dropdown));
+    final AppTypography typography = AppTypography.of(tester.element(dropdown));
+
+    expect(tester.getSize(box).height, AppMetrics.inputHeight);
+    expect(decoration.color, colors.surfaceRaised);
+    expect(decoration.borderRadius, AppRadius.xlBorder);
+    expect(container.clipBehavior, Clip.antiAlias);
+    expect(
+      decoration.border,
+      Border.all(color: colors.borderStrong, width: AppMetrics.hairline),
+    );
+    expect(
+      container.padding,
+      EdgeInsets.symmetric(horizontal: AppSpacing.standard.inputPaddingH),
+    );
+    expect(container.alignment, Alignment.center);
+    final Finder selectedText = find.descendant(
+      of: dropdown,
+      matching: find.text('系统默认'),
+    ).first;
+    expect(
+      tester.getCenter(selectedText).dy,
+      closeTo(tester.getCenter(box).dy, 0.5),
+      reason: '选中字体文字与触发区同一中线',
+    );
+    final Finder chev = find.descendant(
+      of: dropdown,
+      matching: find.byWidgetPredicate((Widget w) => w is AppIcon && w.name == 'chev'),
+    );
+    expect(
+      tester.getCenter(chev).dy,
+      closeTo(tester.getCenter(box).dy, 0.5),
+      reason: '下拉箭头与触发区同一中线',
+    );
+
+    final DropdownButton<FontSlot> button =
+        tester.widget<DropdownButton<FontSlot>>(dropdown);
+    expect(button.style, typography.bodyStrong.copyWith(color: colors.text));
+    expect(button.dropdownColor, colors.surfaceRaised);
+    final AppIcon icon = button.icon! as AppIcon;
+    expect(icon.name, 'chev');
+    expect(icon.size, AppMetrics.iconSm);
+    expect(icon.color, colors.textMuted);
+  });
+
+  testWidgets('角色下拉：2x 字体缩放不裁切且保持输入控件 token', (WidgetTester tester) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    useTallViewport(tester);
+    final b = uiService(withFont: true);
+    await b.service.bootstrap();
+    await tester.pumpWidget(wrap(const FontManagePage(), b.service));
+    await tester.pumpAndSettle();
+
+    final Finder dropdown = find.byType(DropdownButton<FontSlot>).first;
+    final Finder box = find.ancestor(of: dropdown, matching: find.byType(Container)).first;
+    final Container container = tester.widget<Container>(box);
+    final BoxDecoration decoration = container.decoration! as BoxDecoration;
+    final AppColors colors = AppColors.of(tester.element(dropdown));
+
+    expect(tester.getSize(box).height, greaterThanOrEqualTo(AppMetrics.inputHeight));
+    expect(decoration.color, colors.surfaceRaised);
+    expect(decoration.borderRadius, AppRadius.xlBorder);
+    expect(container.clipBehavior, Clip.antiAlias);
   });
 
   testWidgets('恢复默认：全部角色回 system，样张家族清空', (WidgetTester tester) async {

@@ -160,7 +160,7 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
               child: Column(
                 children: <Widget>[
                   for (final FontRole role in FontRole.values) ...<Widget>[
-                    if (role != FontRole.values.first) const Divider(height: 1),
+                    if (role != FontRole.values.first) Divider(height: AppMetrics.hairline, color: colors.border),
                     _roleRow(role, service, t, colors, space),
                   ],
                 ],
@@ -179,7 +179,7 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
                   : Column(
                       children: <Widget>[
                         for (final ImportedFont font in service.registry) ...<Widget>[
-                          if (font != service.registry.first) const Divider(height: 1),
+                          if (font != service.registry.first) Divider(height: AppMetrics.hairline, color: colors.border),
                           _fontRow(font, service, t, colors, space),
                         ],
                       ],
@@ -193,11 +193,10 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
                 child: FilledButton.icon(
                   onPressed: _busy ? null : () => _import(service),
                   // 设计稿 i-plus（index.html:1047）；color 缺省 → 继承按钮前景（含 _busy 禁用态）。
-                  icon: const AppIcon('plus', size: 20),
+                  icon: const AppIcon('plus', size: AppMetrics.iconBase),
                   label: Text(_busy ? '导入中…' : '导入字体'),
                   style: FilledButton.styleFrom(
                     minimumSize: Size.fromHeight(AppMetrics.buttonHeight),
-                    shape: const RoundedRectangleBorder(borderRadius: AppRadius.mdBorder),
                   ),
                 ),
               ),
@@ -205,11 +204,10 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: _busy ? null : () => _pickSystemFont(service),
-                  icon: const AppIcon('search', size: 20),
+                  icon: const AppIcon('search', size: AppMetrics.iconBase),
                   label: const Text('读取系统字体'),
                   style: OutlinedButton.styleFrom(
                     minimumSize: Size.fromHeight(AppMetrics.buttonHeight),
-                    shape: const RoundedRectangleBorder(borderRadius: AppRadius.mdBorder),
                   ),
                 ),
               ),
@@ -301,7 +299,7 @@ class _FontManagePageState extends ConsumerState<FontManagePage> {
           ),
           IconButton(
             // 无 trash 资产；破坏性动作 = close 染 danger（与左滑删除同款约定）。
-            icon: AppIcon('close', size: 24, color: colors.danger),
+            icon: AppIcon('close', size: AppMetrics.iconLg, color: colors.danger),
             tooltip: '删除',
             onPressed: _busy ? null : () => _confirmDelete(service, font),
           ),
@@ -328,29 +326,42 @@ class _SlotDropdown extends StatelessWidget {
     final FontSlot value = known ? slot : const FontSlot.system();
 
     return ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 150),
-      child: DropdownButton<FontSlot>(
-        value: value,
-        isDense: true,
-        isExpanded: true,
-        underline: const SizedBox.shrink(),
-        borderRadius: AppRadius.mdBorder,
-        style: t.caption.copyWith(color: colors.text),
-        items: <DropdownMenuItem<FontSlot>>[
-          DropdownMenuItem<FontSlot>(value: const FontSlot.system(), child: const Text('系统默认')),
-          for (final ImportedFont font in service.registry)
-            DropdownMenuItem<FontSlot>(
-              value: FontSlot.imported(font.fontId),
-              child: Text(font.familyName, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
-        ],
-        onChanged: (FontSlot? next) async {
-          if (next == null || next == value) return;
-          final String? error = await service.setRoleSlot(role, next);
-          if (error != null && context.mounted) {
-            showAppToast(context, error);
-          }
-        },
+      constraints: const BoxConstraints(maxWidth: AppMetrics.fontSlotDropdownMaxWidth),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: AppMetrics.inputHeight),
+        padding: EdgeInsets.symmetric(horizontal: AppSpacing.of(context).inputPaddingH),
+        clipBehavior: Clip.antiAlias,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: colors.surfaceRaised,
+          borderRadius: AppRadius.xlBorder,
+          border: Border.all(color: colors.borderStrong, width: AppMetrics.hairline),
+        ),
+        child: DropdownButton<FontSlot>(
+          value: value,
+          isDense: true,
+          isExpanded: true,
+          underline: const SizedBox.shrink(),
+          borderRadius: AppRadius.mdBorder,
+          dropdownColor: colors.surfaceRaised,
+          icon: AppIcon('chev', size: AppMetrics.iconSm, color: colors.textMuted),
+          style: t.bodyStrong.copyWith(color: colors.text),
+          items: <DropdownMenuItem<FontSlot>>[
+            DropdownMenuItem<FontSlot>(value: const FontSlot.system(), child: const Text('系统默认')),
+            for (final ImportedFont font in service.registry)
+              DropdownMenuItem<FontSlot>(
+                value: FontSlot.imported(font.fontId),
+                child: Text(font.familyName, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+          ],
+          onChanged: (FontSlot? next) async {
+            if (next == null || next == value) return;
+            final String? error = await service.setRoleSlot(role, next);
+            if (error != null && context.mounted) {
+              showAppToast(context, error);
+            }
+          },
+        ),
       ),
     );
   }
@@ -397,8 +408,8 @@ class _SystemFontPickerDialogState extends State<_SystemFontPickerDialog> {
     return AlertDialog(
       title: const Text('读取系统字体'),
       content: SizedBox(
-        width: 420,
-        height: 380,
+        width: AppMetrics.fontPickerDialogWidth,
+        height: AppMetrics.fontPickerDialogHeight,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
@@ -421,7 +432,7 @@ class _SystemFontPickerDialogState extends State<_SystemFontPickerDialog> {
                           selected: selected,
                           title: Text(font.displayName, style: t.body.copyWith(color: colors.text)),
                           subtitle: Text(font.fileName, style: t.caption.copyWith(color: colors.textMuted)),
-                          trailing: selected ? const AppIcon('check', size: 16) : null,
+                          trailing: selected ? const AppIcon('check', size: AppMetrics.iconSm) : null,
                           onTap: () => setState(() => _selected = font),
                         );
                       },
