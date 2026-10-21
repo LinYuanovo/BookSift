@@ -3,7 +3,7 @@ abstract final class AppConstants {
   static const String appName = '扫书汇';
 
   /// CLI 与桌面更新提示共用的应用版本（发布时与 pubspec.yaml 对齐）。
-  static const String appVersion = '1.0.1';
+  static const String appVersion = '1.0.2';
 
   /// drift 单库名（原型 §7.1：内容表与用户表同库 app.db；drift_flutter 落盘为 `<name>`.sqlite）。
   static const String databaseName = 'app';

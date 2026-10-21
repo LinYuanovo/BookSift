@@ -28,13 +28,13 @@
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Android | [`BookSift-android-v1.0.1.apk`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.1/BookSift-android-v1.0.1.apk) | 直接安装，无需 Google Play |
-| Windows | [`BookSift-windows-x64-v1.0.1.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.1/BookSift-windows-x64-v1.0.1.zip) | 解压即用，无需安装 |
+| Android | [`BookSift-android-v1.0.2.apk`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.2/BookSift-android-v1.0.2.apk) | 直接安装，无需 Google Play |
+| Windows | [`BookSift-windows-x64-v1.0.2.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.2/BookSift-windows-x64-v1.0.2.zip) | 解压即用，无需安装 |
 | 完整性 | `同名 .sha256` | 一行 64 位十六进制摘要，用于校验下载文件 |
 
 ::: tip 建议校验一下
 ```powershell
-certutil -hashfile .\BookSift-android-v1.0.1.apk SHA256
+certutil -hashfile .\BookSift-android-v1.0.2.apk SHA256
 ```
 与 `.sha256` 文件里的值逐字对上再安装。
 :::
@@ -55,11 +55,11 @@ certutil -hashfile .\BookSift-android-v1.0.1.apk SHA256
 
 ## 第一次启动：导入内置书库
 
-首启会自动做三件事，页面顶部有进度提示：
+首启会先询问是否建立全文索引，然后自动做三件事，页面顶部有进度提示：
 
 1. **校验**内置种子包（SHA256，防止包被改动）；
-2. **解压 + 导入**书库到本地 SQLite（约 53,441 条书目）；
-3. **后台重建全文索引**，完成后才能用全文搜索。
+2. **解压 + 导入**书库到本地 SQLite（约 53,591 条书目）；
+3. **建立全文索引**（选「暂不建立」则跳过，之后可在「设置 → 数据与存储」补建）。
 
 导入只在**种子包版本升高时**才重跑一次（版本闸门），不会覆盖你自己的收藏、书签、搜索历史与采集数据；导入期间可以先浏览已有内容。
 
