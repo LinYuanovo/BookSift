@@ -1,10 +1,10 @@
 {
   "pack_name": "seed_pack_lite",
-  "pack_version": 3,
+  "pack_version": 4,
   "tier": "lite",
   "schema_version": 4,
   "min_app_version": "1.0.0",
-  "built_at": "2026-10-20T11:09:56+08:00",
+  "built_at": "2026-10-21T09:39:22+08:00",
   "builder": "repack_deflate.py (from _build/seed_lite.db)",
   "source": {
     "db": "work\\unified\\unified_v2.db",
@@ -13,8 +13,8 @@
     "unified_built_at": "2026-10-12 16:23:52"
   },
   "db_file": "seed.db",
-  "db_size_bytes": 174555136,
-  "db_sha256": "e54b8ba88c20f906abc77ad6b6fbd2d0f313f9130a2ed792f834bf6038dbd8ee",
+  "db_size_bytes": 175271936,
+  "db_sha256": "56bf170b557f6b5f4c22f35b207bc9f1612a7030a3bbc9738d419616dd0818aa",
   "features": {
     "fts_prebuilt": false,
     "raw_content": false,
@@ -53,15 +53,15 @@
   "clean": {
     "mode": "recompute",
     "classifier_version": 5,
-    "comment_trimmed_rows": 0,
+    "comment_trimmed_rows": 41223,
     "dedup": {
-      "groups_total": 394,
-      "groups_scanned": 394,
-      "dup_groups": 0,
-      "rows_deleted": 0,
-      "groups_refreshed": 0,
-      "batches": 0,
-      "elapsed_ms": 275
+      "groups_total": 26305,
+      "groups_scanned": 26305,
+      "dup_groups": 25911,
+      "rows_deleted": 25914,
+      "groups_refreshed": 13968,
+      "batches": 87,
+      "elapsed_ms": 6790
     },
     "reclassify": {
       "classifier_version": 5,
@@ -70,60 +70,60 @@
       "posts_total": 39348,
       "posts_scanned": 39348,
       "posts_updated": 11992,
-      "entries_category_synced": 6,
+      "entries_category_synced": 19377,
       "batches": 20,
-      "elapsed_ms": 5428
+      "elapsed_ms": 6320
     },
     "tool": "app/tool/bake_clean_seed.dart",
-    "cleaned_at": "2026-10-20T11:08:56.424445",
+    "cleaned_at": "2026-10-21T09:05:40.597488",
     "tier": "lite",
     "order": "先裁 comment≤300 → dedup → v3 回填 + category 镜像（与真机首启维护同序，故装机后维护为 no-op）",
     "source_db": "work\\seed_pack\\_build\\seed_lite.db",
-    "book_entries_before": 53591,
+    "book_entries_before": 79505,
     "book_entries_after": 53591,
     "idempotent_second_pass": {
       "dedup_rows_deleted": 0,
       "dedup_dup_groups": 0,
       "reclassify_posts_updated": 0,
       "reclassify_entries_updated": 0,
-      "dedup_elapsed_ms": 234,
-      "reclassify_elapsed_ms": 4256
+      "dedup_elapsed_ms": 253,
+      "reclassify_elapsed_ms": 4643
     },
-    "elapsed_seconds": 12.663
+    "elapsed_seconds": 21.24
   },
   "fts_rebuild_desktop_seconds": {
-    "book_fts": 7.5,
-    "floor_fts": 16.3,
-    "create_and_rebuild_total": 23.8,
-    "db_size_after_rebuild": 243265536
+    "book_fts": 7.9,
+    "floor_fts": 16.7,
+    "create_and_rebuild_total": 24.6,
+    "db_size_after_rebuild": 243982336
   },
   "repack_reason": "Dart archive 无 Zip-LZMA 解码 → lite 换 deflate；裁剪阶梯取中档 comment≤300、保留 seed-only 溯源列（体积上限 70MiB）",
   "full_pack": {
     "pack_name": "seed_pack",
-    "pack_version": 3,
-    "zip_file": "seed_pack_v3.zip",
-    "zip_size_bytes": 334423097,
-    "zip_sha256": "62b2adb887334545a771156d3e2ebffa09ac3c3f4e6624c9218ac5c96935ec52",
-    "db_sha256": "fde50f170f1efe6c671cc5f937272df6cd8996e5f419058ce009c0eb829df87d",
+    "pack_version": 4,
+    "zip_file": "seed_pack_v4.zip",
+    "zip_size_bytes": 334497189,
+    "zip_sha256": "f95f67f480f371de544af781365c6f6ab810fd47624b9f30bf77babc03c0b182",
+    "db_sha256": "416ec20a1e7ac353c9e5f70c3ae407e1636c7f1d0d0318369de27d26104e1161",
     "fts_prebuilt": true
   },
   "compression": {
     "method": "deflate",
     "method_choice_reason": "Dart archive 不支持 Zip-LZMA → deflate（App 端解压兼容唯一稳妥项）",
     "zip_file": "seed_pack_lite_v1.zip",
-    "zip_size_bytes": 64120012,
-    "zip_sha256": "ce08414681d95cc3502edab2985411e88c745ecf232eb3e85a8d3b8279974f92",
-    "seconds": 4.6
+    "zip_size_bytes": 64131518,
+    "zip_sha256": "9f1e7f47c803b0e613feeb9706627a698696374f02b71cc3543add807782973d",
+    "seconds": 4.7
   },
   "lite_target_met": true,
   "repack_attempts": [
     {
       "comment_max_chars": 300,
       "drop_trace_columns": false,
-      "db_size_bytes": 174555136,
-      "zip_size_bytes": 64120012,
-      "seconds": 4.6,
-      "sha256": "ce08414681d95cc3502edab2985411e88c745ecf232eb3e85a8d3b8279974f92",
+      "db_size_bytes": 175271936,
+      "zip_size_bytes": 64131518,
+      "seconds": 4.7,
+      "sha256": "9f1e7f47c803b0e613feeb9706627a698696374f02b71cc3543add807782973d",
       "target_met": true
     }
   ]
