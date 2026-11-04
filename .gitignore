@@ -8,6 +8,7 @@ tieba-api-catalog/
 # ---- 本机工具（仅测试看门狗与发布脚本入库）----
 tools/*
 !tools/run_tests_safe.ps1
+!tools/run_tests_safe.sh
 !tools/make_release.ps1
 !tools/smoke_cli.ps1
 !tools/release_assets.ps1
@@ -37,6 +38,7 @@ __pycache__/
 *.pyc
 .codegraph/
 .playwright-mcp/
+.playwright-cli/
 
 # ---- 本地工作上下文（不入库）----
 /AGENTS.md

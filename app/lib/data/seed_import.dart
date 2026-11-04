@@ -671,6 +671,7 @@ class DefaultSeedImporter implements SeedImporter {
     // 0) 清理上次异常中断可能残留的 temp 表。
     for (final String table in <String>[
       '_ug',
+      '_edited_groups',
       '_old_post',
       '_old_user_entry',
       '_old_bookmark',
@@ -693,6 +694,16 @@ class DefaultSeedImporter implements SeedImporter {
       SELECT b.id AS entry_id, g.name_norm
       FROM book_entries b JOIN book_groups g ON g.id = b.book_group_id
       WHERE b.origin <> '$seedOrigin'
+    ''');
+    await _db.customStatement('''
+      CREATE TEMP TABLE _edited_groups AS
+      SELECT g.* FROM book_groups g
+      WHERE EXISTS (
+        SELECT 1 FROM book_entries b
+        WHERE b.book_group_id = g.id AND b.comment_src = 'user_edited')
+        OR (g.entry_total = 0 AND EXISTS (
+          SELECT 1 FROM favorites f
+          WHERE f.target_type = 'book_group' AND f.target_id = g.id))
     ''');
 
     // 2) 在删除旧 seed 行前快照用户引用。bookmarks/favorites 没有外键，
@@ -866,6 +877,15 @@ class DefaultSeedImporter implements SeedImporter {
       FROM seed.book_groups
     ''');
     await _db.customStatement('''
+      INSERT INTO main.book_groups
+        (name_norm,author_eff_norm,name_display,author_display,entry_total,
+         distinct_comment,channels,date_min,date_max,word_count_max)
+      SELECT e.name_norm,e.author_eff_norm,e.name_display,e.author_display,e.entry_total,
+             e.distinct_comment,e.channels,e.date_min,e.date_max,e.word_count_max
+      FROM _edited_groups e
+      WHERE NOT EXISTS (SELECT 1 FROM main.book_groups g WHERE g.name_norm = e.name_norm)
+    ''');
+    await _db.customStatement('''
       UPDATE favorites
       SET target_id = (
         SELECT g.id FROM book_groups g
@@ -994,6 +1014,26 @@ class DefaultSeedImporter implements SeedImporter {
         (SELECT g.id FROM book_groups g WHERE g.name_norm = _ug.name_norm)
       FROM _ug WHERE book_entries.id = _ug.entry_id
     ''');
+    await _db.customStatement('''
+      UPDATE book_groups SET
+        entry_total = (SELECT count(*) FROM book_entries b WHERE b.book_group_id = book_groups.id),
+        distinct_comment = (SELECT count(DISTINCT comment_norm_hash) FROM book_entries b
+          WHERE b.book_group_id = book_groups.id AND COALESCE(b.comment_norm_hash, '') <> ''),
+        word_count_max = (SELECT max(word_count) FROM book_entries b WHERE b.book_group_id = book_groups.id),
+        date_min = (SELECT min(date) FROM book_entries b WHERE b.book_group_id = book_groups.id),
+        date_max = (SELECT max(date) FROM book_entries b WHERE b.book_group_id = book_groups.id),
+        name_display = COALESCE((SELECT name FROM book_entries b WHERE b.book_group_id = book_groups.id
+          ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1), name_display),
+        author_display = CASE WHEN NOT EXISTS (SELECT 1 FROM book_entries b WHERE b.book_group_id = book_groups.id)
+          THEN author_display ELSE (SELECT author FROM book_entries b WHERE b.book_group_id = book_groups.id
+            AND COALESCE(author, '') <> '' ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1) END,
+        author_eff_norm = CASE WHEN NOT EXISTS (SELECT 1 FROM book_entries b WHERE b.book_group_id = book_groups.id)
+          THEN author_eff_norm ELSE COALESCE((SELECT author_norm FROM book_entries b WHERE b.book_group_id = book_groups.id
+            AND COALESCE(author, '') <> '' ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1), '') END,
+        channels = (SELECT json_group_array(channel) FROM
+          (SELECT DISTINCT channel FROM book_entries b WHERE b.book_group_id = book_groups.id ORDER BY channel))
+      WHERE name_norm IN (SELECT name_norm FROM _edited_groups)
+    ''');
     // 5) 闸门落账（full ⊇ basic 内容，双闸门同记；与拷贝同事务 → 中断重跑无半态）。
     await _upsertSetting(SettingsKeys.seedVersion, manifest.version);
     if (full) {
@@ -1048,6 +1088,7 @@ class DefaultSeedImporter implements SeedImporter {
 
     for (final String table in <String>[
       '_ug',
+      '_edited_groups',
       '_old_post',
       '_old_user_entry',
       '_old_bookmark',

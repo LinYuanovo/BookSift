@@ -1226,7 +1226,7 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
                 duration: motion.switch_.duration,
                 switchInCurve: motion.switch_.curve,
                 child: Text(
-                  outcome == null ? '…' : '${outcome.page.total > 5000 ? '5000+' : outcome.page.total} 结果',
+                  outcome == null ? '…' : '${outcome.page.total + outcome.postTotal > 5000 ? '5000+' : outcome.page.total + outcome.postTotal} 结果',
                   key: ValueKey<int>(outcome?.page.total ?? -1),
                   style: AppTypography.tabular(t.secondary.copyWith(color: c.textMuted)),
                 ),
@@ -1268,7 +1268,7 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
                 onPressed: () => ref.invalidate(searchResultProvider(effective)),
               ),
             ),
-          if (outcome != null && outcome.page.items.isEmpty)
+          if (outcome != null && outcome.page.items.isEmpty && outcome.posts.isEmpty)
             AppEmptyState(
               title: widget.draft.filter.query.isEmpty
                   ? '没有符合条件的条目'
@@ -1306,6 +1306,22 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
                 ),
               ),
             ],
+          ],
+          if (outcome != null && outcome.posts.isNotEmpty) ...<Widget>[
+            SizedBox(height: s.space4),
+            Text('帖子原文 · ${outcome.postTotal}', style: t.headline.copyWith(color: c.text)),
+            SizedBox(height: s.space3),
+            for (final PostCardData post in outcome.posts)
+              Padding(
+                padding: EdgeInsets.only(bottom: s.cardGap),
+                child: PostCard(
+                  data: post,
+                  onTap: () => openPostDetail(context, ref, PostSelection(postId: post.post.id, snapshot: effective)),
+                  onBookTap: (_) {},
+                ),
+              ),
+            if (effective.offset + outcome.posts.length < outcome.postTotal)
+              TextButton(onPressed: () => ref.read(resultPageProvider.notifier).state = pages + 1, child: const Text('加载更多帖子')),
           ],
         ],
         ),

@@ -148,9 +148,9 @@ void main() {
   });
 
   group('overview()', () {
-    test('空库：schema v4、表齐、水位与 settings 为空', () async {
+    test('空库：现行 schema、表齐、水位与 settings 为空', () async {
       final DbOverview ov = await api.overview();
-      expect(ov.userVersion, 4);
+      expect(ov.userVersion, db.schemaVersion);
       expect(
         ov.tables.keys,
         containsAll(<String>['book_entries', 'posts', 'collection_state']),
@@ -177,7 +177,7 @@ void main() {
     test('toJson 可直接序列化（agent 机读路径不能抛）', () async {
       await api.repo.addForum('哀伤雪刃');
       final Map<String, Object?> j = (await api.overview()).toJson();
-      expect(j['userVersion'], 4);
+      expect(j['userVersion'], db.schemaVersion);
       expect(j['tables'], isA<Map<String, int>>());
       expect(j['forums'], isA<List<Object?>>());
       expect(j['settings'], isA<Map<String, String>>());

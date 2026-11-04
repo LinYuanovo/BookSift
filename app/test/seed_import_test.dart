@@ -47,8 +47,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:booksift/classify/classifier.dart';
+import 'package:booksift/content/content_draft.dart';
+import 'package:booksift/content/content_store.dart';
+import 'package:booksift/content/document_reader.dart';
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/data/maintenance.dart';
+import 'package:booksift/data/repo/queries.dart' show FavoriteTarget;
 import 'package:booksift/data/seed_import.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 
@@ -1053,13 +1057,83 @@ void main() {
     expect(await _setting(db, DefaultSeedImporter.ftsRebuildDoneKey), '1'); // 预建影子表复制成功
   });
 
+  test('种子升级保留用户统一编辑内容、导入新书聚合与收藏', () async {
+    final Directory env = Directory(p.join(_root.path, 'import-edit-upgrade'))..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter importer) = _newEnv(_bundleV1, env);
+    expect((await importer.importBasic().toList()).last.phase, SeedImportPhase.done);
+    final ContentStore store = ContentStore(db);
+    final ContentDraft imported = const DocumentReader().read(bytes: Uint8List.fromList(utf8.encode('《用户独有新书》 作者：用户校对作者\n原始长评完整结尾。')), fileName: 'user.txt');
+    final ContentSaveResult saved = await store.save(imported);
+    final BookEntry entry = (await (db.select(db.bookEntries)..where((BookEntries table) => table.postRef.equals(saved.postId))).get()).single;
+    await db.into(db.favorites).insert(FavoritesCompanion.insert(targetType: 'book_group', targetId: entry.bookGroupId!, title: '《用户独有新书》', addedAt: DateTime.now()));
+    final ContentDraft seedPost = (await store.load(1))!;
+    await store.save(seedPost.copyWith(title: '用户编辑过的种子标题'));
+    final original = (await store.original(saved.postId))!;
+    final DefaultSeedImporter upgrade = DefaultSeedImporter(db, assetBundle: _DirAssetBundle(_bundleV2), workDirProvider: () async => Directory(p.join(env.path, 'upgrade-tmp'))..createSync(recursive: true), databasePathProvider: () async => p.join(env.path, 'app.sqlite'));
+    expect((await upgrade.importBasic().toList()).last.phase, SeedImportPhase.done);
+    expect((await (db.select(db.posts)..where((Posts table) => table.id.equals(1))).getSingle()).title, '用户编辑过的种子标题');
+    final BookEntry recovered = (await (db.select(db.bookEntries)..where((BookEntries table) => table.id.equals(entry.id))).getSingle());
+    expect(recovered.bookGroupId, isNotNull);
+    final BookGroup group = (await (db.select(db.bookGroups)..where((BookGroups table) => table.id.equals(recovered.bookGroupId!))).getSingle());
+    expect(group.entryTotal, 1);
+    expect(group.authorDisplay, '用户校对作者');
+    expect((await (db.select(db.favorites)..where((Favorites table) => table.title.equals('《用户独有新书》'))).getSingle()).targetId, group.id);
+    expect((await store.original(saved.postId))!.originalHash, original.originalHash);
+    expect((await store.load(saved.postId))!.floors.single.text, contains('原始长评完整结尾'));
+    expect(await db.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
+  });
+
+  test('种子升级保留移除评价后的空书组收藏', () async {
+    final Directory env = Directory(p.join(_root.path, 'empty-group-upgrade'))
+      ..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter importer) = _newEnv(_bundleV1, env);
+    expect((await importer.importBasic().toList()).last.phase, SeedImportPhase.done);
+    final ContentStore store = ContentStore(db);
+    final ContentDraft imported = const DocumentReader().read(
+      bytes: Uint8List.fromList(utf8.encode('《用户暂存书》 作者：用户作者\n完整原文。')),
+      fileName: 'user.txt',
+    );
+    final ContentSaveResult saved = await store.save(imported);
+    final BookEntry entry = (await (db.select(db.bookEntries)
+          ..where((BookEntries table) => table.postRef.equals(saved.postId)))
+        .get()).single;
+    final int favoriteId = await db.into(db.favorites).insert(
+      FavoritesCompanion.insert(
+        targetType: FavoriteTarget.bookGroup,
+        targetId: entry.bookGroupId!,
+        title: '《用户暂存书》',
+        addedAt: DateTime.now(),
+      ),
+    );
+    await store.save((await store.load(saved.postId))!.copyWith(entries: const <ContentEntryDraft>[]));
+    final DefaultSeedImporter upgrade = DefaultSeedImporter(
+      db,
+      assetBundle: _DirAssetBundle(_bundleV2),
+      workDirProvider: () async => Directory(p.join(env.path, 'upgrade-tmp'))..createSync(recursive: true),
+      databasePathProvider: () async => p.join(env.path, 'app.sqlite'),
+    );
+    expect((await upgrade.importBasic().toList()).last.phase, SeedImportPhase.done);
+    final Favorite? favorite = await (db.select(db.favorites)
+          ..where((Favorites table) => table.id.equals(favoriteId)))
+        .getSingleOrNull();
+    expect(favorite, isNotNull);
+    final BookGroup group = await (db.select(db.bookGroups)
+          ..where((BookGroups table) => table.id.equals(favorite!.targetId)))
+        .getSingle();
+    expect(group.nameDisplay, '用户暂存书');
+    expect(group.authorDisplay, '用户作者');
+    expect(group.entryTotal, 0);
+    expect((await store.load(saved.postId))!.entries, isEmpty);
+    expect(await db.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
+  });
+
   test('真实 lite asset 包：manifest 解析 + zip SHA256 流式校验', () async {
     final AppDatabase db = AppDatabase(NativeDatabase.memory());
     _openDbs.add(db);
     final DefaultSeedImporter importer = DefaultSeedImporter(db); // rootBundle + 默认 asset key
     final SeedManifest? m = await importer.readManifest();
     expect(m, isNotNull);
-    expect(m!.version, 3);
+    expect(m!.version, 4);
     expect(m.tier, 'lite');
     expect(m.ftsPrebuilt, isFalse);
     // 2026-10-14 清洗固化（app/tool/bake_clean_seed.dart）：包内库经 drift 迁移到当期
@@ -1071,9 +1145,9 @@ void main() {
     expect(m.rows['book_entries'], greaterThan(0));
     expect(m.dbSha256, isNotNull);
     expect(m.zipSha256, isNotNull);
-    expect(m.fullVersion, 3); // full_pack 下载清单块
+    expect(m.fullVersion, 4); // full_pack 下载清单块
     expect(m.sha256, isNotNull);
-    expect(m.version, 3); // 数据增量随包升级时要触发已安装用户的重新导入
+    expect(m.version, 4); // 数据增量随包升级时要触发已安装用户的重新导入
     // 流式校验 asset zip（落盘后 64KB 分块 sha256）
     final Directory tmp = Directory(p.join(_root.path, 't9'))..createSync(recursive: true);
     final ByteData zip = await rootBundle.load(DefaultSeedImporter.defaultSeedZipAssetKey);

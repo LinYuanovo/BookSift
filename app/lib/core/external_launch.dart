@@ -16,7 +16,8 @@ Future<bool> openThreadExternally(String url) async {
   if (url.isEmpty || uri == null || !uri.hasAbsolutePath && !uri.hasAuthority) {
     return false;
   }
-  if (defaultTargetPlatform == TargetPlatform.android) {
+  if (defaultTargetPlatform == TargetPlatform.android &&
+      (uri.host == 'tieba.baidu.com' || uri.host.endsWith('.tieba.baidu.com'))) {
     try {
       final bool? viaApp = await _externalLaunchChannel
           .invokeMethod<bool>('openTiebaOrBrowser', <String, Object>{'url': url});

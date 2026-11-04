@@ -7542,6 +7542,620 @@ class SettingsCompanion extends UpdateCompanion<Setting> {
   }
 }
 
+class $ContentDocumentsTable extends ContentDocuments
+    with TableInfo<$ContentDocumentsTable, ContentDocument> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ContentDocumentsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _postIdMeta = const VerificationMeta('postId');
+  @override
+  late final GeneratedColumn<int> postId = GeneratedColumn<int>(
+    'post_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES posts (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _sourceUrlMeta = const VerificationMeta(
+    'sourceUrl',
+  );
+  @override
+  late final GeneratedColumn<String> sourceUrl = GeneratedColumn<String>(
+    'source_url',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
+  );
+  static const VerificationMeta _fileNameMeta = const VerificationMeta(
+    'fileName',
+  );
+  @override
+  late final GeneratedColumn<String> fileName = GeneratedColumn<String>(
+    'file_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _mediaTypeMeta = const VerificationMeta(
+    'mediaType',
+  );
+  @override
+  late final GeneratedColumn<String> mediaType = GeneratedColumn<String>(
+    'media_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _originalBytesMeta = const VerificationMeta(
+    'originalBytes',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> originalBytes =
+      GeneratedColumn<Uint8List>(
+        'original_bytes',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _originalHashMeta = const VerificationMeta(
+    'originalHash',
+  );
+  @override
+  late final GeneratedColumn<String> originalHash = GeneratedColumn<String>(
+    'original_hash',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _initialSnapshotMeta = const VerificationMeta(
+    'initialSnapshot',
+  );
+  @override
+  late final GeneratedColumn<String> initialSnapshot = GeneratedColumn<String>(
+    'initial_snapshot',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _importKeyMeta = const VerificationMeta(
+    'importKey',
+  );
+  @override
+  late final GeneratedColumn<String> importKey = GeneratedColumn<String>(
+    'import_key',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways('UNIQUE'),
+  );
+  static const VerificationMeta _warningsMeta = const VerificationMeta(
+    'warnings',
+  );
+  @override
+  late final GeneratedColumn<String> warnings = GeneratedColumn<String>(
+    'warnings',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
+  static const VerificationMeta _editedAtMeta = const VerificationMeta(
+    'editedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> editedAt = GeneratedColumn<DateTime>(
+    'edited_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    postId,
+    sourceUrl,
+    fileName,
+    mediaType,
+    originalBytes,
+    originalHash,
+    initialSnapshot,
+    importKey,
+    warnings,
+    editedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'content_documents';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ContentDocument> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('post_id')) {
+      context.handle(
+        _postIdMeta,
+        postId.isAcceptableOrUnknown(data['post_id']!, _postIdMeta),
+      );
+    }
+    if (data.containsKey('source_url')) {
+      context.handle(
+        _sourceUrlMeta,
+        sourceUrl.isAcceptableOrUnknown(data['source_url']!, _sourceUrlMeta),
+      );
+    }
+    if (data.containsKey('file_name')) {
+      context.handle(
+        _fileNameMeta,
+        fileName.isAcceptableOrUnknown(data['file_name']!, _fileNameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_fileNameMeta);
+    }
+    if (data.containsKey('media_type')) {
+      context.handle(
+        _mediaTypeMeta,
+        mediaType.isAcceptableOrUnknown(data['media_type']!, _mediaTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_mediaTypeMeta);
+    }
+    if (data.containsKey('original_bytes')) {
+      context.handle(
+        _originalBytesMeta,
+        originalBytes.isAcceptableOrUnknown(
+          data['original_bytes']!,
+          _originalBytesMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_originalBytesMeta);
+    }
+    if (data.containsKey('original_hash')) {
+      context.handle(
+        _originalHashMeta,
+        originalHash.isAcceptableOrUnknown(
+          data['original_hash']!,
+          _originalHashMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_originalHashMeta);
+    }
+    if (data.containsKey('initial_snapshot')) {
+      context.handle(
+        _initialSnapshotMeta,
+        initialSnapshot.isAcceptableOrUnknown(
+          data['initial_snapshot']!,
+          _initialSnapshotMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_initialSnapshotMeta);
+    }
+    if (data.containsKey('import_key')) {
+      context.handle(
+        _importKeyMeta,
+        importKey.isAcceptableOrUnknown(data['import_key']!, _importKeyMeta),
+      );
+    }
+    if (data.containsKey('warnings')) {
+      context.handle(
+        _warningsMeta,
+        warnings.isAcceptableOrUnknown(data['warnings']!, _warningsMeta),
+      );
+    }
+    if (data.containsKey('edited_at')) {
+      context.handle(
+        _editedAtMeta,
+        editedAt.isAcceptableOrUnknown(data['edited_at']!, _editedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_editedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {postId};
+  @override
+  ContentDocument map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ContentDocument(
+      postId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}post_id'],
+      )!,
+      sourceUrl: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_url'],
+      )!,
+      fileName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}file_name'],
+      )!,
+      mediaType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}media_type'],
+      )!,
+      originalBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}original_bytes'],
+      )!,
+      originalHash: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}original_hash'],
+      )!,
+      initialSnapshot: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}initial_snapshot'],
+      )!,
+      importKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}import_key'],
+      ),
+      warnings: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}warnings'],
+      )!,
+      editedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}edited_at'],
+      )!,
+    );
+  }
+
+  @override
+  $ContentDocumentsTable createAlias(String alias) {
+    return $ContentDocumentsTable(attachedDatabase, alias);
+  }
+}
+
+class ContentDocument extends DataClass implements Insertable<ContentDocument> {
+  final int postId;
+  final String sourceUrl;
+  final String fileName;
+  final String mediaType;
+  final Uint8List originalBytes;
+  final String originalHash;
+  final String initialSnapshot;
+  final String? importKey;
+  final String warnings;
+  final DateTime editedAt;
+  const ContentDocument({
+    required this.postId,
+    required this.sourceUrl,
+    required this.fileName,
+    required this.mediaType,
+    required this.originalBytes,
+    required this.originalHash,
+    required this.initialSnapshot,
+    this.importKey,
+    required this.warnings,
+    required this.editedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['post_id'] = Variable<int>(postId);
+    map['source_url'] = Variable<String>(sourceUrl);
+    map['file_name'] = Variable<String>(fileName);
+    map['media_type'] = Variable<String>(mediaType);
+    map['original_bytes'] = Variable<Uint8List>(originalBytes);
+    map['original_hash'] = Variable<String>(originalHash);
+    map['initial_snapshot'] = Variable<String>(initialSnapshot);
+    if (!nullToAbsent || importKey != null) {
+      map['import_key'] = Variable<String>(importKey);
+    }
+    map['warnings'] = Variable<String>(warnings);
+    map['edited_at'] = Variable<DateTime>(editedAt);
+    return map;
+  }
+
+  ContentDocumentsCompanion toCompanion(bool nullToAbsent) {
+    return ContentDocumentsCompanion(
+      postId: Value(postId),
+      sourceUrl: Value(sourceUrl),
+      fileName: Value(fileName),
+      mediaType: Value(mediaType),
+      originalBytes: Value(originalBytes),
+      originalHash: Value(originalHash),
+      initialSnapshot: Value(initialSnapshot),
+      importKey: importKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(importKey),
+      warnings: Value(warnings),
+      editedAt: Value(editedAt),
+    );
+  }
+
+  factory ContentDocument.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ContentDocument(
+      postId: serializer.fromJson<int>(json['postId']),
+      sourceUrl: serializer.fromJson<String>(json['sourceUrl']),
+      fileName: serializer.fromJson<String>(json['fileName']),
+      mediaType: serializer.fromJson<String>(json['mediaType']),
+      originalBytes: serializer.fromJson<Uint8List>(json['originalBytes']),
+      originalHash: serializer.fromJson<String>(json['originalHash']),
+      initialSnapshot: serializer.fromJson<String>(json['initialSnapshot']),
+      importKey: serializer.fromJson<String?>(json['importKey']),
+      warnings: serializer.fromJson<String>(json['warnings']),
+      editedAt: serializer.fromJson<DateTime>(json['editedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'postId': serializer.toJson<int>(postId),
+      'sourceUrl': serializer.toJson<String>(sourceUrl),
+      'fileName': serializer.toJson<String>(fileName),
+      'mediaType': serializer.toJson<String>(mediaType),
+      'originalBytes': serializer.toJson<Uint8List>(originalBytes),
+      'originalHash': serializer.toJson<String>(originalHash),
+      'initialSnapshot': serializer.toJson<String>(initialSnapshot),
+      'importKey': serializer.toJson<String?>(importKey),
+      'warnings': serializer.toJson<String>(warnings),
+      'editedAt': serializer.toJson<DateTime>(editedAt),
+    };
+  }
+
+  ContentDocument copyWith({
+    int? postId,
+    String? sourceUrl,
+    String? fileName,
+    String? mediaType,
+    Uint8List? originalBytes,
+    String? originalHash,
+    String? initialSnapshot,
+    Value<String?> importKey = const Value.absent(),
+    String? warnings,
+    DateTime? editedAt,
+  }) => ContentDocument(
+    postId: postId ?? this.postId,
+    sourceUrl: sourceUrl ?? this.sourceUrl,
+    fileName: fileName ?? this.fileName,
+    mediaType: mediaType ?? this.mediaType,
+    originalBytes: originalBytes ?? this.originalBytes,
+    originalHash: originalHash ?? this.originalHash,
+    initialSnapshot: initialSnapshot ?? this.initialSnapshot,
+    importKey: importKey.present ? importKey.value : this.importKey,
+    warnings: warnings ?? this.warnings,
+    editedAt: editedAt ?? this.editedAt,
+  );
+  ContentDocument copyWithCompanion(ContentDocumentsCompanion data) {
+    return ContentDocument(
+      postId: data.postId.present ? data.postId.value : this.postId,
+      sourceUrl: data.sourceUrl.present ? data.sourceUrl.value : this.sourceUrl,
+      fileName: data.fileName.present ? data.fileName.value : this.fileName,
+      mediaType: data.mediaType.present ? data.mediaType.value : this.mediaType,
+      originalBytes: data.originalBytes.present
+          ? data.originalBytes.value
+          : this.originalBytes,
+      originalHash: data.originalHash.present
+          ? data.originalHash.value
+          : this.originalHash,
+      initialSnapshot: data.initialSnapshot.present
+          ? data.initialSnapshot.value
+          : this.initialSnapshot,
+      importKey: data.importKey.present ? data.importKey.value : this.importKey,
+      warnings: data.warnings.present ? data.warnings.value : this.warnings,
+      editedAt: data.editedAt.present ? data.editedAt.value : this.editedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ContentDocument(')
+          ..write('postId: $postId, ')
+          ..write('sourceUrl: $sourceUrl, ')
+          ..write('fileName: $fileName, ')
+          ..write('mediaType: $mediaType, ')
+          ..write('originalBytes: $originalBytes, ')
+          ..write('originalHash: $originalHash, ')
+          ..write('initialSnapshot: $initialSnapshot, ')
+          ..write('importKey: $importKey, ')
+          ..write('warnings: $warnings, ')
+          ..write('editedAt: $editedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    postId,
+    sourceUrl,
+    fileName,
+    mediaType,
+    $driftBlobEquality.hash(originalBytes),
+    originalHash,
+    initialSnapshot,
+    importKey,
+    warnings,
+    editedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ContentDocument &&
+          other.postId == this.postId &&
+          other.sourceUrl == this.sourceUrl &&
+          other.fileName == this.fileName &&
+          other.mediaType == this.mediaType &&
+          $driftBlobEquality.equals(other.originalBytes, this.originalBytes) &&
+          other.originalHash == this.originalHash &&
+          other.initialSnapshot == this.initialSnapshot &&
+          other.importKey == this.importKey &&
+          other.warnings == this.warnings &&
+          other.editedAt == this.editedAt);
+}
+
+class ContentDocumentsCompanion extends UpdateCompanion<ContentDocument> {
+  final Value<int> postId;
+  final Value<String> sourceUrl;
+  final Value<String> fileName;
+  final Value<String> mediaType;
+  final Value<Uint8List> originalBytes;
+  final Value<String> originalHash;
+  final Value<String> initialSnapshot;
+  final Value<String?> importKey;
+  final Value<String> warnings;
+  final Value<DateTime> editedAt;
+  const ContentDocumentsCompanion({
+    this.postId = const Value.absent(),
+    this.sourceUrl = const Value.absent(),
+    this.fileName = const Value.absent(),
+    this.mediaType = const Value.absent(),
+    this.originalBytes = const Value.absent(),
+    this.originalHash = const Value.absent(),
+    this.initialSnapshot = const Value.absent(),
+    this.importKey = const Value.absent(),
+    this.warnings = const Value.absent(),
+    this.editedAt = const Value.absent(),
+  });
+  ContentDocumentsCompanion.insert({
+    this.postId = const Value.absent(),
+    this.sourceUrl = const Value.absent(),
+    required String fileName,
+    required String mediaType,
+    required Uint8List originalBytes,
+    required String originalHash,
+    required String initialSnapshot,
+    this.importKey = const Value.absent(),
+    this.warnings = const Value.absent(),
+    required DateTime editedAt,
+  }) : fileName = Value(fileName),
+       mediaType = Value(mediaType),
+       originalBytes = Value(originalBytes),
+       originalHash = Value(originalHash),
+       initialSnapshot = Value(initialSnapshot),
+       editedAt = Value(editedAt);
+  static Insertable<ContentDocument> custom({
+    Expression<int>? postId,
+    Expression<String>? sourceUrl,
+    Expression<String>? fileName,
+    Expression<String>? mediaType,
+    Expression<Uint8List>? originalBytes,
+    Expression<String>? originalHash,
+    Expression<String>? initialSnapshot,
+    Expression<String>? importKey,
+    Expression<String>? warnings,
+    Expression<DateTime>? editedAt,
+  }) {
+    return RawValuesInsertable({
+      if (postId != null) 'post_id': postId,
+      if (sourceUrl != null) 'source_url': sourceUrl,
+      if (fileName != null) 'file_name': fileName,
+      if (mediaType != null) 'media_type': mediaType,
+      if (originalBytes != null) 'original_bytes': originalBytes,
+      if (originalHash != null) 'original_hash': originalHash,
+      if (initialSnapshot != null) 'initial_snapshot': initialSnapshot,
+      if (importKey != null) 'import_key': importKey,
+      if (warnings != null) 'warnings': warnings,
+      if (editedAt != null) 'edited_at': editedAt,
+    });
+  }
+
+  ContentDocumentsCompanion copyWith({
+    Value<int>? postId,
+    Value<String>? sourceUrl,
+    Value<String>? fileName,
+    Value<String>? mediaType,
+    Value<Uint8List>? originalBytes,
+    Value<String>? originalHash,
+    Value<String>? initialSnapshot,
+    Value<String?>? importKey,
+    Value<String>? warnings,
+    Value<DateTime>? editedAt,
+  }) {
+    return ContentDocumentsCompanion(
+      postId: postId ?? this.postId,
+      sourceUrl: sourceUrl ?? this.sourceUrl,
+      fileName: fileName ?? this.fileName,
+      mediaType: mediaType ?? this.mediaType,
+      originalBytes: originalBytes ?? this.originalBytes,
+      originalHash: originalHash ?? this.originalHash,
+      initialSnapshot: initialSnapshot ?? this.initialSnapshot,
+      importKey: importKey ?? this.importKey,
+      warnings: warnings ?? this.warnings,
+      editedAt: editedAt ?? this.editedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (postId.present) {
+      map['post_id'] = Variable<int>(postId.value);
+    }
+    if (sourceUrl.present) {
+      map['source_url'] = Variable<String>(sourceUrl.value);
+    }
+    if (fileName.present) {
+      map['file_name'] = Variable<String>(fileName.value);
+    }
+    if (mediaType.present) {
+      map['media_type'] = Variable<String>(mediaType.value);
+    }
+    if (originalBytes.present) {
+      map['original_bytes'] = Variable<Uint8List>(originalBytes.value);
+    }
+    if (originalHash.present) {
+      map['original_hash'] = Variable<String>(originalHash.value);
+    }
+    if (initialSnapshot.present) {
+      map['initial_snapshot'] = Variable<String>(initialSnapshot.value);
+    }
+    if (importKey.present) {
+      map['import_key'] = Variable<String>(importKey.value);
+    }
+    if (warnings.present) {
+      map['warnings'] = Variable<String>(warnings.value);
+    }
+    if (editedAt.present) {
+      map['edited_at'] = Variable<DateTime>(editedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ContentDocumentsCompanion(')
+          ..write('postId: $postId, ')
+          ..write('sourceUrl: $sourceUrl, ')
+          ..write('fileName: $fileName, ')
+          ..write('mediaType: $mediaType, ')
+          ..write('originalBytes: $originalBytes, ')
+          ..write('originalHash: $originalHash, ')
+          ..write('initialSnapshot: $initialSnapshot, ')
+          ..write('importKey: $importKey, ')
+          ..write('warnings: $warnings, ')
+          ..write('editedAt: $editedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -7558,6 +8172,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final $CollectionLogsTable collectionLogs = $CollectionLogsTable(this);
   late final $SettingsTable settings = $SettingsTable(this);
+  late final $ContentDocumentsTable contentDocuments = $ContentDocumentsTable(
+    this,
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -7574,6 +8191,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     collectionState,
     collectionLogs,
     settings,
+    contentDocuments,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -7604,6 +8222,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('book_entries', kind: UpdateKind.update)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'posts',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('content_documents', kind: UpdateKind.delete)],
     ),
   ]);
 }
@@ -7687,6 +8312,26 @@ final class $$PostsTableReferences
     ).filter((f) => f.postRef.id.sqlEquals($_itemColumn<int>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_bookEntriesRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<$ContentDocumentsTable, List<ContentDocument>>
+  _contentDocumentsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.contentDocuments,
+    aliasName: 'posts__id__content_documents__post_id',
+  );
+
+  $$ContentDocumentsTableProcessedTableManager get contentDocumentsRefs {
+    final manager = $$ContentDocumentsTableTableManager(
+      $_db,
+      $_db.contentDocuments,
+    ).filter((f) => f.postId.id.sqlEquals($_itemColumn<int>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _contentDocumentsRefsTable($_db),
+    );
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -7832,6 +8477,31 @@ class $$PostsTableFilterComposer extends Composer<_$AppDatabase, $PostsTable> {
           }) => $$BookEntriesTableFilterComposer(
             $db: $db,
             $table: $db.bookEntries,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> contentDocumentsRefs(
+    Expression<bool> Function($$ContentDocumentsTableFilterComposer f) f,
+  ) {
+    final $$ContentDocumentsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.contentDocuments,
+      getReferencedColumn: (t) => t.postId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ContentDocumentsTableFilterComposer(
+            $db: $db,
+            $table: $db.contentDocuments,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -8066,6 +8736,31 @@ class $$PostsTableAnnotationComposer
     );
     return f(composer);
   }
+
+  Expression<T> contentDocumentsRefs<T extends Object>(
+    Expression<T> Function($$ContentDocumentsTableAnnotationComposer a) f,
+  ) {
+    final $$ContentDocumentsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.contentDocuments,
+      getReferencedColumn: (t) => t.postId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ContentDocumentsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.contentDocuments,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $$PostsTableTableManager
@@ -8081,7 +8776,11 @@ class $$PostsTableTableManager
           $$PostsTableUpdateCompanionBuilder,
           (Post, $$PostsTableReferences),
           Post,
-          PrefetchHooks Function({bool floorsRefs, bool bookEntriesRefs})
+          PrefetchHooks Function({
+            bool floorsRefs,
+            bool bookEntriesRefs,
+            bool contentDocumentsRefs,
+          })
         > {
   $$PostsTableTableManager(_$AppDatabase db, $PostsTable table)
     : super(
@@ -8181,12 +8880,17 @@ class $$PostsTableTableManager
               )
               .toList(),
           prefetchHooksCallback:
-              ({floorsRefs = false, bookEntriesRefs = false}) {
+              ({
+                floorsRefs = false,
+                bookEntriesRefs = false,
+                contentDocumentsRefs = false,
+              }) {
                 return PrefetchHooks(
                   db: db,
                   explicitlyWatchedTables: [
                     if (floorsRefs) db.floors,
                     if (bookEntriesRefs) db.bookEntries,
+                    if (contentDocumentsRefs) db.contentDocuments,
                   ],
                   addJoins: null,
                   getPrefetchedDataCallback: (items) async {
@@ -8221,6 +8925,27 @@ class $$PostsTableTableManager
                               ),
                           typedResults: items,
                         ),
+                      if (contentDocumentsRefs)
+                        await $_getPrefetchedData<
+                          Post,
+                          $PostsTable,
+                          ContentDocument
+                        >(
+                          currentTable: table,
+                          referencedTable: $$PostsTableReferences
+                              ._contentDocumentsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$PostsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).contentDocumentsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.postId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
                     ];
                   },
                 );
@@ -8241,7 +8966,11 @@ typedef $$PostsTableProcessedTableManager =
       $$PostsTableUpdateCompanionBuilder,
       (Post, $$PostsTableReferences),
       Post,
-      PrefetchHooks Function({bool floorsRefs, bool bookEntriesRefs})
+      PrefetchHooks Function({
+        bool floorsRefs,
+        bool bookEntriesRefs,
+        bool contentDocumentsRefs,
+      })
     >;
 typedef $$FloorsTableCreateCompanionBuilder =
     FloorsCompanion Function({
@@ -11977,6 +12706,427 @@ typedef $$SettingsTableProcessedTableManager =
       Setting,
       PrefetchHooks Function()
     >;
+typedef $$ContentDocumentsTableCreateCompanionBuilder =
+    ContentDocumentsCompanion Function({
+      Value<int> postId,
+      Value<String> sourceUrl,
+      required String fileName,
+      required String mediaType,
+      required Uint8List originalBytes,
+      required String originalHash,
+      required String initialSnapshot,
+      Value<String?> importKey,
+      Value<String> warnings,
+      required DateTime editedAt,
+    });
+typedef $$ContentDocumentsTableUpdateCompanionBuilder =
+    ContentDocumentsCompanion Function({
+      Value<int> postId,
+      Value<String> sourceUrl,
+      Value<String> fileName,
+      Value<String> mediaType,
+      Value<Uint8List> originalBytes,
+      Value<String> originalHash,
+      Value<String> initialSnapshot,
+      Value<String?> importKey,
+      Value<String> warnings,
+      Value<DateTime> editedAt,
+    });
+
+final class $$ContentDocumentsTableReferences
+    extends
+        BaseReferences<_$AppDatabase, $ContentDocumentsTable, ContentDocument> {
+  $$ContentDocumentsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $PostsTable _postIdTable(_$AppDatabase db) =>
+      db.posts.createAlias('content_documents__post_id__posts__id');
+
+  $$PostsTableProcessedTableManager get postId {
+    final $_column = $_itemColumn<int>('post_id')!;
+
+    final manager = $$PostsTableTableManager(
+      $_db,
+      $_db.posts,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_postIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$ContentDocumentsTableFilterComposer
+    extends Composer<_$AppDatabase, $ContentDocumentsTable> {
+  $$ContentDocumentsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get sourceUrl => $composableBuilder(
+    column: $table.sourceUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get fileName => $composableBuilder(
+    column: $table.fileName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mediaType => $composableBuilder(
+    column: $table.mediaType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get originalBytes => $composableBuilder(
+    column: $table.originalBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get originalHash => $composableBuilder(
+    column: $table.originalHash,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get initialSnapshot => $composableBuilder(
+    column: $table.initialSnapshot,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get importKey => $composableBuilder(
+    column: $table.importKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get warnings => $composableBuilder(
+    column: $table.warnings,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get editedAt => $composableBuilder(
+    column: $table.editedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$PostsTableFilterComposer get postId {
+    final $$PostsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.postId,
+      referencedTable: $db.posts,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PostsTableFilterComposer(
+            $db: $db,
+            $table: $db.posts,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ContentDocumentsTableOrderingComposer
+    extends Composer<_$AppDatabase, $ContentDocumentsTable> {
+  $$ContentDocumentsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get sourceUrl => $composableBuilder(
+    column: $table.sourceUrl,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get fileName => $composableBuilder(
+    column: $table.fileName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get mediaType => $composableBuilder(
+    column: $table.mediaType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get originalBytes => $composableBuilder(
+    column: $table.originalBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get originalHash => $composableBuilder(
+    column: $table.originalHash,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get initialSnapshot => $composableBuilder(
+    column: $table.initialSnapshot,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get importKey => $composableBuilder(
+    column: $table.importKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get warnings => $composableBuilder(
+    column: $table.warnings,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get editedAt => $composableBuilder(
+    column: $table.editedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$PostsTableOrderingComposer get postId {
+    final $$PostsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.postId,
+      referencedTable: $db.posts,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PostsTableOrderingComposer(
+            $db: $db,
+            $table: $db.posts,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ContentDocumentsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $ContentDocumentsTable> {
+  $$ContentDocumentsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get sourceUrl =>
+      $composableBuilder(column: $table.sourceUrl, builder: (column) => column);
+
+  GeneratedColumn<String> get fileName =>
+      $composableBuilder(column: $table.fileName, builder: (column) => column);
+
+  GeneratedColumn<String> get mediaType =>
+      $composableBuilder(column: $table.mediaType, builder: (column) => column);
+
+  GeneratedColumn<Uint8List> get originalBytes => $composableBuilder(
+    column: $table.originalBytes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get originalHash => $composableBuilder(
+    column: $table.originalHash,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get initialSnapshot => $composableBuilder(
+    column: $table.initialSnapshot,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get importKey =>
+      $composableBuilder(column: $table.importKey, builder: (column) => column);
+
+  GeneratedColumn<String> get warnings =>
+      $composableBuilder(column: $table.warnings, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get editedAt =>
+      $composableBuilder(column: $table.editedAt, builder: (column) => column);
+
+  $$PostsTableAnnotationComposer get postId {
+    final $$PostsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.postId,
+      referencedTable: $db.posts,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$PostsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.posts,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ContentDocumentsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $ContentDocumentsTable,
+          ContentDocument,
+          $$ContentDocumentsTableFilterComposer,
+          $$ContentDocumentsTableOrderingComposer,
+          $$ContentDocumentsTableAnnotationComposer,
+          $$ContentDocumentsTableCreateCompanionBuilder,
+          $$ContentDocumentsTableUpdateCompanionBuilder,
+          (ContentDocument, $$ContentDocumentsTableReferences),
+          ContentDocument,
+          PrefetchHooks Function({bool postId})
+        > {
+  $$ContentDocumentsTableTableManager(
+    _$AppDatabase db,
+    $ContentDocumentsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ContentDocumentsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ContentDocumentsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ContentDocumentsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> postId = const Value.absent(),
+                Value<String> sourceUrl = const Value.absent(),
+                Value<String> fileName = const Value.absent(),
+                Value<String> mediaType = const Value.absent(),
+                Value<Uint8List> originalBytes = const Value.absent(),
+                Value<String> originalHash = const Value.absent(),
+                Value<String> initialSnapshot = const Value.absent(),
+                Value<String?> importKey = const Value.absent(),
+                Value<String> warnings = const Value.absent(),
+                Value<DateTime> editedAt = const Value.absent(),
+              }) => ContentDocumentsCompanion(
+                postId: postId,
+                sourceUrl: sourceUrl,
+                fileName: fileName,
+                mediaType: mediaType,
+                originalBytes: originalBytes,
+                originalHash: originalHash,
+                initialSnapshot: initialSnapshot,
+                importKey: importKey,
+                warnings: warnings,
+                editedAt: editedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> postId = const Value.absent(),
+                Value<String> sourceUrl = const Value.absent(),
+                required String fileName,
+                required String mediaType,
+                required Uint8List originalBytes,
+                required String originalHash,
+                required String initialSnapshot,
+                Value<String?> importKey = const Value.absent(),
+                Value<String> warnings = const Value.absent(),
+                required DateTime editedAt,
+              }) => ContentDocumentsCompanion.insert(
+                postId: postId,
+                sourceUrl: sourceUrl,
+                fileName: fileName,
+                mediaType: mediaType,
+                originalBytes: originalBytes,
+                originalHash: originalHash,
+                initialSnapshot: initialSnapshot,
+                importKey: importKey,
+                warnings: warnings,
+                editedAt: editedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$ContentDocumentsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({postId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (postId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.postId,
+                                referencedTable:
+                                    $$ContentDocumentsTableReferences
+                                        ._postIdTable(db),
+                                referencedColumn:
+                                    $$ContentDocumentsTableReferences
+                                        ._postIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$ContentDocumentsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $ContentDocumentsTable,
+      ContentDocument,
+      $$ContentDocumentsTableFilterComposer,
+      $$ContentDocumentsTableOrderingComposer,
+      $$ContentDocumentsTableAnnotationComposer,
+      $$ContentDocumentsTableCreateCompanionBuilder,
+      $$ContentDocumentsTableUpdateCompanionBuilder,
+      (ContentDocument, $$ContentDocumentsTableReferences),
+      ContentDocument,
+      PrefetchHooks Function({bool postId})
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -12003,4 +13153,6 @@ class $AppDatabaseManager {
       $$CollectionLogsTableTableManager(_db, _db.collectionLogs);
   $$SettingsTableTableManager get settings =>
       $$SettingsTableTableManager(_db, _db.settings);
+  $$ContentDocumentsTableTableManager get contentDocuments =>
+      $$ContentDocumentsTableTableManager(_db, _db.contentDocuments);
 }

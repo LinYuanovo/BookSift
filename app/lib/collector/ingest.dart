@@ -120,6 +120,12 @@ class IngestPipeline {
         ));
       } else {
         postId = existing.id;
+        final ContentDocument? localEdit = await (db.select(db.contentDocuments)
+              ..where((ContentDocuments table) => table.postId.equals(postId)))
+            .getSingleOrNull();
+        if (localEdit != null) {
+          return IngestResult(postId: postId, skippedDup: analysis.entries.length);
+        }
         // 同帖重采（或回认种子帖）：同步会变化的帖元信息；floor_count/image_count
         // 在楼层合并完成后按实际行数重算。
         await (db.update(db.posts)..where((Posts t) => t.id.equals(postId)))

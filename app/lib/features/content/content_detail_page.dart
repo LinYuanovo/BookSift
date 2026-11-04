@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatf
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../collector/collect_providers.dart';
@@ -28,6 +29,7 @@ import '../share/share_card.dart';
 import '../share/share_sheet.dart';
 import 'detail_slot.dart';
 import 'rich_text.dart';
+import 'content_editor_page.dart';
 
 /// 帖子详情（§5.6 富文本阅读，完整继承扫书 §2.4 管线）。
 ///
@@ -327,12 +329,15 @@ class _ContentDetailPageState extends ConsumerState<ContentDetailPage> {
               ),
               itemBuilder: (BuildContext context) =>
                   const <PopupMenuEntry<String>>[
+                    PopupMenuItem<String>(value: 'edit', child: Text('编辑帖子')),
                     PopupMenuItem<String>(value: 'share', child: Text('分享扫书')),
                     // 任务 4：页内搜索（VSCode 风格），AppBar 下方展开搜索条。
                     PopupMenuItem<String>(value: 'find', child: Text('页内搜索')),
                   ],
               onSelected: (String v) {
-                if (v == 'share') {
+                if (v == 'edit') {
+                  openContentEditor(context, postId: current.post.id);
+                } else if (v == 'share') {
                   _sharePost(current);
                 } else if (v == 'find') {
                   setState(() {
@@ -544,7 +549,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
   /// 属用户打开帖子的直接后果，与在线搜索「手动触发」同口径，不设额外闸门。
   void _maybeRefreshImages(PostDetailData data) {
     final int? tid = data.post.tid;
-    if (tid == null || !data.floors.any((FloorData f) => f.images.isNotEmpty)) {
+    if (tid == null || data.sourceUrl != null || !data.floors.any((FloorData f) => f.images.isNotEmpty)) {
       return;
     }
     // 先过防重再读 provider：无图帖绝不触碰 appDatabaseProvider（widget 测试哨兵）。
@@ -815,7 +820,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     final AppSpacing s = AppSpacing.of(context);
     final Post post = data.post;
     final SemanticTone tone = postToneOf(postKind: post.postKind, title: post.title);
-    final String? tidUrl = post.tid == null
+    final String? tidUrl = data.sourceUrl?.isNotEmpty == true ? data.sourceUrl : post.tid == null
         ? null
         : 'https://tieba.baidu.com/p/${post.tid}';
     // 楼层正文可否直接选中：手动选择模式（触屏）∪ 桌面默认档（需求 3）。
@@ -913,6 +918,14 @@ class _PostBodyState extends ConsumerState<_PostBody> {
                   for (final PostBookCount b in data.books) PostBookChip(book: b),
                 ],
               ),
+            ],
+            if (data.contentWarnings.isNotEmpty) ...<Widget>[
+              SizedBox(height: s.space3),
+              for (final String warning in data.contentWarnings)
+                Padding(
+                  padding: EdgeInsets.only(bottom: s.space2),
+                  child: Text(warning, style: t.caption.copyWith(color: c.textSecondary)),
+                ),
             ],
             if (post.postKind == CategoryKind.avoid) ...<Widget>[
               SizedBox(height: s.space3),
@@ -1252,6 +1265,58 @@ class FloorImages extends StatelessWidget {
     return '';
   }
 
+  static Map<String, String> headersFor(String url) {
+    final String host = Uri.tryParse(url)?.host ?? '';
+    if (host.endsWith('qpic.cn') || host.endsWith('qlogo.cn')) {
+      return const <String, String>{'Referer': 'https://mp.weixin.qq.com/'};
+    }
+    return host.endsWith('baidu.com') ? refererHeaders : const <String, String>{};
+  }
+
+  static Widget imageWidget({
+    required FloorImage image,
+    double? width,
+    double? height,
+    BoxFit fit = BoxFit.contain,
+    required Widget Function(BuildContext context) errorBuilder,
+    Widget Function(BuildContext context)? placeholder,
+  }) {
+    final String url = displayUrl(image);
+    if (url.startsWith('data:image/')) {
+      try {
+        final UriData data = UriData.parse(url);
+        if (data.mimeType == 'image/svg+xml') {
+          return SvgPicture.memory(
+            data.contentAsBytes(),
+            width: width,
+            height: height,
+            fit: fit,
+            placeholderBuilder: placeholder,
+            errorBuilder: (BuildContext context, Object error, StackTrace? stack) => errorBuilder(context),
+          );
+        }
+        return Image.memory(
+          data.contentAsBytes(),
+          width: width,
+          height: height,
+          fit: fit,
+          errorBuilder: (BuildContext context, Object error, StackTrace? stack) => errorBuilder(context),
+        );
+      } on FormatException {
+        return Builder(builder: errorBuilder);
+      }
+    }
+    return CachedNetworkImage(
+      imageUrl: url,
+      httpHeaders: headersFor(url),
+      width: width,
+      height: height,
+      fit: fit,
+      placeholder: placeholder == null ? null : (BuildContext context, String url) => placeholder(context),
+      errorWidget: (BuildContext context, String url, Object error) => errorBuilder(context),
+    );
+  }
+
   /// 网格几何：列数 n = clamp(((w + spacing) / (minTile + spacing)).floor(), 2, 5)，
   /// tile = ⌊(w - spacing·(n-1)) / n⌋，上限 [maxTile]（超出部分由 Wrap 左对齐留白）。
   /// 取整向下：浮点误差若让 n·tile + (n-1)·spacing 略超 w，Wrap 会把末列挤到下一行。
@@ -1323,18 +1388,17 @@ class FloorImages extends StatelessWidget {
                   // 任务 2：查看器带上整层画廊 + 点击位，弹层内可左右滑翻页。
                   onTap: () =>
                       showImageViewer(context, img, images: images, initialIndex: i),
-                  child: CachedNetworkImage(
-                    imageUrl: displayUrl(img),
-                    httpHeaders: refererHeaders,
+                  child: imageWidget(
+                    image: img,
                     width: g.tile,
                     height: g.tile,
                     fit: BoxFit.cover,
-                    placeholder: (BuildContext context, String url) => Container(
+                    placeholder: (BuildContext context) => Container(
                       width: g.tile,
                       height: g.tile,
                       color: c.surfaceSunken,
                     ),
-                    errorWidget: (BuildContext context, String url, Object error) =>
+                    errorBuilder: (BuildContext context) =>
                         Container(
                           width: g.tile,
                           height: g.tile,
@@ -1486,11 +1550,10 @@ class _ImageViewerDialogState extends State<_ImageViewerDialog> {
               child: Center(
                 child:
                     widget.imageBuilder?.call(context, widget.images[i]) ??
-                    CachedNetworkImage(
-                      imageUrl: FloorImages.displayUrl(widget.images[i]),
-                      httpHeaders: FloorImages.refererHeaders,
-                      errorWidget:
-                          (BuildContext context, String url, Object error) =>
+                    FloorImages.imageWidget(
+                      image: widget.images[i],
+                      errorBuilder:
+                          (BuildContext context) =>
                               const AppEmptyState(
                                 title: '图片已失效',
                                 svgIcon: 'image',

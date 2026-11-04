@@ -293,6 +293,22 @@ class Settings extends Table {
   Set<Column> get primaryKey => {key};
 }
 
+class ContentDocuments extends Table {
+  IntColumn get postId => integer().references(Posts, #id, onDelete: KeyAction.cascade)();
+  TextColumn get sourceUrl => text().withDefault(const Constant(''))();
+  TextColumn get fileName => text()();
+  TextColumn get mediaType => text()();
+  BlobColumn get originalBytes => blob()();
+  TextColumn get originalHash => text()();
+  TextColumn get initialSnapshot => text()();
+  TextColumn get importKey => text().nullable().unique()();
+  TextColumn get warnings => text().withDefault(const Constant('[]'))();
+  DateTimeColumn get editedAt => dateTime()();
+
+  @override
+  Set<Column> get primaryKey => {postId};
+}
+
 @DriftDatabase(
   tables: [
     Posts,
@@ -306,18 +322,19 @@ class Settings extends Table {
     CollectionState,
     CollectionLogs,
     Settings,
+    ContentDocuments,
   ],
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
-  /// v4 = 现行 schema：在 v3（书签楼层位置 bookmarks.floor_seq）之上补齐查询索引
+  /// v5 = 原始内容留档；v4 在 v3（书签楼层位置 bookmarks.floor_seq）之上补齐查询索引
   /// （[_createQueryIndexes]）。此前真机 app.sqlite 全程无索引，检索/榜单/时间线/去重
   /// 均在全表扫（book_entries 5.3 万、floors 16.5 万行）。
-  /// 新装用户由 onCreate 直接落 v4；v1→v2→v3→v4 迁移链：v2/v3 逐级加列（带 DEFAULT/
-  /// 可空列的 O(1) 元数据操作），v4 仅 CREATE INDEX IF NOT EXISTS，均无存量回填负担。
+  /// 新装用户由 onCreate 直接落 v5；v2/v3 逐级加列（带 DEFAULT/
+  /// 可空列的 O(1) 元数据操作），v4 建查询索引，v5 仅新建留档表，无存量回填负担。
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -346,6 +363,9 @@ class AppDatabase extends _$AppDatabase {
         // v3→v4：补齐查询索引（真机 app.sqlite 此前全程无索引 → 检索/榜单/去重全表扫）。
         // 纯 CREATE INDEX IF NOT EXISTS，幂等；不改列，无存量回填。
         await _createQueryIndexes(customStatement);
+      }
+      if (from < 5) {
+        await m.createTable(contentDocuments);
       }
     },
   );
