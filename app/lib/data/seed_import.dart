@@ -701,6 +701,9 @@ class DefaultSeedImporter implements SeedImporter {
       WHERE EXISTS (
         SELECT 1 FROM book_entries b
         WHERE b.book_group_id = g.id AND b.comment_src = 'user_edited')
+        OR (g.entry_total = 0 AND EXISTS (
+          SELECT 1 FROM favorites f
+          WHERE f.target_type = 'book_group' AND f.target_id = g.id))
     ''');
 
     // 2) 在删除旧 seed 行前快照用户引用。bookmarks/favorites 没有外键，
@@ -1019,12 +1022,14 @@ class DefaultSeedImporter implements SeedImporter {
         word_count_max = (SELECT max(word_count) FROM book_entries b WHERE b.book_group_id = book_groups.id),
         date_min = (SELECT min(date) FROM book_entries b WHERE b.book_group_id = book_groups.id),
         date_max = (SELECT max(date) FROM book_entries b WHERE b.book_group_id = book_groups.id),
-        name_display = (SELECT name FROM book_entries b WHERE b.book_group_id = book_groups.id
-          ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1),
-        author_display = (SELECT author FROM book_entries b WHERE b.book_group_id = book_groups.id
-          AND COALESCE(author, '') <> '' ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1),
-        author_eff_norm = COALESCE((SELECT author_norm FROM book_entries b WHERE b.book_group_id = book_groups.id
-          AND COALESCE(author, '') <> '' ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1), ''),
+        name_display = COALESCE((SELECT name FROM book_entries b WHERE b.book_group_id = book_groups.id
+          ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1), name_display),
+        author_display = CASE WHEN NOT EXISTS (SELECT 1 FROM book_entries b WHERE b.book_group_id = book_groups.id)
+          THEN author_display ELSE (SELECT author FROM book_entries b WHERE b.book_group_id = book_groups.id
+            AND COALESCE(author, '') <> '' ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1) END,
+        author_eff_norm = CASE WHEN NOT EXISTS (SELECT 1 FROM book_entries b WHERE b.book_group_id = book_groups.id)
+          THEN author_eff_norm ELSE COALESCE((SELECT author_norm FROM book_entries b WHERE b.book_group_id = book_groups.id
+            AND COALESCE(author, '') <> '' ORDER BY (b.comment_src = 'user_edited') DESC, b.quality DESC LIMIT 1), '') END,
         channels = (SELECT json_group_array(channel) FROM
           (SELECT DISTINCT channel FROM book_entries b WHERE b.book_group_id = book_groups.id ORDER BY channel))
       WHERE name_norm IN (SELECT name_norm FROM _edited_groups)

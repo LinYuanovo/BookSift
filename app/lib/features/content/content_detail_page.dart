@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatf
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../collector/collect_providers.dart';
@@ -1283,8 +1284,19 @@ class FloorImages extends StatelessWidget {
     final String url = displayUrl(image);
     if (url.startsWith('data:image/')) {
       try {
+        final UriData data = UriData.parse(url);
+        if (data.mimeType == 'image/svg+xml') {
+          return SvgPicture.memory(
+            data.contentAsBytes(),
+            width: width,
+            height: height,
+            fit: fit,
+            placeholderBuilder: placeholder,
+            errorBuilder: (BuildContext context, Object error, StackTrace? stack) => errorBuilder(context),
+          );
+        }
         return Image.memory(
-          UriData.parse(url).contentAsBytes(),
+          data.contentAsBytes(),
           width: width,
           height: height,
           fit: fit,

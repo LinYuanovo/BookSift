@@ -30,10 +30,30 @@
 - `flutter analyze`：0 问题。
 - 完整测试：**1049 passed, 14 skipped**；墙钟保护执行，日志 `app/build/test_logs/test-20261104-115156-691014.log`。
 - Linux 可见桌面真实 E2E：**1 passed**，通过实际系统文件选择框选择样本 1 HTML，导入、编辑书评人 / 小说作者、搜索 / 书页 / 原文回读、数据库关闭重开均通过。日志 `app/build/test_logs/test-20261104-114755-689990.log`。
+- Linux 集成测试竖屏视口 **390×844 logical px**：**1 passed**；用真实微信 HTML、生产解析器和 SQLite，验证导入、编辑、帖子详情、书聚合跳转、搜索，以及无法识别书目的纯帖子兜底和分段正文完整回读。该用例用可注入文档源提供已解析样本，不代表竖屏原生文件选择框验收。日志 `app/build/test_logs/test-20261104-133133-738479.log`。
 - SQLite 新增 / 幂等 / FTS / 聚合 / 收藏 / 书签 / 并发修改保护 / 重新采集保护 / 分类维护保护 / 种子升级保护有回归覆盖；真实 v4 只读库读取不迁移。
 - 320 / 390 / 720 / 1180 宽度的统一编辑页面测试通过。
 
-真实来源抓取走已打开的可见浏览器；系统文件选择在 WSL 的 XDG Desktop Portal 会话中运行。未在 Windows / Android / iOS / macOS 原生宿主分别执行本次 E2E。
+真实来源抓取走已打开的可见浏览器；系统文件选择在 WSL 的 XDG Desktop Portal 会话中运行。未在 Android / iOS 真机验证软键盘与文件选择器，也未在 Windows / macOS 原生宿主分别执行本次 E2E。
+
+## 合并前审阅复验
+
+2026-11-04 对完整功能差异及工作区竖屏验收补充进行审阅。修复并验证以下边界：
+
+- 同帖同书的独立评价可正常编辑；真实 v4 样本升级到当前 schema 后，保留全部评价、小说作者与条目 ID，初次快照完整留档。
+- 图片刷新在写入事务内再次检查本地编辑；网络请求期间完成的校对图片不会被刷新响应覆盖。
+- 移除全部评价后的空书组收藏，经过种子升级仍保留名称、作者及有效组引用。
+- 嵌入 SVG 在编辑预览、阅读缩略图与查看器使用矢量解码器；PNG 沿用位图路径，损坏地址保留错误占位。
+- 来源链接先去除首尾空白再生成幂等键，重复导入仍返回原帖子。
+- 空标题统一使用默认标题，帖子、收藏与书签一致；引用维护不把这些记录判为失效。
+
+复验结果：
+
+- 应用目录执行 `flutter analyze --no-pub`：**0 问题**；日志 `app/build/test_logs/review-analyze-final.log`。
+- 完整测试：**1057 passed, 14 skipped**；日志 `app/build/test_logs/test-20261104-150911-771375.log`。
+- Linux 原生集成测试：**1 passed**；Xvfb 中运行 390×844 logical px 竖屏视口，验证真实微信离线 HTML、生产解析器、SQLite、编辑、书页跳转、搜索、纯帖子兜底与数据库重开。文档源经注入提供，不执行系统文件选择框；日志 `app/build/test_logs/test-20261104-151150-773714.log`。
+- 测试前后对全部受测应用源码、测试及依赖配置进行 SHA-256 校验，确认验证内容未变化。
+- 文档生成一致性检查及 `git diff --check` 通过。
 
 ## 本地证据
 
@@ -50,5 +70,3 @@ dart run tool/verify_wechat_import.dart build/acceptance/wechat offline
 cd ..
 FLUTTER_BIN=/path/to/flutter/bin/flutter bash tools/run_tests_safe.sh --concurrency=4
 ```
-
-本次仅本地提交，未推送远程，未创建 PR 或关闭 issue。

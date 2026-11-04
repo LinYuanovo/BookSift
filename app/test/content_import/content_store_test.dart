@@ -98,6 +98,11 @@ void main() {
     final ContentSaveResult duplicate = await store.save(input);
     expect(duplicate.alreadyImported, isTrue);
     expect(duplicate.postId, first.postId);
+    final ContentSaveResult spacedDuplicate = await store.save(
+      input.copyWith(sourceUrl: '   '),
+    );
+    expect(spacedDuplicate.alreadyImported, isTrue);
+    expect(spacedDuplicate.postId, first.postId);
     await store.save(input.copyWith(sourceUrl: 'https://example.com/another'));
     expect((await db.select(db.posts).get()).length, 2);
     expect((await db.select(db.bookEntries).get()).length, 2);
@@ -236,6 +241,23 @@ void main() {
     );
   });
 
+  test('清空标题使用一致默认值，收藏书签经维护后仍指向原帖', () async {
+    final ContentSaveResult saved = await store.save(draft('原始标题\n\n完整正文。'));
+    await queries.toggleFavorite(
+      targetType: FavoriteTarget.post,
+      targetId: saved.postId,
+      title: '原始标题',
+    );
+    await queries.togglePostBookmark(postRef: saved.postId, title: '原始标题');
+    await store.save((await store.load(saved.postId))!.copyWith(title: '   '));
+    expect((await db.select(db.posts).getSingle()).title, '导入扫书');
+    expect((await db.select(db.favorites).getSingle()).title, '导入扫书');
+    expect((await db.select(db.bookmarks).getSingle()).title, '导入扫书');
+    await repairPostReferences(db);
+    expect((await db.select(db.favorites).getSingle()).targetId, saved.postId);
+    expect((await db.select(db.bookmarks).getSingle()).postRef, saved.postId);
+  });
+
   test('并发修改保护与非法字段回滚，不丢失草稿或写入半条帖子', () async {
     final ContentSaveResult saved = await store.save(
       draft('《并发校验》 作者：墨白\n完整评论。'),
@@ -266,6 +288,60 @@ void main() {
     expect((await db.select(db.posts).getSingle()).title, '其他更新');
   });
 
+  test('编辑同书独立评价时保留原条目 ID，新增评价不覆盖原条目', () async {
+    final ContentSaveResult saved = await store.save(
+      draft('《同书评价》 作者：青云\n第一位书友完整评价。'),
+    );
+    final ContentDraft current = (await store.load(saved.postId))!;
+    final int originalId = current.entries.single.id!;
+    final ContentEntryDraft additional = ContentEntryDraft(
+      name: current.entries.single.name,
+      author: current.entries.single.author,
+      comment: '另一位书友独立评价。',
+      channel: current.channel,
+      date: current.date,
+    );
+    await store.save(
+      current.copyWith(
+        entries: <ContentEntryDraft>[additional, ...current.entries],
+      ),
+    );
+    final ContentDraft recovered = (await store.load(saved.postId))!;
+    expect(recovered.entries, hasLength(2));
+    expect(
+      recovered.entries
+          .singleWhere((ContentEntryDraft entry) => entry.id == originalId)
+          .comment,
+      current.entries.single.comment,
+    );
+    final BookEntry entry = await (db.select(
+      db.bookEntries,
+    )..where((BookEntries table) => table.id.equals(originalId))).getSingle();
+    expect((await queries.bookDetail(entry.bookGroupId!))!.group.entryTotal, 2);
+    final int extraId = recovered.entries
+        .singleWhere((ContentEntryDraft entry) => entry.id != originalId)
+        .id!;
+    await expectLater(
+      store.save(
+        recovered.copyWith(
+          entries: <ContentEntryDraft>[
+            recovered.entries.singleWhere(
+              (ContentEntryDraft entry) => entry.id == originalId,
+            ),
+            ContentEntryDraft(
+              id: extraId,
+              name: entry.name,
+              author: entry.author!,
+              comment: entry.comment!,
+            ),
+          ],
+        ),
+      ),
+      throwsA(isA<ContentEditException>()),
+    );
+    expect((await store.load(saved.postId))!.entries, hasLength(2));
+  });
+
   test('真实文件数据库关闭重开仍保留全文、图片和原始留档', () async {
     final Directory directory = await Directory.systemTemp.createTemp(
       'booksift-content-store-',
@@ -290,6 +366,57 @@ void main() {
       );
     } finally {
       await disk.close();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('真实 v4 多评价帖子可校对标题，保留同书独立评价与原始留档', () async {
+    final Directory directory = await Directory.systemTemp.createTemp(
+      'booksift-existing-reviews-',
+    );
+    final File file = await File(
+      'test/fixtures/dev_seed.db',
+    ).copy('${directory.path}/library.sqlite');
+    final AppDatabase existing = AppDatabase(NativeDatabase(file));
+    try {
+      final ContentStore editor = ContentStore(existing);
+      final ContentDraft current = (await editor.load(13550))!;
+      final Set<String> names = current.entries
+          .map((ContentEntryDraft entry) => entry.name)
+          .toSet();
+      expect(current.entries.length, greaterThan(names.length));
+      final ContentSaveResult saved = await editor.save(
+        current.copyWith(title: '用户校对多评价帖子'),
+      );
+      final ContentDraft recovered = (await editor.load(saved.postId))!;
+      expect(recovered.title, '用户校对多评价帖子');
+      expect(
+        recovered.entries.map((ContentEntryDraft entry) => entry.id),
+        current.entries.map((ContentEntryDraft entry) => entry.id),
+      );
+      expect(
+        recovered.entries.map((ContentEntryDraft entry) => entry.comment),
+        current.entries.map((ContentEntryDraft entry) => entry.comment),
+      );
+      expect(
+        recovered.entries.map((ContentEntryDraft entry) => entry.author),
+        current.entries.map((ContentEntryDraft entry) => entry.author),
+      );
+      expect(
+        (await editor.original(saved.postId))!.initialSnapshot,
+        contains(current.title),
+      );
+      expect(
+        (await existing.customSelect('PRAGMA user_version').getSingle())
+            .read<int>('user_version'),
+        existing.schemaVersion,
+      );
+      expect(
+        await existing.customSelect('PRAGMA foreign_key_check').get(),
+        isEmpty,
+      );
+    } finally {
+      await existing.close();
       await directory.delete(recursive: true);
     }
   });

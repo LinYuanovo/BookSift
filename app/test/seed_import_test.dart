@@ -52,6 +52,7 @@ import 'package:booksift/content/content_store.dart';
 import 'package:booksift/content/document_reader.dart';
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/data/maintenance.dart';
+import 'package:booksift/data/repo/queries.dart' show FavoriteTarget;
 import 'package:booksift/data/seed_import.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 
@@ -1079,6 +1080,50 @@ void main() {
     expect((await (db.select(db.favorites)..where((Favorites table) => table.title.equals('《用户独有新书》'))).getSingle()).targetId, group.id);
     expect((await store.original(saved.postId))!.originalHash, original.originalHash);
     expect((await store.load(saved.postId))!.floors.single.text, contains('原始长评完整结尾'));
+    expect(await db.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
+  });
+
+  test('种子升级保留移除评价后的空书组收藏', () async {
+    final Directory env = Directory(p.join(_root.path, 'empty-group-upgrade'))
+      ..createSync(recursive: true);
+    final (AppDatabase db, DefaultSeedImporter importer) = _newEnv(_bundleV1, env);
+    expect((await importer.importBasic().toList()).last.phase, SeedImportPhase.done);
+    final ContentStore store = ContentStore(db);
+    final ContentDraft imported = const DocumentReader().read(
+      bytes: Uint8List.fromList(utf8.encode('《用户暂存书》 作者：用户作者\n完整原文。')),
+      fileName: 'user.txt',
+    );
+    final ContentSaveResult saved = await store.save(imported);
+    final BookEntry entry = (await (db.select(db.bookEntries)
+          ..where((BookEntries table) => table.postRef.equals(saved.postId)))
+        .get()).single;
+    final int favoriteId = await db.into(db.favorites).insert(
+      FavoritesCompanion.insert(
+        targetType: FavoriteTarget.bookGroup,
+        targetId: entry.bookGroupId!,
+        title: '《用户暂存书》',
+        addedAt: DateTime.now(),
+      ),
+    );
+    await store.save((await store.load(saved.postId))!.copyWith(entries: const <ContentEntryDraft>[]));
+    final DefaultSeedImporter upgrade = DefaultSeedImporter(
+      db,
+      assetBundle: _DirAssetBundle(_bundleV2),
+      workDirProvider: () async => Directory(p.join(env.path, 'upgrade-tmp'))..createSync(recursive: true),
+      databasePathProvider: () async => p.join(env.path, 'app.sqlite'),
+    );
+    expect((await upgrade.importBasic().toList()).last.phase, SeedImportPhase.done);
+    final Favorite? favorite = await (db.select(db.favorites)
+          ..where((Favorites table) => table.id.equals(favoriteId)))
+        .getSingleOrNull();
+    expect(favorite, isNotNull);
+    final BookGroup group = await (db.select(db.bookGroups)
+          ..where((BookGroups table) => table.id.equals(favorite!.targetId)))
+        .getSingle();
+    expect(group.nameDisplay, '用户暂存书');
+    expect(group.authorDisplay, '用户作者');
+    expect(group.entryTotal, 0);
+    expect((await store.load(saved.postId))!.entries, isEmpty);
     expect(await db.customSelect('PRAGMA foreign_key_check').get(), isEmpty);
   });
 

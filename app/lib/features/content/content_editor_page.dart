@@ -15,6 +15,7 @@ import '../../core/icons.dart';
 import '../../core/nav/center_slot.dart';
 import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/app_toast.dart';
+import '../../data/db/app_database.dart' show FloorImage;
 import '../../data/repo/queries.dart';
 import '../../data/repo/queries_providers.dart';
 import '../../theme/app_colors.dart';
@@ -500,13 +501,19 @@ class _ContentEditorPageState extends ConsumerState<ContentEditorPage> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          leading: image.embedded && !image.url.startsWith('data:image/svg')
-              ? Image.memory(
-                  UriData.parse(image.url).contentAsBytes(),
+          leading: image.embedded
+              ? FloorImages.imageWidget(
+                  image: FloorImage(
+                    id: image.id ?? 0,
+                    floorId: floor.id ?? 0,
+                    urlOriginal: image.url,
+                    width: image.width,
+                    height: image.height,
+                  ),
                   width: 48,
                   height: 48,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => const Text('图片'),
+                  errorBuilder: (_) => const Text('图片'),
                 )
               : AppIcon(
                   'image',

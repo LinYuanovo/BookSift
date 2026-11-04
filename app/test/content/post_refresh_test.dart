@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+
 import 'package:booksift/collector/post_refresh.dart';
+import 'package:booksift/content/content_store.dart';
 import 'package:booksift/collector/scheduler.dart' show CollectRequestException;
 import 'package:booksift/collector/tieba/src/models.dart';
 import 'package:booksift/collector/tieba_api.dart' show PostsPage;
@@ -247,6 +251,52 @@ void main() {
       );
     });
 
+    test('请求已发出时保存本地编辑，刷新事务不能覆盖校对图片', () async {
+      final int floorId = await seedFloor(
+        pid: 101,
+        images: <ImageInfo>[
+          _img(
+            'https://example.com/local.png',
+            'https://example.com/local.png',
+          ),
+        ],
+      );
+      final FloorImage original = (await imagesOf(floorId)).single;
+      final _PausedTiebaApi delayed = _PausedTiebaApi();
+      delayed.scriptPosts(
+        5001,
+        1,
+        PostsPage(
+          floors: <FloorInfo>[
+            mkFloor(
+              pid: 101,
+              seq: 1,
+              images: <ImageInfo>[
+                _img(
+                  'https://example.com/online.png',
+                  'https://example.com/online.png',
+                ),
+              ],
+            ),
+          ],
+          hasMore: false,
+        ),
+      );
+      final Future<PostRefreshResult> refresh = PostRefreshService(
+        db: db,
+        api: delayed,
+      ).refreshPostImages(tid: 5001, postId: postId);
+      await delayed.started.future;
+      final ContentStore store = ContentStore(db);
+      await store.save((await store.load(postId))!.copyWith(title: '本地校对标题'));
+      delayed.resume.complete();
+      final PostRefreshResult result = await refresh;
+      expect(result.changed, isFalse);
+      expect(result.imagesReplaced, 0);
+      expect((await imagesOf(floorId)).single, original);
+      expect((await store.load(postId))!.title, '本地校对标题');
+    });
+
     // ── 对齐键（任务 3）：pid 主键 + pid 缺失时按位兜底 ──
 
     test('本地 pid 全 NULL → 按位对齐，线上新签名链落库（changed=true）', () async {
@@ -345,7 +395,11 @@ void main() {
         1,
         PostsPage(
           floors: <FloorInfo>[
-            mkFloor(pid: 301, seq: 1, images: <ImageInfo>[_img('o_new', 'p_new')]),
+            mkFloor(
+              pid: 301,
+              seq: 1,
+              images: <ImageInfo>[_img('o_new', 'p_new')],
+            ),
             mkFloor(pid: 302, seq: 3, images: <ImageInfo>[_img('x', 'y')]),
           ],
           hasMore: false,
@@ -420,7 +474,11 @@ void main() {
         1,
         PostsPage(
           floors: <FloorInfo>[
-            mkFloor(pid: 0, seq: 1, images: <ImageInfo>[_img('o_thief', 'p_thief')]),
+            mkFloor(
+              pid: 0,
+              seq: 1,
+              images: <ImageInfo>[_img('o_thief', 'p_thief')],
+            ),
           ],
           hasMore: false,
         ),
@@ -436,4 +494,18 @@ void main() {
       expect((await imagesOf(f1)).single.urlOriginal, 'o_old');
     });
   });
+}
+
+class _PausedTiebaApi extends FakeTiebaApi {
+  _PausedTiebaApi() : super(FakeClock(), holdTicks: 0);
+
+  final Completer<void> started = Completer<void>();
+  final Completer<void> resume = Completer<void>();
+
+  @override
+  Future<PostsPage> getPosts(int tid, {int pn = 1, int rn = 30}) async {
+    started.complete();
+    await resume.future;
+    return super.getPosts(tid, pn: pn, rn: rn);
+  }
 }

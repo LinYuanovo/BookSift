@@ -11,6 +11,8 @@ import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/data/repo/database_provider.dart';
 import 'package:booksift/data/repo/queries.dart';
 import 'package:booksift/data/seed_import_providers.dart';
+import 'package:booksift/features/content/book_detail_page.dart';
+import 'package:booksift/features/content/content_detail_page.dart';
 import 'package:booksift/features/content/content_editor_page.dart';
 import 'package:booksift/theme/book_theme.dart';
 import 'package:drift/native.dart';
@@ -24,9 +26,12 @@ import '../test/support/harness.dart' show NoopSeedImporter, fakeFontService;
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('真实桌面：微信文档选择导入→书目校对→编辑→搜索与原文回读→数据库重开', (
+  testWidgets('Linux 集成：390×844 竖屏视口下微信导入与帖子兜底→校对→回读', (
     WidgetTester tester,
   ) async {
+    tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
     debugPrint('native-stage: create temporary database');
     final Directory directory = await Directory.systemTemp.createTemp(
       'booksift-native-import-',
@@ -95,6 +100,13 @@ void main() {
         await tester.pumpAndSettle();
       }
       debugPrint('native-stage: import saved');
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'portrait import save has no overflow',
+      );
+      expect(find.byType(ContentEditorPage), findsNothing);
+      expect(find.byType(ContentDetailPage), findsOneWidget);
       final List<Post> posts = await db.select(db.posts).get();
       expect(posts, hasLength(1));
       final int postId = posts.single.id;
@@ -152,6 +164,69 @@ void main() {
         (await store.load(postId))!.rawDocument,
         await articleFile.readAsBytes(),
       );
+      for (
+        int attempt = 0;
+        attempt < 30 && find.byType(PostBookChip).evaluate().isEmpty;
+        attempt++
+      ) {
+        await tester.pump(const Duration(seconds: 1));
+      }
+      expect(find.byType(PostBookChip), findsOneWidget);
+      await tester.tap(find.byType(PostBookChip).first);
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'portrait book navigation has no overflow',
+      );
+      expect(find.byType(BookDetailPage), findsOneWidget);
+      container.read(appRouterProvider).pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(ContentDetailPage), findsOneWidget);
+      container.read(appRouterProvider).go('/search?q=阴阳造化炉');
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'portrait search has no overflow',
+      );
+      container.read(appRouterProvider).go('/home');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('导入扫书'));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('import-source-text')));
+      const String fallbackText =
+          '这是一段不包含可识别书名和作者的阅读讨论。\n\n'
+          '请保留用户输入的全部正文。\n\n这是正文结尾。';
+      await tester.enterText(
+        find.byKey(const Key('import-source-text')),
+        fallbackText,
+      );
+      await tester.ensureVisible(find.byKey(const Key('import-recognize')));
+      await tester.tap(find.byKey(const Key('import-recognize')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('将作为帖子保存'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('content-save')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'portrait fallback save has no overflow',
+      );
+      final List<Post> savedPosts = await db.select(db.posts).get();
+      final Post fallbackPost = savedPosts.singleWhere(
+        (Post post) => post.title == '这是一段不包含可识别书名和作者的阅读讨论。',
+      );
+      final ContentDraft fallbackDraft = (await store.load(fallbackPost.id))!;
+      expect(fallbackDraft.entries, isEmpty);
+      expect(
+        fallbackDraft.floors
+            .map((ContentFloorDraft floor) => floor.text)
+            .join('\n\n'),
+        fallbackText,
+      );
+      expect(find.byType(ContentDetailPage), findsOneWidget);
+      expect(find.text(fallbackPost.title!), findsNWidgets(2));
       await tester.pumpWidget(const SizedBox.shrink());
       container.dispose();
       await db.close();

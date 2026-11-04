@@ -118,10 +118,14 @@ class ContentStore {
     _validate(draft);
     return db.transaction(() async {
       final DateTime now = DateTime.now();
+      final String sourceUrl = draft.sourceUrl.trim();
+      final String title = draft.title.trim().isEmpty
+          ? '导入扫书'
+          : draft.title.trim();
       final String? importKey =
           draft.postId == null && draft.rawDocument != null
           ? sha256.convert(<int>[
-              ...utf8.encode('${draft.sourceUrl}\u001f'),
+              ...utf8.encode('$sourceUrl\u001f'),
               ...draft.rawDocument!,
             ]).toString()
           : null;
@@ -239,7 +243,7 @@ class ContentStore {
             .insert(
               ContentDocumentsCompanion.insert(
                 postId: Value<int>(postId),
-                sourceUrl: Value<String>(draft.sourceUrl.trim()),
+                sourceUrl: Value<String>(sourceUrl),
                 fileName: draft.fileName ?? 'post-$postId-original.json',
                 mediaType: draft.mediaType,
                 originalBytes: original,
@@ -255,7 +259,7 @@ class ContentStore {
               ..where((ContentDocuments table) => table.postId.equals(postId)))
             .write(
               ContentDocumentsCompanion(
-                sourceUrl: Value<String>(draft.sourceUrl.trim()),
+                sourceUrl: Value<String>(sourceUrl),
                 editedAt: Value<DateTime>(now),
                 warnings: Value<String>(jsonEncode(draft.warnings)),
               ),
@@ -271,9 +275,7 @@ class ContentStore {
         db.posts,
       )..where((Posts table) => table.id.equals(postId))).write(
         PostsCompanion(
-          title: Value<String?>(
-            draft.title.trim().isEmpty ? '导入扫书' : draft.title.trim(),
-          ),
+          title: Value<String?>(title),
           author: Value<String?>(_nullable(draft.author)),
           channel: Value<String>(draft.channel.trim()),
           subChannel: Value<String?>(_nullable(draft.subChannel)),
@@ -339,9 +341,17 @@ class ContentStore {
           .map((BookEntry entry) => entry.bookGroupId)
           .whereType<int>()
           .toSet();
-      final Map<String, BookEntry> existingByName = <String, BookEntry>{
-        for (final BookEntry entry in oldEntries) entry.nameNorm: entry,
-      };
+      final Map<String, List<BookEntry>> existingByName =
+          <String, List<BookEntry>>{};
+      for (final BookEntry entry in oldEntries) {
+        existingByName
+            .putIfAbsent(entry.nameNorm, () => <BookEntry>[])
+            .add(entry);
+      }
+      final Set<int> referencedEntries = draft.entries
+          .map((ContentEntryDraft entry) => entry.id)
+          .whereType<int>()
+          .toSet();
       for (final BookEntry entry in oldEntries) {
         await (db.update(
           db.bookEntries,
@@ -432,7 +442,16 @@ class ContentStore {
               : const Value<DateTime?>.absent(),
         );
         final int entryId;
-        final int? retainedId = entry.id ?? existingByName[nameNorm]?.id;
+        final int? retainedId =
+            entry.id ??
+            existingByName[nameNorm]
+                ?.where(
+                  (BookEntry previousEntry) =>
+                      !referencedEntries.contains(previousEntry.id) &&
+                      !retainedEntries.contains(previousEntry.id),
+                )
+                .firstOrNull
+                ?.id;
         if (retainedId == null) {
           entryId = await db.into(db.bookEntries).insert(values);
         } else {
@@ -490,7 +509,7 @@ class ContentStore {
           ))
           .write(
             FavoritesCompanion(
-              title: Value<String>(draft.title.trim()),
+              title: Value<String>(title),
               subtitle: Value<String?>(_nullable(draft.author)),
             ),
           );
@@ -498,7 +517,7 @@ class ContentStore {
         db.bookmarks,
       )..where((Bookmarks table) => table.postRef.equals(postId))).write(
         BookmarksCompanion(
-          title: Value<String>(draft.title.trim()),
+          title: Value<String>(title),
           author: Value<String?>(_nullable(draft.author)),
           channel: Value<String?>(draft.channel.trim()),
         ),
@@ -662,6 +681,7 @@ class ContentStore {
       throw const ContentEditException('原始文档超过 24 MB。');
     }
     final Set<String> names = <String>{};
+    final Set<String> entryHashes = <String>{};
     final Set<int> floorIds = <int>{};
     int imageBytes = 0;
     for (final ContentFloorDraft floor in draft.floors) {
@@ -682,8 +702,19 @@ class ContentStore {
       throw const ContentEditException('嵌入图片超过 64 MB，请分篇导入。');
     }
     for (final ContentEntryDraft entry in draft.entries) {
-      if (normName(entry.name).isEmpty || !names.add(normName(entry.name))) {
-        throw const ContentEditException('书名不能为空，同一帖子内请合并重复书目。');
+      final String nameNorm = normName(entry.name);
+      final String contentHash = entryContentHash(
+        nameNorm: nameNorm,
+        authorNorm: normPerson(entry.author),
+        commentNormHash: entry.comment.trim().isEmpty
+            ? ''
+            : h16(normText(entry.comment)),
+        postRef: draft.postId,
+      );
+      if (nameNorm.isEmpty ||
+          draft.postId == null && !names.add(nameNorm) ||
+          !entryHashes.add(contentHash)) {
+        throw const ContentEditException('书名不能为空，同一帖子内请合并重复评价。');
       }
       if (entry.floorIndex < 0 ||
           entry.floorIndex >= draft.floors.length ||

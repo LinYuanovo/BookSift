@@ -105,25 +105,33 @@ class PostRefreshService {
     required int tid,
     required int postId,
   }) async {
-    final ContentDocument? local = await (db.select(db.contentDocuments)
-          ..where((ContentDocuments table) => table.postId.equals(postId)))
-        .getSingleOrNull();
-    if (local != null) return const PostRefreshResult(floorsAligned: 0, imagesReplaced: 0, changed: false);
+    if (await _hasLocalEdit(postId)) {
+      return const PostRefreshResult(
+        floorsAligned: 0,
+        imagesReplaced: 0,
+        changed: false,
+      );
+    }
     final OnlinePostData online = await fetchOnlinePost(api, tid);
-    final List<Floor> locals = await (db.select(
-      db.floors,
-    )
-          ..where((Floors t) => t.postId.equals(postId))
-          // id 升序 = 入库序 = 楼层序（位置兜底配对依赖此顺序确定性）。
-          ..orderBy([(Floors t) => OrderingTerm.asc(t.id)]))
-        .get();
-    final List<({FloorInfo online, Floor local})> pairs = alignFloors(
-      online.floors,
-      locals,
-    );
-    int replaced = 0;
-    bool changed = false;
-    await db.transaction(() async {
+    return db.transaction(() async {
+      if (await _hasLocalEdit(postId)) {
+        return const PostRefreshResult(
+          floorsAligned: 0,
+          imagesReplaced: 0,
+          changed: false,
+        );
+      }
+      final List<Floor> locals =
+          await (db.select(db.floors)
+                ..where((Floors table) => table.postId.equals(postId))
+                ..orderBy([(Floors table) => OrderingTerm.asc(table.id)]))
+              .get();
+      final List<({FloorInfo online, Floor local})> pairs = alignFloors(
+        online.floors,
+        locals,
+      );
+      int replaced = 0;
+      bool changed = false;
       for (final ({FloorInfo online, Floor local}) pair in pairs) {
         final Floor local = pair.local;
         final List<ImageInfo> next = pair.online.images;
@@ -156,13 +164,20 @@ class PostRefreshService {
         replaced += next.length;
         changed = true;
       }
+      return PostRefreshResult(
+        floorsAligned: pairs.length,
+        imagesReplaced: replaced,
+        changed: changed,
+      );
     });
-    return PostRefreshResult(
-      floorsAligned: pairs.length,
-      imagesReplaced: replaced,
-      changed: changed,
-    );
   }
+
+  Future<bool> _hasLocalEdit(int postId) async =>
+      await (db.selectOnly(db.contentDocuments)
+            ..addColumns([db.contentDocuments.postId])
+            ..where(db.contentDocuments.postId.equals(postId)))
+          .getSingleOrNull() !=
+      null;
 
   /// 线上楼层 ↔ 本地楼层对齐（任务 3）。
   ///
