@@ -105,6 +105,10 @@ class PostRefreshService {
     required int tid,
     required int postId,
   }) async {
+    final ContentDocument? local = await (db.select(db.contentDocuments)
+          ..where((ContentDocuments table) => table.postId.equals(postId)))
+        .getSingleOrNull();
+    if (local != null) return const PostRefreshResult(floorsAligned: 0, imagesReplaced: 0, changed: false);
     final OnlinePostData online = await fetchOnlinePost(api, tid);
     final List<Floor> locals = await (db.select(
       db.floors,

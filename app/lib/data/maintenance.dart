@@ -202,6 +202,7 @@ Future<DedupStats> dedupBookEntries(
       .customSelect(
         "SELECT name_norm AS nn, COALESCE(recommender, '') AS rec, COALESCE(date, '') AS d, "
         'channel AS ch FROM book_entries '
+        "WHERE COALESCE(comment_src, '') <> 'user_edited' "
         'GROUP BY nn, rec, d, ch HAVING COUNT(*) > 1',
       )
       .get();
@@ -311,7 +312,8 @@ Future<List<_DupMember>> _fetchDupMembers(
       .customSelect(
         "SELECT id, COALESCE(comment, '') AS c, quality AS q, post_ref AS pr, book_group_id AS gid "
         'FROM book_entries WHERE name_norm = ? AND channel = ? AND COALESCE(date, \'\') = ? '
-        "AND COALESCE(recommender, '') IN ($placeholders)",
+        "AND COALESCE(recommender, '') IN ($placeholders) "
+        "AND COALESCE(comment_src, '') <> 'user_edited'",
         variables: <Variable>[
           Variable.withString(g.nameNorm),
           Variable.withString(g.channel),
@@ -484,6 +486,7 @@ Future<LegacyPostDedupStats> dedupLegacyCollectedPosts(
        AND (s.tid IS NULL OR c.tid IS NULL OR s.tid = c.tid)
        AND (s.author IS NULL OR s.author = '' OR c.author IS NULL OR c.author = ''
             OR s.author = c.author)
+      WHERE NOT EXISTS (SELECT 1 FROM content_documents d WHERE d.post_id IN (s.id, c.id))
       ORDER BY c.id
       LIMIT 1
     ''').getSingleOrNull();
@@ -789,6 +792,7 @@ Future<PostRefRepairStats> repairPostReferences(
         .customSelect(
           'SELECT id FROM book_entries '
           'WHERE src_tid IS NOT NULL AND id > ? '
+          "AND COALESCE(comment_src, '') <> 'user_edited' "
           'AND (post_ref IS NULL '
           '     OR NOT EXISTS (SELECT 1 FROM posts p WHERE p.id = book_entries.post_ref '
           '                    AND p.tid = book_entries.src_tid)) '
@@ -1233,7 +1237,9 @@ Future<ReclassifyStats> reclassifyPostsV3(
     final List<QueryRow> posts = await db
         .customSelect(
           "SELECT id, COALESCE(title, '') AS t, post_kind AS k, recommend_flag AS f "
-          'FROM posts WHERE id > ? ORDER BY id LIMIT ?',
+          'FROM posts WHERE id > ? '
+          'AND id NOT IN (SELECT post_id FROM content_documents) '
+          'ORDER BY id LIMIT ?',
           variables: <Variable>[
             Variable.withInt(cursor),
             Variable.withInt(batchSize),

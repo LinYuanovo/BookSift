@@ -12,6 +12,7 @@ import '../../core/window_size.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../profile/settings_page.dart';
+import '../content/content_editor_page.dart';
 import 'badges.dart';
 import 'buttons.dart';
 import 'collect_settings.dart';
@@ -134,6 +135,11 @@ class _CollectPageState extends ConsumerState<CollectPage> {
               ],
             ),
             actions: <Widget>[
+              IconButton(
+                tooltip: '导入扫书',
+                icon: AppIcon('plus', size: 20, color: c.textSecondary),
+                onPressed: () => openContentEditor(context),
+              ),
               // W5d appbar：'并发 2 · 仅 WiFi' badge kind + gear + 立即采集 btn-accent btn-sm
               //（index.html:3420–3422；medium W5t 仅 gear，index.html:2831）。
               if (running && size == WindowSizeClass.expanded) ...<Widget>[

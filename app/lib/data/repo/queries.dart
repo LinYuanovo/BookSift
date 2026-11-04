@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:drift/drift.dart';
@@ -632,6 +633,8 @@ class SearchOutcome {
     this.usedFts = false,
     this.degraded = false,
     this.words = const <String>[],
+    this.posts = const <PostCardData>[],
+    this.postTotal = 0,
   });
 
   final Paged<GroupHit> page;
@@ -640,6 +643,8 @@ class SearchOutcome {
   /// FTS 查询异常自动降级 LIKE（UI SnackBar「已降级为慢速搜索」，§5.3）。
   final bool degraded;
   final List<String> words;
+  final List<PostCardData> posts;
+  final int postTotal;
 
   static const SearchOutcome empty = SearchOutcome(
     page: Paged<GroupHit>(items: <GroupHit>[], total: 0),
@@ -677,11 +682,15 @@ class PostDetailData {
     required this.post,
     required this.floors,
     required this.books,
+    this.sourceUrl,
+    this.contentWarnings = const <String>[],
   });
 
   final Post post;
   final List<FloorData> floors;
   final List<PostBookCount> books;
+  final String? sourceUrl;
+  final List<String> contentWarnings;
 }
 
 /// 书聚合详情头部。
@@ -1036,11 +1045,12 @@ class Queries implements BookRepository, SearchSettingsKv {
     final List<Post> posts = await db
         .customSelect(
           'SELECT p.* FROM posts p '
-          'WHERE p.date IS NOT NULL AND p.post_kind IN (?, ?) '
+          'WHERE (p.date IS NOT NULL AND p.post_kind IN (?, ?)) OR p.origin = ? '
           'ORDER BY p.date DESC, p.id DESC LIMIT ? OFFSET ?',
           variables: <Variable<Object>>[
             Variable<String>(CategoryKind.scan),
             Variable<String>(CategoryKind.avoid),
+            Variable<String>(Origin.imported),
             Variable<int>(limit),
             Variable<int>(offset),
           ],
@@ -1460,6 +1470,27 @@ class Queries implements BookRepository, SearchSettingsKv {
   /// 摘要口径：标题命中以书名本身为锚；正文命中用命中词截窗。
   @override
   Future<SearchOutcome> searchBooks(SearchFilter f) async {
+    final SearchOutcome books = await _searchBooks(f);
+    final List<Variable<Object>> variables = <Variable<Object>>[];
+    final StringBuffer conditions = StringBuffer("b.origin = 'imported' AND NOT EXISTS (SELECT 1 FROM book_entries entry WHERE entry.post_ref = b.id)");
+    for (final String word in tokenizeQuery(f.query)) {
+      conditions.write(" AND (b.title LIKE ? ESCAPE '\\' OR b.author LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM floors floor WHERE floor.post_id = b.id AND floor.text LIKE ? ESCAPE '\\'))");
+      final String escaped = word.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
+      variables.addAll(<Variable<Object>>[for (int index = 0; index < 3; index++) Variable<String>('%$escaped%')]);
+    }
+    conditions.write(_dimClauses(f, variables));
+    const String source = '(SELECT *, post_kind AS category FROM posts) b';
+    final int count = (await db.customSelect('SELECT count(*) AS n FROM $source WHERE $conditions', variables: variables, readsFrom: <TableInfo<Table, Object?>>{db.posts, db.floors, db.bookEntries}).getSingle()).read<int>('n');
+    final List<QueryRow> rows = await db.customSelect(
+      'SELECT b.*, (SELECT floor.text FROM floors floor WHERE floor.post_id = b.id ORDER BY length(floor.text) DESC LIMIT 1) AS summary FROM $source WHERE $conditions ORDER BY b.date ${f.sort == SearchSort.timeAsc ? 'ASC' : 'DESC'}, b.id DESC LIMIT ? OFFSET ?',
+      variables: <Variable<Object>>[...variables, Variable<int>(f.limit), Variable<int>(f.offset)], readsFrom: <TableInfo<Table, Object?>>{db.posts, db.floors, db.bookEntries},
+    ).get();
+    return SearchOutcome(page: books.page, usedFts: books.usedFts, degraded: books.degraded, words: books.words, postTotal: count, posts: <PostCardData>[
+      for (final QueryRow row in rows) PostCardData(post: db.posts.map(row.data), books: const <BookChip>[], entryCount: 0, summary: summarizeCardText(row.readNullable<String>('summary'))),
+    ]);
+  }
+
+  Future<SearchOutcome> _searchBooks(SearchFilter f) async {
     final List<String> words = tokenizeQuery(f.query);
     if (words.isEmpty) {
       return SearchOutcome(page: await _browseGroups(f), words: words);
@@ -2377,6 +2408,9 @@ class Queries implements BookRepository, SearchSettingsKv {
     if (post == null) {
       return null;
     }
+    final ContentDocument? document = await (db.select(db.contentDocuments)
+          ..where((ContentDocuments table) => table.postId.equals(postId)))
+        .getSingleOrNull();
     final List<Floor> floors =
         await (db.select(db.floors)
               ..where((Floors t) => t.postId.equals(postId))
@@ -2455,6 +2489,8 @@ class Queries implements BookRepository, SearchSettingsKv {
           FloorData(floor: f, images: byFloor[f.id] ?? const <FloorImage>[]),
       ],
       books: books,
+      sourceUrl: document?.sourceUrl,
+      contentWarnings: document == null ? const <String>[] : (jsonDecode(document.warnings) as List<dynamic>).cast<String>(),
     );
   }
 

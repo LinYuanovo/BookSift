@@ -250,6 +250,8 @@ Map<String, Object?> searchOutcomeJson(SearchOutcome o) => <String, Object?>{
       'degraded': o.degraded,
       'words': o.words,
       'items': o.page.items.map(groupHitJson).toList(),
+      'postTotal': o.postTotal,
+      'posts': o.posts.map((PostCardData card) => <String, Object?>{'id': card.post.id, 'title': card.post.title, 'author': card.post.author, 'channel': card.post.channel, 'date': card.post.date, 'summary': card.summary}).toList(),
     };
 
 Map<String, Object?> entryRowJson(EntryRow e) => <String, Object?>{

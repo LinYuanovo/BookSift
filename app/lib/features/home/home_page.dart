@@ -21,6 +21,7 @@ import '../../theme/app_spacing.dart';
 import '../../theme/app_typography.dart';
 import '../../core/nav/center_slot.dart';
 import '../content/detail_slot.dart';
+import '../content/content_editor_page.dart';
 import '../profile/settings_page.dart';
 import '../rank/rank_page.dart';
 import 'cards.dart';
@@ -287,6 +288,11 @@ class _HomePageState extends ConsumerState<HomePage> {
       appBar: AppBar(
         title: const Text('扫书汇'),
         actions: <Widget>[
+          IconButton(
+            icon: AppIcon('plus', size: 20, color: AppColors.of(context).textSecondary),
+            tooltip: '导入扫书',
+            onPressed: () => openContentEditor(context),
+          ),
           // 日期目录入口（§5.2 时间线分组跳转）：feed 有数据且 ≥2 个日期组才显示。
           if (feedGroups.length >= 2)
             IconButton(

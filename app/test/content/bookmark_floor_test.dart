@@ -152,7 +152,7 @@ void main() {
         expect(row.data['floor_seq'], isNull, reason: '旧书签无楼层记忆');
         expect(row.data['position'], 3, reason: '既有列不受迁移影响');
         expect(await _indexNames(db), containsAll(_v4QueryIndexes));
-        expect(await _userVersion(db), 4);
+        expect(await _userVersion(db), 5);
       },
     );
 
@@ -169,7 +169,7 @@ void main() {
           .getSingle();
       expect(row.data['floor_seq'], isNull);
       expect(await _indexNames(db), containsAll(_v4QueryIndexes));
-      expect(await _userVersion(db), 4);
+      expect(await _userVersion(db), 5);
     });
 
     test('v3 → v4：无列变更，仅补查询索引（sqlite_master 验 12 个 idx_* 就位）', () async {
@@ -180,7 +180,7 @@ void main() {
       expect(await _columnNames(db, 'bookmarks'), contains('floor_seq'));
       // from<4 分支建齐全部查询索引。
       expect(await _indexNames(db), containsAll(_v4QueryIndexes));
-      expect(await _userVersion(db), 4);
+      expect(await _userVersion(db), 5);
     });
 
     test('togglePostBookmark 落库 floor_seq；缺省调用保持 NULL（v3 直建内存库）', () async {

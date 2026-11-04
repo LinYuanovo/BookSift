@@ -159,13 +159,13 @@ class FakeBookRepository implements BookRepository {
         lib.posts
             .where(
               (Post p) =>
-                  p.date != null &&
+                  p.origin == 'imported' || p.date != null &&
                   (p.postKind == CategoryKind.scan ||
                       p.postKind == CategoryKind.avoid),
             )
             .toList()
           ..sort((Post a, Post b) {
-            final int c = b.date!.compareTo(a.date!);
+            final int c = (b.date ?? '').compareTo(a.date ?? '');
             return c != 0 ? c : b.id.compareTo(a.id);
           });
     return <PostCardData>[
@@ -655,6 +655,13 @@ class FakeBookRepository implements BookRepository {
       );
     }
     final List<GroupHit> page = items.skip(f.offset).take(f.limit).toList();
+    final List<Post> postHits = lib.posts.where((Post post) {
+      if (post.origin != 'imported' || lib.entries.any((EntryRow entry) => entry.postRef == post.id)) return false;
+      if (f.channel != null && post.channel != f.channel || f.category != null && post.postKind != f.category) return false;
+      if (f.year != null && !(post.date ?? '').startsWith(f.year!)) return false;
+      final String body = <String>[post.title ?? '', post.author ?? '', ...?lib.floors[post.id]?.map((FloorData floor) => floor.floor.content)].join('\n');
+      return _allWordsHit(words, body.toLowerCase());
+    }).toList();
     return SearchOutcome(
       page: Paged<GroupHit>(
         items: page,
@@ -664,6 +671,8 @@ class FakeBookRepository implements BookRepository {
       ),
       usedFts: fts,
       words: words,
+      postTotal: postHits.length,
+      posts: <PostCardData>[for (final Post post in postHits.skip(f.offset).take(f.limit)) PostCardData(post: post, books: const <BookChip>[], entryCount: 0, summary: _summaryOf(post.id))],
     );
   }
 
