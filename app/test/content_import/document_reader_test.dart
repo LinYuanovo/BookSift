@@ -191,7 +191,9 @@ void main() {
   });
 
   test('单书扫书标签、别名和相关推荐不分拆主书完整评价', () {
-    final ContentDraft draft = text('扫书:阴阳造化炉\n扫书人:二哈\n作者:青烽不醉\n本书又名《别名一》《别名二》\n\n相关小说推荐\n1.《推荐甲》\n2.《推荐乙》\n\n点评\n主书完整结尾。');
+    final ContentDraft draft = text(
+      '扫书:阴阳造化炉\n扫书人:二哈\n作者:青烽不醉\n本书又名《别名一》《别名二》\n\n相关小说推荐\n1.《推荐甲》\n2.《推荐乙》\n\n点评\n主书完整结尾。',
+    );
     expect(draft.entries, hasLength(1));
     expect(draft.entries.single.name, '阴阳造化炉');
     expect(draft.entries.single.author, '青烽不醉');
@@ -199,12 +201,24 @@ void main() {
   });
 
   test('微信自定义公众号卡片图片随可见正文保存', () {
-    final ContentDraft draft = text('<html><body><div id="js_content"><p>原文</p><mp-common-profile data-nickname="读书账号" data-signature="真实签名" data-headimg="https://example.com/avatar.png"></mp-common-profile><p>结尾</p></div></body></html>', name: 'page.html');
+    final ContentDraft draft = text(
+      '<html><body><div id="js_content"><p>原文</p><mp-common-profile data-nickname="读书账号" data-signature="真实签名" data-headimg="https://example.com/avatar.png"></mp-common-profile><p>结尾</p></div></body></html>',
+      name: 'page.html',
+    );
     expect(draft.imageCount, 1);
-    expect(draft.floors.map((ContentFloorDraft floor) => floor.text).join('\n'), contains('读书账号 · 真实签名'));
+    expect(
+      draft.floors.map((ContentFloorDraft floor) => floor.text).join('\n'),
+      contains('读书账号 · 真实签名'),
+    );
   });
 
   test('UTF-16 不配对代理项拒绝损坏文字', () {
-    expect(() => reader.read(bytes: Uint8List.fromList(<int>[0xff, 0xfe, 0x00, 0xd8]), fileName: 'bad-utf16.txt'), throwsA(isA<ContentEditException>()));
+    expect(
+      () => reader.read(
+        bytes: Uint8List.fromList(<int>[0xff, 0xfe, 0x00, 0xd8]),
+        fileName: 'bad-utf16.txt',
+      ),
+      throwsA(isA<ContentEditException>()),
+    );
   });
 }

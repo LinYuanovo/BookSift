@@ -2408,7 +2408,8 @@ class Queries implements BookRepository, SearchSettingsKv {
     if (post == null) {
       return null;
     }
-    final ContentDocument? document = await (db.select(db.contentDocuments)
+    final bool hasDocuments = (await db.customSelect("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'content_documents'").get()).isNotEmpty;
+    final ContentDocument? document = !hasDocuments ? null : await (db.select(db.contentDocuments)
           ..where((ContentDocuments table) => table.postId.equals(postId)))
         .getSingleOrNull();
     final List<Floor> floors =

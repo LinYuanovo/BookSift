@@ -9,6 +9,7 @@ import 'package:booksift/core/constants.dart';
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/data/maintenance.dart';
 import 'package:booksift/data/repo/queries.dart';
+import 'package:booksift/headless/env.dart';
 import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
@@ -290,6 +291,32 @@ void main() {
     } finally {
       await disk.close();
       await directory.delete(recursive: true);
+    }
+  });
+
+  test('真实 v4 只读库仍能浏览帖子且不执行迁移', () async {
+    final AppDatabase legacy = HeadlessEnv.openReadOnlyDb(
+      'test/fixtures/dev_seed.db',
+    );
+    try {
+      final PostDetailData? detail = await Queries(legacy).postDetail(2);
+      expect(detail, isNotNull);
+      expect(detail!.sourceUrl, isNull);
+      expect(
+        (await legacy.customSelect('PRAGMA user_version').getSingle())
+            .read<int>('user_version'),
+        4,
+      );
+      expect(
+        await legacy
+            .customSelect(
+              "SELECT name FROM sqlite_master WHERE name = 'content_documents'",
+            )
+            .get(),
+        isEmpty,
+      );
+    } finally {
+      await legacy.close();
     }
   });
 }

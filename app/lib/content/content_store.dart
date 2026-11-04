@@ -503,6 +503,23 @@ class ContentStore {
           channel: Value<String?>(draft.channel.trim()),
         ),
       );
+      final List<Bookmark> bookmarks = await (db.select(
+        db.bookmarks,
+      )..where((Bookmarks table) => table.postRef.equals(postId))).get();
+      for (final Bookmark bookmark in bookmarks) {
+        final int previousIndex = oldFloors.indexWhere(
+          (Floor floor) => floor.seq == bookmark.floorSeq,
+        );
+        if (previousIndex < 0) continue;
+        final int nextIndex = floorIds.indexOf(oldFloors[previousIndex].id);
+        await (db.update(
+          db.bookmarks,
+        )..where((Bookmarks table) => table.id.equals(bookmark.id))).write(
+          BookmarksCompanion(
+            floorSeq: Value<int?>(nextIndex < 0 ? 1 : nextIndex + 1),
+          ),
+        );
+      }
       if (activeTriggers.any(bookFtsTriggerNames.contains)) {
         await createBookFtsTriggers(db.customStatement);
       }

@@ -49,7 +49,10 @@ void main() {
         appDatabaseProvider.overrideWithValue(db),
         fontServiceProvider.overrideWith((Ref ref) => fakeFontService()),
         seedImporterProvider.overrideWithValue(NoopSeedImporter()),
-        documentSourceProvider.overrideWithValue(_LocalDocumentSource(article)),
+        if (!const bool.fromEnvironment('BOOKSIFT_NATIVE_PICKER'))
+          documentSourceProvider.overrideWithValue(
+            _LocalDocumentSource(article),
+          ),
       ],
     );
     bool closed = false;
@@ -70,6 +73,14 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('import-pick-file')));
       await tester.pumpAndSettle();
+      for (
+        int attempt = 0;
+        attempt < 90 &&
+            find.byKey(const Key('edit-post-title')).evaluate().isEmpty;
+        attempt++
+      ) {
+        await tester.pump(const Duration(seconds: 1));
+      }
       debugPrint('native-stage: document selected');
       expect(find.byType(ContentEditorPage), findsOneWidget);
       expect(find.textContaining('图片 21 张'), findsOneWidget);
