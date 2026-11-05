@@ -54,6 +54,7 @@ dependencies:
   file_picker: ^13.1.0
   archive: ^4.5.1
   html: ^0.15.6
+  charset: ^2.0.1
   xml: ^7.0.1
   # M1-③ 种子导入：sha256 流式校验（crypto）+ 默认库路径/临时目录解析（path_provider/path，
   # 与 drift_flutter 的 getApplicationDocumentsDirectory()/app.sqlite 同口径）。

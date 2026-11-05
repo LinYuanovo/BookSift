@@ -27,6 +27,7 @@ import '../export/export_sheet.dart';
 import '../home/cards.dart';
 import 'filter_panel.dart';
 import 'search_state.dart';
+import 'book_source_page.dart';
 
 // 搜索台（§5.3）+ 搜索结果（§5.4 书级）：关键词 + 六维筛选 chips + 历史（点击复现条件）
 // + 联想 + 热门书名；FTS/LIKE 兜底见 Queries.searchBooks（§7.3）。
@@ -471,6 +472,13 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
       appBar: AppBar(
         titleSpacing: AppSpacing.of(context).space3,
         title: _searchField(context),
+        actions: <Widget>[
+          IconButton(tooltip: '书源搜索与下载', icon: const AppIcon('book'),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => BookSourcePage(initialQuery: draft.filter.query),
+            )),
+          ),
+        ],
       ),
       body: Column(
         children: <Widget>[
