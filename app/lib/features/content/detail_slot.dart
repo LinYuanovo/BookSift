@@ -22,6 +22,7 @@ class PostSelection {
     this.highlight,
     this.initialFloorSeq,
     this.initialFloorId,
+    this.initialScrollOffset,
   });
 
   final int postId;
@@ -42,6 +43,7 @@ class PostSelection {
   /// 里同一帖的不同书目所在楼层 seq 全为 1，只靠 [initialFloorSeq] 会跳到首个同 seq 楼层
   /// —— 点某本书进帖却停在别的书那一楼。书聚合评价卡携带自身 floor_ref 走本字段。
   final int? initialFloorId;
+  final double? initialScrollOffset;
 
   /// 搜索词高亮（结果页/书签进入时携带，§5.6 渲染管线 4）。
   final String? highlight;

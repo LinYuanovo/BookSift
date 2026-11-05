@@ -29,3 +29,11 @@
 - 新增设置页空间统计、数据库 VACUUM、图片缓存/更新包清理；保留用户内容和字体。新增按 ABI APK 构建，保留通用 APK 更新契约；尚未触发 Actions。
 - 聚焦测试 80/80 通过，flutter analyze 无问题。清理测试验证 VACUUM 前后内容和 integrity_check。
 - Windows Flutter/VS Build Tools 可用；Linux Java 17/adb 已安装，Android SDK 正在补齐。当前没有 `/dev/kvm`。
+
+### 第二阶段：阅读恢复
+
+- SQLite settings 保存首页页数/偏移和帖子身份/偏移，每 500ms 合并写入，生命周期切后台时 flush。
+- 启动先保留上次快照，首页内容就绪后询问是否继续；拒绝则从首页开始。帖子用 tid 校验身份，删除后明确提示，防种子升级 id 重排跳错帖。
+- 手机路由与桌面右槽复用恢复路径；支持退出应用后从新连接读回。异常 JSON/未知版本/越界位置忽略。
+- 聚焦测试 43/43 通过，含真实文件数据库关闭重开和既有首页/详情/书签回归。
+- 已加载 kvm_amd，得到 `/dev/kvm`；Android SDK 下载继续，Windows 原生工具链确认可用。

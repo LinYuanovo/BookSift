@@ -12,6 +12,9 @@ import '../../collector/collect_controller.dart';
 import '../../collector/collect_state.dart';
 import '../../data/repo/queries.dart';
 import '../../data/repo/queries_providers.dart';
+import '../../data/repo/database_provider.dart';
+import '../../data/reading_session.dart';
+import '../../data/reading_session_provider.dart';
 import '../../data/seed_import.dart';
 import '../../data/seed_import_providers.dart';
 import '../../theme/app_colors.dart';
@@ -84,14 +87,93 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   /// 首启档位弹框只弹一次（同一页面生命周期内防止重复弹出）。
   bool _choiceDialogShown = false;
+  bool _restoring = false;
+  ReadingSessionStore? _sessionStore;
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _offerResume());
+  }
+
+  Future<void> _offerResume() async {
+    if (!mounted || ref.read(readingSessionPromptedProvider)) return;
+    ref.read(readingSessionPromptedProvider.notifier).state = true;
+    try {
+      _sessionStore = ref.read(readingSessionProvider);
+      final ReadingSession? previous = await _sessionStore!.loadPrevious();
+      if (!mounted || previous == null ||
+          (previous.postId == null && previous.offset < 1)) {
+        return;
+      }
+      await ref.read(homeFeedProvider.future);
+      if (!mounted || GoRouterState.of(context).uri.path != '/home') return;
+      _restoring = true;
+      final bool? resume = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('继续上次浏览？'),
+          content: Text(previous.postId == null
+              ? '回到上次的首页浏览位置。'
+              : '继续阅读「${previous.title}」。'),
+          actions: <Widget>[
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('从首页开始')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('继续浏览')),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (resume == true && previous.postId != null) {
+        final database = ref.read(appDatabaseProvider);
+        final post = await (database.select(database.posts)..where((table) =>
+          previous.postTid != null ? table.tid.equals(previous.postTid!) : table.id.equals(previous.postId!),
+        )).getSingleOrNull();
+        if (!mounted) return;
+        if (post == null || (previous.postTid == null && post.title != previous.title)) {
+          showAppToast(context, '上次的帖子已不存在，已回到首页');
+        } else {
+          openPostDetail(context, ref, PostSelection(
+            postId: post.id,
+            initialFloorSeq: previous.floorSeq,
+            initialScrollOffset: post.id == previous.postId ? previous.offset : null,
+          ));
+          return;
+        }
+      } else if (resume == true) {
+        ref.read(homePageCountProvider.notifier).state = previous.homePages;
+        await ref.read(homeFeedProvider.future);
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _scrollController.hasClients) {
+            _scrollController.jumpTo(previous.offset.clamp(0, _scrollController.position.maxScrollExtent));
+          }
+        });
+        return;
+      }
+      _sessionStore!.record(ReadingSession(savedAt: DateTime.now()));
+      await _sessionStore!.flush();
+    } catch (_) {
+    } finally {
+      _restoring = false;
+    }
+  }
+
+  void _rememberHome() {
+    if (_restoring || !mounted || !_scrollController.hasClients ||
+        GoRouterState.of(context).uri.path != '/home' ||
+        ref.read(detailSelectionProvider) != null) {
+      return;
+    }
+    _sessionStore?.record(ReadingSession(
+      savedAt: DateTime.now(),
+      offset: _scrollController.offset.clamp(0, 10000000),
+      homePages: ref.read(homePageCountProvider).clamp(1, 100),
+    ));
   }
 
   void _onScroll() {
+    _rememberHome();
     if (!_scrollController.hasClients) {
       return;
     }
@@ -114,6 +196,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   void dispose() {
+    _sessionStore?.flush();
     _scrollController.dispose();
     super.dispose();
   }
