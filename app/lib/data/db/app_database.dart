@@ -334,7 +334,7 @@ class AppDatabase extends _$AppDatabase {
   /// 新装用户由 onCreate 直接落 v5；v2/v3 逐级加列（带 DEFAULT/
   /// 可空列的 O(1) 元数据操作），v4 建查询索引，v5 仅新建留档表，无存量回填负担。
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -366,6 +366,20 @@ class AppDatabase extends _$AppDatabase {
       }
       if (from < 5) {
         await m.createTable(contentDocuments);
+      }
+      if (from < 6) {
+        final List<QueryRow> tables = await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('book_fts','floor_fts')",
+        ).get();
+        final Set<String> names = tables.map((row) => row.read<String>('name')).toSet();
+        if (names.contains(bookFtsTable)) {
+          await customStatement('DROP TRIGGER IF EXISTS book_entries_au');
+          await createBookFtsTriggers(customStatement);
+        }
+        if (names.contains(floorFtsTable)) {
+          await customStatement('DROP TRIGGER IF EXISTS floors_au');
+          await createFloorFtsTriggers(customStatement);
+        }
       }
     },
   );

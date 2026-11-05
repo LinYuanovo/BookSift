@@ -70,6 +70,13 @@ void main() {
   });
   tearDown(() async => db.close());
 
+  test('采集提取小说字数并更新书聚合', () async {
+    final ThreadRecord record = _record(floorText: '《雪中悍刀行》\n作者：烽火戏诸侯\n字数：450万\n值得一读');
+    await pipeline.ingestThread(record, await _analysis(record));
+    expect((await db.select(db.bookEntries).getSingle()).wordCount, 4500000);
+    expect((await db.select(db.bookGroups).getSingle()).wordCountMax, 4500000);
+  });
+
   Future<IngestResult> ingestOne({
     ThreadRecord? rec,
     ThreadClassifier? classify,

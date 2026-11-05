@@ -58,7 +58,7 @@ Future<void> createBookFtsTriggers(Future<void> Function(String) exec) async {
     VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment); END''',
   );
   await exec(
-    '''CREATE TRIGGER IF NOT EXISTS book_entries_au AFTER UPDATE ON book_entries BEGIN
+    '''CREATE TRIGGER IF NOT EXISTS book_entries_au AFTER UPDATE OF name,author,recommender,comment ON book_entries BEGIN
     INSERT INTO $bookFtsTable($bookFtsTable,rowid,name,author,recommender,comment)
     VALUES ('delete',old.id,old.name,old.author,old.recommender,old.comment);
     INSERT INTO $bookFtsTable(rowid,name,author,recommender,comment)
@@ -86,7 +86,7 @@ Future<void> createFloorFtsTriggers(Future<void> Function(String) exec) async {
     INSERT INTO $floorFtsTable($floorFtsTable,rowid,text) VALUES ('delete',old.id,old.text); END''',
   );
   await exec(
-    '''CREATE TRIGGER IF NOT EXISTS floors_au AFTER UPDATE ON floors BEGIN
+    '''CREATE TRIGGER IF NOT EXISTS floors_au AFTER UPDATE OF text ON floors BEGIN
     INSERT INTO $floorFtsTable($floorFtsTable,rowid,text) VALUES ('delete',old.id,old.text);
     INSERT INTO $floorFtsTable(rowid,text) VALUES (new.id,new.text); END''',
   );

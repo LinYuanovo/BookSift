@@ -396,7 +396,7 @@ void main() {
         cli.ExitCode.ok,
       );
       final Database seeded = sqlite3.open(dbPath, mode: OpenMode.readOnly);
-      expect(seeded.select('PRAGMA user_version').first['user_version'], 5);
+      expect(seeded.select('PRAGMA user_version').first['user_version'], 6);
       expect(seeded.select('SELECT COUNT(*) AS n FROM collection_state').single['n'], 2);
       seeded.close();
     } finally {

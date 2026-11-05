@@ -172,7 +172,7 @@ class _RankPageState extends ConsumerState<RankPage> {
                 Padding(
                   padding: EdgeInsets.fromLTRB(s.space1, 0, s.space1, s.space3),
                   child: Text(
-                    '字数榜仅收录带字数数据的书目；自采书目匹配到内置库同书后自动入榜',
+                    '按小说字数排序，提取原文中的明确字数标注；书评长度不计入，未知字数不入榜',
                     style: t.caption.copyWith(color: c.textMuted),
                   ),
                 ),
