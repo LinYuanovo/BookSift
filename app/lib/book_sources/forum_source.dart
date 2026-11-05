@@ -377,7 +377,7 @@ class ForumSourceClient {
       final int total =
           int.tryParse(response.headers.value('content-length') ?? '') ?? 0;
       if (type.contains('text/html') || total > maxDownloadBytes) {
-        await response.data!.stream.drain<void>();
+        await response.data!.stream.listen((_) {}).cancel();
         throw const SourceFailure('返回了网页或附件超过 64 MB，请打开原帖下载');
       }
       final RandomAccessFile output = await target.open(mode: FileMode.write);

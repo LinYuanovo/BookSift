@@ -89,6 +89,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   bool _choiceDialogShown = false;
   bool _restoring = false;
   ReadingSessionStore? _sessionStore;
+  GoRouter? _sessionRouter;
 
   @override
   void initState() {
@@ -97,9 +98,26 @@ class _HomePageState extends ConsumerState<HomePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _offerResume());
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_sessionRouter != null) return;
+    try {
+      _sessionRouter = GoRouter.of(context);
+      _sessionRouter!.routeInformationProvider.addListener(_onSessionRouteChanged);
+    } catch (_) {}
+  }
+
+  void _onSessionRouteChanged() {
+    if (_sessionRouter?.routeInformationProvider.value.uri.path == '/home') {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _rememberHome());
+    }
+  }
+
   Future<void> _offerResume() async {
     if (!mounted || ref.read(readingSessionPromptedProvider)) return;
     ref.read(readingSessionPromptedProvider.notifier).state = true;
+    _restoring = true;
     try {
       _sessionStore = ref.read(readingSessionProvider);
       final ReadingSession? previous = await _sessionStore!.loadPrevious();
@@ -161,7 +179,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   void _rememberHome() {
     if (_restoring || !mounted || !_scrollController.hasClients ||
-        GoRouterState.of(context).uri.path != '/home' ||
+        _sessionRouter?.routeInformationProvider.value.uri.path != '/home' ||
         ref.read(detailSelectionProvider) != null) {
       return;
     }
@@ -196,6 +214,7 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   void dispose() {
+    _sessionRouter?.routeInformationProvider.removeListener(_onSessionRouteChanged);
     _sessionStore?.flush();
     _scrollController.dispose();
     super.dispose();
@@ -273,17 +292,17 @@ class _HomePageState extends ConsumerState<HomePage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Text(
-                '建立后书名、作者和正文搜索更快；不建立可省约 240 MB。',
+                '建立后书名、作者和正文搜索更快；暂不建立可节省索引空间。',
                 style: t.body.copyWith(color: c.textSecondary),
               ),
               SizedBox(height: s.space3),
               Text(
-                '· 建立（完整）：约 402 MB · 搜索最快',
+                '· 建立（完整）：含楼层正文索引，搜索更快',
                 style: t.caption.copyWith(color: c.textMuted),
               ),
               SizedBox(height: s.space1),
               Text(
-                '· 暂不建立：约 160 MB · 正文搜索约 1–2 秒',
+                '· 暂不建立：仅保存内容，正文搜索较慢',
                 style: t.caption.copyWith(color: c.textMuted),
               ),
               SizedBox(height: s.space3),
@@ -360,6 +379,11 @@ class _HomePageState extends ConsumerState<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(detailSelectionProvider, (previous, next) {
+      if (previous != null && next == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _rememberHome());
+      }
+    });
     final AppSpacing s = AppSpacing.of(context);
     final AsyncValue<List<PostCardData>> feed = ref.watch(homeFeedProvider);
     // 日期分组（appbar 目录入口的显隐判定；_timeline 内另算一次展平，O(n) 量级不合并）。

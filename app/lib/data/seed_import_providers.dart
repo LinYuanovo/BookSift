@@ -13,6 +13,7 @@ import 'maintenance.dart';
 import 'repo/database_provider.dart';
 import 'repo/queries_providers.dart';
 import 'seed_import.dart';
+import 'word_count_maintenance.dart';
 
 /// 种子导入机制单例（原型 §9.2；机制在 seed_import.dart，本文件只做 riverpod 装配）。
 final Provider<SeedImporter> seedImporterProvider = Provider<SeedImporter>((Ref ref) {
@@ -173,6 +174,13 @@ class SeedBootstrapController extends Notifier<SeedImportState> {
       // 默认落盘 getApplicationDocumentsDirectory()/`<name>`.sqlite）。
       final String dbPath =
           p.join((await getApplicationDocumentsDirectory()).path, '${AppConstants.databaseName}.sqlite');
+      final database = ref.read(appDatabaseProvider);
+      final List<bool> pending = await Future.wait(<Future<bool>>[
+        needsDedup(database), needsReclassify(database),
+        needsPostRefRepair(database), needsLegacyPostDedup(database),
+        needsNovelWordCountRepair(database),
+      ]);
+      if (!pending.any((needed) => needed)) return;
       // 词典行在主 isolate 经 rootBundle 读入再传入维护 isolate（一次构建复用，
       // 同 collect_providers.dart bookDictLinesProvider 的做法）；缺失 → 空表 →
       // BookDict.empty → v3 退化 v2。

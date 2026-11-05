@@ -40,13 +40,19 @@ class ReadingSession {
     try {
       if (raw == null || raw.length > 8192) return null;
       final Object? decoded = jsonDecode(raw);
-      if (decoded is! Map<String, dynamic> || decoded['version'] != 1) return null;
+      if (decoded is! Map<String, dynamic> || decoded['version'] != 1) {
+        return null;
+      }
       final DateTime savedAt = DateTime.parse(decoded['savedAt'] as String);
       final double offset = (decoded['offset'] as num).toDouble();
       final int pages = decoded['homePages'] as int;
       final int? postId = decoded['postId'] as int?;
-      if (!offset.isFinite || offset < 0 || offset > 10000000 ||
-          pages < 1 || pages > 100 || (postId != null && postId <= 0)) {
+      if (!offset.isFinite ||
+          offset < 0 ||
+          offset > 10000000 ||
+          pages < 1 ||
+          pages > 100 ||
+          (postId != null && postId <= 0)) {
         return null;
       }
       return ReadingSession(
@@ -80,8 +86,9 @@ class ReadingSessionStore {
 
   Future<ReadingSession?> _load() async {
     try {
-      final row = await (database.select(database.settings)
-        ..where((table) => table.key.equals(settingKey))).getSingleOrNull();
+      final row = await (database.select(
+        database.settings,
+      )..where((table) => table.key.equals(settingKey))).getSingleOrNull();
       return ReadingSession.decode(row?.value);
     } catch (_) {
       return null;

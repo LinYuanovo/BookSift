@@ -326,7 +326,11 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
     } finally {
       _cancel = null;
       if (temporary != null && await temporary.exists()) {
-        await temporary.delete(recursive: true);
+        try {
+          await temporary.delete(recursive: true);
+        } catch (_) {
+          if (mounted) _message = '文件操作已结束，临时缓存未能清除，请稍后重试整理存储';
+        }
       }
       if (mounted) {
         setState(() {

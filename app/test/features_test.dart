@@ -831,7 +831,7 @@ void main() {
         // AppBar = list(目录) + star + more 三枚设计 SVG（home 挂具不可 pop → 无返回键），零 Material Icon。
         expect(
           find.descendant(of: appbar, matching: find.byType(SvgPicture)),
-          findsNWidgets(3),
+          findsNWidgets(4),
         );
         expect(
           find.descendant(of: appbar, matching: find.byType(Icon)),

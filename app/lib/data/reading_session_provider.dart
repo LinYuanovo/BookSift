@@ -4,7 +4,9 @@ import 'reading_session.dart';
 import 'repo/database_provider.dart';
 
 final readingSessionProvider = Provider<ReadingSessionStore>((ref) {
-  final ReadingSessionStore store = ReadingSessionStore(ref.watch(appDatabaseProvider));
+  final ReadingSessionStore store = ReadingSessionStore(
+    ref.watch(appDatabaseProvider),
+  );
   ref.onDispose(store.dispose);
   return store;
 });

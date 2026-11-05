@@ -457,6 +457,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     initialScrollOffset: widget.initialScrollOffset ?? 0,
   );
   ReadingSessionStore? _sessionStore;
+  bool _recordedInitialPosition = false;
 
   @override
   void initState() {
@@ -820,6 +821,10 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     // 直接补一次定位（_scheduleInitialFloorJump 内部有 _didInitialFloorJump 去重，幂等）。
     if (data != null) {
       _scheduleInitialFloorJump(data);
+      if (!_recordedInitialPosition && widget.active) {
+        _recordedInitialPosition = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) => _rememberPosition());
+      }
     }
     return Column(
       children: <Widget>[

@@ -69,4 +69,5 @@ Future<void> saveForumSettings(
     <Object>['book_source.${source.name}.base', base.toString()],
   );
   ref.invalidate(forumSettingsProvider(source));
+  ref.invalidate(forumClientProvider);
 }
