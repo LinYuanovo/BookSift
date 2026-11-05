@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:drift/drift.dart';
@@ -551,6 +552,40 @@ class TimelineGroup {
 }
 
 /// 热门榜行（§5.13）。
+Future<List<RankRow>> _rankInBackground(
+  List<Map<String, dynamic>> rows,
+  int limit,
+) => Isolate.run(() {
+  final Map<String, bool> recommendations = <String, bool>{};
+  final List<RankRow> ranked = <RankRow>[];
+  for (final Map<String, dynamic> row in rows) {
+    int count = 0;
+    for (final String kind in (row['kinds'] as String? ?? '').split('\u001e')) {
+      if (recommendations.putIfAbsent(
+        kind,
+        () => Queries.kindCountsOf(kind).$2 > 0,
+      )) {
+        count++;
+      }
+    }
+    if (count == 0) continue;
+    ranked.add(
+      RankRow(
+        nameNorm: row['name_norm'] as String,
+        name: (row['name'] ?? row['name_norm']) as String,
+        author: row['author'] as String?,
+        count: count,
+        bookGroupId: row['gid'] as int?,
+      ),
+    );
+  }
+  ranked.sort((first, second) {
+    final int order = second.count.compareTo(first.count);
+    return order != 0 ? order : first.nameNorm.compareTo(second.nameNorm);
+  });
+  return ranked.take(limit).toList(growable: false);
+});
+
 class RankRow {
   const RankRow({
     required this.nameNorm,
@@ -1065,7 +1100,7 @@ class Queries implements BookRepository, SearchSettingsKv {
     final String holes = List<String>.filled(ids.length, '?').join(', ');
     final List<QueryRow> entryRows = await db
         .customSelect(
-          'SELECT post_ref, name, name_norm, book_group_id, comment FROM book_entries '
+          'SELECT post_ref, name, name_norm, book_group_id, substr(comment, 1, 600) AS comment FROM book_entries '
           'WHERE post_ref IN ($holes) ORDER BY id',
           variables: <Variable<Object>>[
             for (final int id in ids) Variable<int>(id),
@@ -1112,8 +1147,11 @@ class Queries implements BookRepository, SearchSettingsKv {
       ).join(', ');
       final List<QueryRow> floorRows = await db
           .customSelect(
-            'SELECT post_id, text FROM floors WHERE post_id IN ($sHoles) '
-            "AND length(trim(text)) > 0 ORDER BY length(text) DESC",
+            'SELECT post_id, substr(text, 1, 600) AS text FROM ('
+            'SELECT post_id, text, ROW_NUMBER() OVER ('
+            'PARTITION BY post_id ORDER BY length(text) DESC, id) AS ordinal '
+            'FROM floors WHERE post_id IN ($sHoles) '
+            'AND length(trim(text)) > 0) WHERE ordinal = 1',
             variables: <Variable<Object>>[
               for (final int id in needSummary) Variable<int>(id),
             ],
@@ -1166,10 +1204,9 @@ class Queries implements BookRepository, SearchSettingsKv {
   }
 
   @override
-  Future<void> clearNewContentCount() =>
-      db.update(db.collectionState).write(
-        const CollectionStateCompanion(newSinceVisit: Value<int>(0)),
-      );
+  Future<void> clearNewContentCount() => db
+      .update(db.collectionState)
+      .write(const CollectionStateCompanion(newSinceVisit: Value<int>(0)));
 
   // ── 热门榜（§5.13：推荐次数榜，GROUP BY name_norm，不依赖 FTS）──
 
@@ -1227,25 +1264,12 @@ class Queries implements BookRepository, SearchSettingsKv {
           },
         )
         .get()
-        .then((List<QueryRow> rows) {
-          final List<RankRow> ranked = <RankRow>[];
-          for (final QueryRow row in rows) {
-            final int recommend = kindCountsOf(row.data['kinds'] as String?).$2;
-            if (recommend == 0) continue;
-            ranked.add(RankRow(
-              nameNorm: row.data['name_norm']! as String,
-              name: (row.data['name'] as String?) ?? (row.data['name_norm']! as String),
-              author: row.data['author'] as String?,
-              count: recommend,
-              bookGroupId: row.data['gid'] as int?,
-            ));
-          }
-          ranked.sort((RankRow a, RankRow b) {
-            final int byCount = b.count.compareTo(a.count);
-            return byCount != 0 ? byCount : a.nameNorm.compareTo(b.nameNorm);
-          });
-          return ranked.take(limit).toList(growable: false);
-        });
+        .then(
+          (rows) => _rankInBackground(
+            rows.map((row) => row.data).toList(growable: false),
+            limit,
+          ),
+        );
   }
 
   @override
@@ -1289,8 +1313,9 @@ class Queries implements BookRepository, SearchSettingsKv {
     return db
         .customSelect(
           'SELECT $_entryCols$_entryFrom '
-          "WHERE b.category = ? AND b.comment IS NOT NULL AND length(b.comment) >= 20 "
-          'ORDER BY RANDOM() LIMIT ?',
+          'WHERE b.id IN (SELECT id FROM book_entries '
+          'WHERE category = ? AND comment IS NOT NULL AND length(comment) >= 20 '
+          'ORDER BY RANDOM() LIMIT ?) ORDER BY RANDOM()',
           variables: <Variable<Object>>[
             Variable<String>(CategoryKind.scan),
             Variable<int>(count),
@@ -1472,22 +1497,67 @@ class Queries implements BookRepository, SearchSettingsKv {
   Future<SearchOutcome> searchBooks(SearchFilter f) async {
     final SearchOutcome books = await _searchBooks(f);
     final List<Variable<Object>> variables = <Variable<Object>>[];
-    final StringBuffer conditions = StringBuffer("b.origin = 'imported' AND NOT EXISTS (SELECT 1 FROM book_entries entry WHERE entry.post_ref = b.id)");
+    final StringBuffer conditions = StringBuffer(
+      "b.origin = 'imported' AND NOT EXISTS (SELECT 1 FROM book_entries entry WHERE entry.post_ref = b.id)",
+    );
     for (final String word in tokenizeQuery(f.query)) {
-      conditions.write(" AND (b.title LIKE ? ESCAPE '\\' OR b.author LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM floors floor WHERE floor.post_id = b.id AND floor.text LIKE ? ESCAPE '\\'))");
-      final String escaped = word.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
-      variables.addAll(<Variable<Object>>[for (int index = 0; index < 3; index++) Variable<String>('%$escaped%')]);
+      conditions.write(
+        " AND (b.title LIKE ? ESCAPE '\\' OR b.author LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM floors floor WHERE floor.post_id = b.id AND floor.text LIKE ? ESCAPE '\\'))",
+      );
+      final String escaped = word
+          .replaceAll(r'\', r'\\')
+          .replaceAll('%', r'\%')
+          .replaceAll('_', r'\_');
+      variables.addAll(<Variable<Object>>[
+        for (int index = 0; index < 3; index++) Variable<String>('%$escaped%'),
+      ]);
     }
     conditions.write(_dimClauses(f, variables));
     const String source = '(SELECT *, post_kind AS category FROM posts) b';
-    final int count = (await db.customSelect('SELECT count(*) AS n FROM $source WHERE $conditions', variables: variables, readsFrom: <TableInfo<Table, Object?>>{db.posts, db.floors, db.bookEntries}).getSingle()).read<int>('n');
-    final List<QueryRow> rows = await db.customSelect(
-      'SELECT b.*, (SELECT floor.text FROM floors floor WHERE floor.post_id = b.id ORDER BY length(floor.text) DESC LIMIT 1) AS summary FROM $source WHERE $conditions ORDER BY b.date ${f.sort == SearchSort.timeAsc ? 'ASC' : 'DESC'}, b.id DESC LIMIT ? OFFSET ?',
-      variables: <Variable<Object>>[...variables, Variable<int>(f.limit), Variable<int>(f.offset)], readsFrom: <TableInfo<Table, Object?>>{db.posts, db.floors, db.bookEntries},
-    ).get();
-    return SearchOutcome(page: books.page, usedFts: books.usedFts, degraded: books.degraded, words: books.words, postTotal: count, posts: <PostCardData>[
-      for (final QueryRow row in rows) PostCardData(post: db.posts.map(row.data), books: const <BookChip>[], entryCount: 0, summary: summarizeCardText(row.readNullable<String>('summary'))),
-    ]);
+    final int count =
+        (await db
+                .customSelect(
+                  'SELECT count(*) AS n FROM $source WHERE $conditions',
+                  variables: variables,
+                  readsFrom: <TableInfo<Table, Object?>>{
+                    db.posts,
+                    db.floors,
+                    db.bookEntries,
+                  },
+                )
+                .getSingle())
+            .read<int>('n');
+    final List<QueryRow> rows = await db
+        .customSelect(
+          'SELECT b.*, (SELECT floor.text FROM floors floor WHERE floor.post_id = b.id ORDER BY length(floor.text) DESC LIMIT 1) AS summary FROM $source WHERE $conditions ORDER BY b.date ${f.sort == SearchSort.timeAsc ? 'ASC' : 'DESC'}, b.id DESC LIMIT ? OFFSET ?',
+          variables: <Variable<Object>>[
+            ...variables,
+            Variable<int>(f.limit),
+            Variable<int>(f.offset),
+          ],
+          readsFrom: <TableInfo<Table, Object?>>{
+            db.posts,
+            db.floors,
+            db.bookEntries,
+          },
+        )
+        .get();
+    return SearchOutcome(
+      page: books.page,
+      usedFts: books.usedFts,
+      degraded: books.degraded,
+      words: books.words,
+      postTotal: count,
+      posts: <PostCardData>[
+        for (final QueryRow row in rows)
+          PostCardData(
+            post: db.posts.map(row.data),
+            books: const <BookChip>[],
+            entryCount: 0,
+            summary: summarizeCardText(row.readNullable<String>('summary')),
+          ),
+      ],
+    );
   }
 
   Future<SearchOutcome> _searchBooks(SearchFilter f) async {
@@ -1568,10 +1638,7 @@ class Queries implements BookRepository, SearchSettingsKv {
         residualOnly: true,
       );
     }
-    return SearchOutcome(
-      page: await _likeGroups(words, f),
-      words: words,
-    );
+    return SearchOutcome(page: await _likeGroups(words, f), words: words);
   }
 
   /// 仅对明确的平台名启用“平台字段优先”，避免普通角色名被 `平台：…`
@@ -1620,9 +1687,8 @@ class Queries implements BookRepository, SearchSettingsKv {
   }
 
   /// 正文 FTS MATCH：每个空格分词都是短语，多个词之间 AND。
-  static String _bodyFtsMatch(List<String> words) => words
-      .map((String w) => '"${w.replaceAll('"', '""')}"')
-      .join(' AND ');
+  static String _bodyFtsMatch(List<String> words) =>
+      words.map((String w) => '"${w.replaceAll('"', '""')}"').join(' AND ');
 
   static String _titleFtsMatch(List<String> words) => words
       .map((String w) => '{name author} : "${w.replaceAll('"', '""')}"')
@@ -1739,11 +1805,7 @@ class Queries implements BookRepository, SearchSettingsKv {
       );
     }
     return SearchOutcome(
-      page: await _mergeSearchPages(
-        f,
-        primary: title.page,
-        secondary: body,
-      ),
+      page: await _mergeSearchPages(f, primary: title.page, secondary: body),
       usedFts: title.usedFts,
       degraded: title.degraded,
       words: words,
@@ -2408,10 +2470,19 @@ class Queries implements BookRepository, SearchSettingsKv {
     if (post == null) {
       return null;
     }
-    final bool hasDocuments = (await db.customSelect("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'content_documents'").get()).isNotEmpty;
-    final ContentDocument? document = !hasDocuments ? null : await (db.select(db.contentDocuments)
-          ..where((ContentDocuments table) => table.postId.equals(postId)))
-        .getSingleOrNull();
+    final bool hasDocuments =
+        (await db
+                .customSelect(
+                  "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'content_documents'",
+                )
+                .get())
+            .isNotEmpty;
+    final ContentDocument? document = !hasDocuments
+        ? null
+        : await (db.select(
+                db.contentDocuments,
+              )..where((ContentDocuments table) => table.postId.equals(postId)))
+              .getSingleOrNull();
     final List<Floor> floors =
         await (db.select(db.floors)
               ..where((Floors t) => t.postId.equals(postId))
@@ -2491,7 +2562,9 @@ class Queries implements BookRepository, SearchSettingsKv {
       ],
       books: books,
       sourceUrl: document?.sourceUrl,
-      contentWarnings: document == null ? const <String>[] : (jsonDecode(document.warnings) as List<dynamic>).cast<String>(),
+      contentWarnings: document == null
+          ? const <String>[]
+          : (jsonDecode(document.warnings) as List<dynamic>).cast<String>(),
     );
   }
 

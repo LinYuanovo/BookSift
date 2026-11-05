@@ -34,6 +34,7 @@ import '../collect/collect_settings.dart';
 import '../home/cards.dart';
 import 'about_page.dart';
 import 'font_manage_page.dart';
+import 'storage_section.dart';
 
 /// 设置页（字体管理 / 主题模式 / 主题色 swatch / 减弱动效开关 / BDUSS / 数据包 / 并发 / 关于）。
 ///
@@ -126,6 +127,7 @@ class SettingsPage extends ConsumerWidget {
             child: Text('数据与存储', style: t.label.copyWith(color: colors.textMuted)),
           ),
           const _FtsIndexSection(),
+          const StorageSection(),
           // ── 关于小节（M3 §10.1：版本显示 / 双源更新检查 / 备源 URL 自定义）──
           Padding(
             padding: EdgeInsets.only(top: space.space8, bottom: space.space3),

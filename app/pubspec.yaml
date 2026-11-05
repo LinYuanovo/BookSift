@@ -48,6 +48,7 @@ dependencies:
   go_router: ^17.5.0
   dio: ^5.11.1
   cached_network_image: ^3.4.1
+  flutter_cache_manager: ^3.4.5
   flutter_secure_storage: ^11.2.0
   animations: ^2.2.0
   file_picker: ^13.1.0

@@ -20,4 +20,12 @@
 
 ## 验证与后续
 
-尚未运行新的测试；后续随每个提交更新实测结果、限制和清理记录。
+### 第一阶段：首屏与存储
+
+- 基线库：内置完整 lite 种子副本，39,348 帖 / 170,996 楼 / 53,591 条目，175,271,936 字节。
+- Linux Dart JIT 基线：打开 149ms、首批时间线 59ms、首次热门榜 2328ms、随机书目 168ms。榜单分类在 UI isolate 执行，能阻塞内容绘制。
+- 改后：字体 bootstrap 不阻塞 runApp，仅加载正在使用的字体；榜单分类在 isolate 运行、首页 feed 优先；随机书目先抽 ID 再关联正文，首次 65ms、后续 43–56ms（旧 81ms）。时间线首批 53ms。
+- 榜单总耗时 JIT 仍为 1.6–2.5s，移出 UI isolate 改善的是响应性，不能宣称计算本身变快。需在原生 Release 进一步验收。
+- 新增设置页空间统计、数据库 VACUUM、图片缓存/更新包清理；保留用户内容和字体。新增按 ABI APK 构建，保留通用 APK 更新契约；尚未触发 Actions。
+- 聚焦测试 80/80 通过，flutter analyze 无问题。清理测试验证 VACUUM 前后内容和 integrity_check。
+- Windows Flutter/VS Build Tools 可用；Linux Java 17/adb 已安装，Android SDK 正在补齐。当前没有 `/dev/kvm`。

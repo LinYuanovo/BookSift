@@ -50,18 +50,26 @@ class FontService extends ChangeNotifier {
   /// 角色当前槽位（缺省 system）。
   FontSlot slotOf(FontRole role) => _slots[role] ?? const FontSlot.system();
 
-  /// 启动加载（main 于 runApp 前 await）：读注册表/槽位 → 加载已导入字体 → 解析。
+  /// 首帧异步加载：读注册表/槽位 → 加载已导入字体 → 解析。
   /// 默认配置（无导入）零文件 IO 之外的字体加载，失败不阻塞启动。
   Future<void> bootstrap() async {
     try {
-      _registry = FontRegistryCodec.decode(await _settings.read(FontSettingsKeys.registry));
-      _slots = FontRoleSlotsCodec.decode(await _settings.read(FontSettingsKeys.roles));
+      _registry = FontRegistryCodec.decode(
+        await _settings.read(FontSettingsKeys.registry),
+      );
+      _slots = FontRoleSlotsCodec.decode(
+        await _settings.read(FontSettingsKeys.roles),
+      );
     } catch (_) {
       _registry = const <ImportedFont>[];
       _slots = const <FontRole, FontSlot>{};
     }
     final Set<String> loaded = <String>{};
+    final Set<String?> selected = _slots.values
+        .map((slot) => slot.fontId)
+        .toSet();
     for (final ImportedFont font in _registry) {
+      if (!selected.contains(font.fontId)) continue;
       try {
         final Uint8List bytes = await _files.read(font.storedName);
         await _registrar.registerFamily(font.familyName, bytes);
@@ -91,13 +99,17 @@ class FontService extends ChangeNotifier {
 
   /// 枚举系统已安装字体（ttf / otf / ttc）供选择界面展示。
   /// 失败降级为「空列表 + 可展示的错误消息」，不抛异常、不影响现有导入。
-  Future<({List<SystemFontEntry> fonts, String? error})> scanSystemFonts() async {
+  Future<({List<SystemFontEntry> fonts, String? error})>
+  scanSystemFonts() async {
     try {
       return (fonts: await _systemFonts.listFonts(), error: null);
     } on SystemFontCatalogException catch (e) {
       return (fonts: const <SystemFontEntry>[], error: e.message);
     } catch (_) {
-      return (fonts: const <SystemFontEntry>[], error: '读取系统字体失败，请使用「导入字体」选择文件');
+      return (
+        fonts: const <SystemFontEntry>[],
+        error: '读取系统字体失败，请使用「导入字体」选择文件',
+      );
     }
   }
 
@@ -129,20 +141,25 @@ class FontService extends ChangeNotifier {
     bool allowCollections = false,
   }) async {
     final String ext = _extensionOf(fileName);
-    final bool supported = ext == 'ttf' || ext == 'otf' || (allowCollections && ext == 'ttc');
+    final bool supported =
+        ext == 'ttf' || ext == 'otf' || (allowCollections && ext == 'ttc');
     if (!supported) {
-      return allowCollections ? '仅支持 ttf / otf / ttc 字体文件' : '仅支持 ttf / otf 字体文件';
+      return allowCollections
+          ? '仅支持 ttf / otf / ttc 字体文件'
+          : '仅支持 ttf / otf 字体文件';
     }
     if (bytes.isEmpty) {
       return '字体文件为空';
     }
     final String resolvedFamily =
-        (familyName ?? fileName.substring(0, fileName.length - ext.length - 1)).trim();
+        (familyName ?? fileName.substring(0, fileName.length - ext.length - 1))
+            .trim();
     if (resolvedFamily.isEmpty) {
       return '无法解析字体名称';
     }
     if (_registry.any(
-      (ImportedFont f) => f.familyName.toLowerCase() == resolvedFamily.toLowerCase(),
+      (ImportedFont f) =>
+          f.familyName.toLowerCase() == resolvedFamily.toLowerCase(),
     )) {
       return '已导入同名字体「$resolvedFamily」';
     }
@@ -173,7 +190,23 @@ class FontService extends ChangeNotifier {
 
   /// 设置角色槽位；未知 fontId 防御性视为 system。返回持久化错误（null = 成功）。
   Future<String?> setRoleSlot(FontRole role, FontSlot slot) async {
-    final bool known = slot.isSystem || _registry.any((ImportedFont f) => f.fontId == slot.fontId);
+    final bool known =
+        slot.isSystem ||
+        _registry.any((ImportedFont f) => f.fontId == slot.fontId);
+    if (known && !slot.isSystem && !_loadedIds.contains(slot.fontId)) {
+      final ImportedFont font = _registry.firstWhere(
+        (font) => font.fontId == slot.fontId,
+      );
+      try {
+        await _registrar.registerFamily(
+          font.familyName,
+          await _files.read(font.storedName),
+        );
+        _loadedIds = <String>{..._loadedIds, font.fontId};
+      } catch (_) {
+        return '字体加载失败，请重新导入';
+      }
+    }
     final Map<FontRole, FontSlot> next = Map<FontRole, FontSlot>.of(_slots);
     if (slot.isSystem || !known) {
       next.remove(role);
@@ -198,7 +231,9 @@ class FontService extends ChangeNotifier {
 
   /// 删除导入字体：引用它的角色自动回退 system。返回错误消息（null = 成功）。
   Future<String?> deleteFont(String fontId) async {
-    final int index = _registry.indexWhere((ImportedFont f) => f.fontId == fontId);
+    final int index = _registry.indexWhere(
+      (ImportedFont f) => f.fontId == fontId,
+    );
     if (index < 0) return '字体不存在';
     final ImportedFont font = _registry[index];
     _registry = <ImportedFont>[..._registry]..removeAt(index);
@@ -234,8 +269,14 @@ class FontService extends ChangeNotifier {
 
   Future<String?> _persist() async {
     try {
-      await _settings.write(FontSettingsKeys.registry, FontRegistryCodec.encode(_registry));
-      await _settings.write(FontSettingsKeys.roles, FontRoleSlotsCodec.encode(_slots));
+      await _settings.write(
+        FontSettingsKeys.registry,
+        FontRegistryCodec.encode(_registry),
+      );
+      await _settings.write(
+        FontSettingsKeys.roles,
+        FontRoleSlotsCodec.encode(_slots),
+      );
       return null;
     } catch (_) {
       return '字体设置保存失败';
@@ -247,10 +288,14 @@ class FontService extends ChangeNotifier {
     return dot >= 0 ? fileName.substring(dot + 1).toLowerCase() : '';
   }
 
-  static String _newFontId() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+  static String _newFontId() =>
+      DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 }
 
-/// 字体服务单例；bootstrap 由 main() 在 runApp 前调用（见 main.dart）。
-final ChangeNotifierProvider<FontService> fontServiceProvider = ChangeNotifierProvider<FontService>((Ref ref) {
-  return FontService(settings: DriftFontSettingsStore(ref.watch(appDatabaseProvider)));
-});
+/// 字体服务单例；bootstrap 由 main() 异步调用（见 main.dart）。
+final ChangeNotifierProvider<FontService> fontServiceProvider =
+    ChangeNotifierProvider<FontService>((Ref ref) {
+      return FontService(
+        settings: DriftFontSettingsStore(ref.watch(appDatabaseProvider)),
+      );
+    });

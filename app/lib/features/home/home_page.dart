@@ -29,28 +29,44 @@ import 'cards.dart';
 // 首页（§5.2 时间线 + §5.13 热门榜入口 + 随机书荒）。
 
 /// 时间线分页：页数 ×40（本地库瞬时查询，滚动触底加页）。
-final StateProvider<int> homePageCountProvider = StateProvider<int>((Ref ref) => 1);
+final StateProvider<int> homePageCountProvider = StateProvider<int>(
+  (Ref ref) => 1,
+);
 
-final FutureProvider<List<PostCardData>> homeFeedProvider = FutureProvider<List<PostCardData>>((Ref ref) {
-  final int pages = ref.watch(homePageCountProvider);
-  return ref.watch(queriesProvider).timelinePosts(limit: pages * 40);
-});
+final FutureProvider<List<PostCardData>> homeFeedProvider =
+    FutureProvider<List<PostCardData>>((Ref ref) {
+      final int pages = ref.watch(homePageCountProvider);
+      return ref.watch(queriesProvider).timelinePosts(limit: pages * 40);
+    });
 
 /// 榜单锚点「今天」：生产 = 设备当天；测试注入固定日期保证时段窗口确定。
 /// 定义留驻本文件（test/support/harness.dart 按此 import 路径注入锚点），
 /// /rank 独立页（features/rank/rank_page.dart）跨文件消费同一 Provider 对象。
-final Provider<DateTime> rankTodayProvider = Provider<DateTime>((Ref ref) => DateTime.now());
+final Provider<DateTime> rankTodayProvider = Provider<DateTime>(
+  (Ref ref) => DateTime.now(),
+);
 
 /// 首页「热门榜」tile 副标题预览（设计稿 01 entry-tile：全时段推荐次数榜 Top1 书名）。
-final FutureProvider<RankRow?> rankTileTopProvider = FutureProvider<RankRow?>((Ref ref) async {
-  final List<RankRow> rows = await ref
-      .watch(queriesProvider)
-      .rankRows(RankWindow.allTime, today: ref.watch(rankTodayProvider), limit: 1);
+final FutureProvider<RankRow?> rankTileTopProvider = FutureProvider<RankRow?>((
+  Ref ref,
+) async {
+  final BookRepository repository = ref.watch(queriesProvider);
+  final DateTime today = ref.watch(rankTodayProvider);
+  await ref.read(homeFeedProvider.future);
+  final List<RankRow> rows = await repository.rankRows(
+    RankWindow.allTime,
+    today: today,
+    limit: 1,
+  );
   return rows.isEmpty ? null : rows.first;
 });
 
 final FutureProvider<List<EntryRow>> randomBooksProvider =
-    FutureProvider<List<EntryRow>>((Ref ref) => ref.watch(queriesProvider).randomBooks(10));
+    FutureProvider<List<EntryRow>>((Ref ref) async {
+      final BookRepository repository = ref.watch(queriesProvider);
+      await ref.read(homeFeedProvider.future);
+      return repository.randomBooks(10);
+    });
 
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
@@ -103,7 +119,9 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _openSearch([String? query]) {
-    context.go(query == null ? '/search' : '/search?q=${Uri.encodeComponent(query)}');
+    context.go(
+      query == null ? '/search' : '/search?q=${Uri.encodeComponent(query)}',
+    );
   }
 
   /// 日期目录弹层：每行 日期 + 当日帖数，倒序与页面一致（§5.2 时间线分组跳转）。
@@ -120,11 +138,18 @@ class _HomePageState extends ConsumerState<HomePage> {
             for (final TimelineGroup group in groups)
               ListTile(
                 dense: true,
-                title: Text(group.date, style: AppTypography.tabular(AppTypography.of(context).secondary)),
+                title: Text(
+                  group.date,
+                  style: AppTypography.tabular(
+                    AppTypography.of(context).secondary,
+                  ),
+                ),
                 trailing: Text(
                   '${group.posts.length} 帖',
                   style: AppTypography.tabular(
-                    AppTypography.of(context).caption.copyWith(color: AppColors.of(context).textMuted),
+                    AppTypography.of(
+                      context,
+                    ).caption.copyWith(color: AppColors.of(context).textMuted),
                   ),
                 ),
                 onTap: () {
@@ -238,16 +263,16 @@ class _HomePageState extends ConsumerState<HomePage> {
     final double max = _scrollController.position.maxScrollExtent;
     _scrollController
         .animateTo(
-      (max * (start / total)).clamp(0.0, max),
-      duration: motion.transition.duration,
-      curve: motion.transition.curve,
-    )
+          (max * (start / total)).clamp(0.0, max),
+          duration: motion.transition.duration,
+          curve: motion.transition.curve,
+        )
         .then((_) {
-      final BuildContext? target = _groupKeys[date]?.currentContext;
-      if (target != null && target.mounted) {
-        Scrollable.ensureVisible(target, alignment: 0.05);
-      }
-    });
+          final BuildContext? target = _groupKeys[date]?.currentContext;
+          if (target != null && target.mounted) {
+            Scrollable.ensureVisible(target, alignment: 0.05);
+          }
+        });
   }
 
   @override
@@ -255,13 +280,18 @@ class _HomePageState extends ConsumerState<HomePage> {
     final AppSpacing s = AppSpacing.of(context);
     final AsyncValue<List<PostCardData>> feed = ref.watch(homeFeedProvider);
     // 日期分组（appbar 目录入口的显隐判定；_timeline 内另算一次展平，O(n) 量级不合并）。
-    final List<TimelineGroup> feedGroups =
-        feed.value == null ? const <TimelineGroup>[] : Queries.groupByDate(feed.value!);
+    final List<TimelineGroup> feedGroups = feed.value == null
+        ? const <TimelineGroup>[]
+        : Queries.groupByDate(feed.value!);
     // P0-1 首启种子导入状态（§9.2）：导入中 feed 区显示进度面板，失败可原地重试；
     // done 迁移 → 级联失效 queriesProvider（homeFeed/分类/榜单/随机书荒全部随之重建）。
     final SeedImportState seed = ref.watch(seedBootstrapProvider);
-    ref.listen<SeedImportState>(seedBootstrapProvider, (SeedImportState? prev, SeedImportState next) {
-      if (next.phase == SeedImportPhase.done && prev?.phase != SeedImportPhase.done) {
+    ref.listen<SeedImportState>(seedBootstrapProvider, (
+      SeedImportState? prev,
+      SeedImportState next,
+    ) {
+      if (next.phase == SeedImportPhase.done &&
+          prev?.phase != SeedImportPhase.done) {
         ref.invalidate(queriesProvider);
       }
       if (next.phase == SeedImportPhase.awaitingChoice && !_choiceDialogShown) {
@@ -275,10 +305,17 @@ class _HomePageState extends ConsumerState<HomePage> {
     });
     // 采集成功结束后首页仍可能停在旧的 FutureProvider 快照：首页（StatefulShellRoute
     // 分支）保持挂载，监听运行相位回落即可在后台完成一次原地刷新，无需重启或手动下拉。
-    ref.listen<CollectRunState>(collectRunStateProvider, (CollectRunState? prev, CollectRunState next) {
+    ref.listen<CollectRunState>(collectRunStateProvider, (
+      CollectRunState? prev,
+      CollectRunState next,
+    ) {
       final bool finished =
-          (prev?.isRunning ?? false) && !next.isRunning && next.phase == CollectPhase.idle;
-      final bool hasSuccess = next.forums.any((ForumRunState f) => f.status == ForumStatus.done);
+          (prev?.isRunning ?? false) &&
+          !next.isRunning &&
+          next.phase == CollectPhase.idle;
+      final bool hasSuccess = next.forums.any(
+        (ForumRunState f) => f.status == ForumStatus.done,
+      );
       if (finished && hasSuccess) {
         ref.read(homePageCountProvider.notifier).state = 1;
         ref.invalidate(homeFeedProvider);
@@ -289,20 +326,32 @@ class _HomePageState extends ConsumerState<HomePage> {
         title: const Text('扫书汇'),
         actions: <Widget>[
           IconButton(
-            icon: AppIcon('plus', size: 20, color: AppColors.of(context).textSecondary),
+            icon: AppIcon(
+              'plus',
+              size: 20,
+              color: AppColors.of(context).textSecondary,
+            ),
             tooltip: '导入扫书',
             onPressed: () => openContentEditor(context),
           ),
           // 日期目录入口（§5.2 时间线分组跳转）：feed 有数据且 ≥2 个日期组才显示。
           if (feedGroups.length >= 2)
             IconButton(
-              icon: AppIcon('list', size: 20, color: AppColors.of(context).textSecondary),
+              icon: AppIcon(
+                'list',
+                size: 20,
+                color: AppColors.of(context).textSecondary,
+              ),
               tooltip: '目录',
               onPressed: () => _showDateToc(feedGroups),
             ),
           IconButton(
             // 设计 01 首页 appbar 设置 = i-gear（index.html:1148）。
-            icon: AppIcon('gear', size: 20, color: AppColors.of(context).textSecondary),
+            icon: AppIcon(
+              'gear',
+              size: 20,
+              color: AppColors.of(context).textSecondary,
+            ),
             tooltip: '设置',
             // 宽屏（expanded）在中间功能区原位显示，窄屏仍是全窗页（core/nav/center_slot.dart）。
             onPressed: () => openCenterPage(context, const SettingsPage()),
@@ -320,7 +369,12 @@ class _HomePageState extends ConsumerState<HomePage> {
             controller: _scrollController,
             slivers: <Widget>[
               SliverPadding(
-                padding: EdgeInsets.fromLTRB(s.pagePadding, s.space4, s.pagePadding, 0),
+                padding: EdgeInsets.fromLTRB(
+                  s.pagePadding,
+                  s.space4,
+                  s.pagePadding,
+                  0,
+                ),
                 sliver: SliverList(
                   delegate: SliverChildListDelegate(<Widget>[
                     _SearchFieldStub(onTap: () => _openSearch()),
@@ -332,12 +386,15 @@ class _HomePageState extends ConsumerState<HomePage> {
               ),
               SliverPadding(
                 padding: EdgeInsets.symmetric(horizontal: s.pagePadding),
-                sliver: SliverToBoxAdapter(
-                  child: SectionTitle(label: '最新扫书'),
-                ),
+                sliver: SliverToBoxAdapter(child: SectionTitle(label: '最新扫书')),
               ),
               SliverPadding(
-                padding: EdgeInsets.fromLTRB(s.pagePadding, 0, s.pagePadding, s.space8),
+                padding: EdgeInsets.fromLTRB(
+                  s.pagePadding,
+                  0,
+                  s.pagePadding,
+                  s.space8,
+                ),
                 sliver: _feedSliver(feed, seed),
               ),
             ],
@@ -347,7 +404,10 @@ class _HomePageState extends ConsumerState<HomePage> {
     );
   }
 
-  Widget _feedSliver(AsyncValue<List<PostCardData>> feed, SeedImportState seed) {
+  Widget _feedSliver(
+    AsyncValue<List<PostCardData>> feed,
+    SeedImportState seed,
+  ) {
     // 首启等待用户选索引档位：显示同样的进度面板骨架，避免「书库为空」误导。
     if (seed.phase == SeedImportPhase.awaitingChoice) {
       return SliverToBoxAdapter(
@@ -373,7 +433,8 @@ class _HomePageState extends ConsumerState<HomePage> {
           action: AppButton(
             label: '重试导入',
             kind: AppButtonKind.outline,
-            onPressed: () => ref.read(seedBootstrapProvider.notifier).ensureStarted(),
+            onPressed: () =>
+                ref.read(seedBootstrapProvider.notifier).ensureStarted(),
           ),
         ),
       );
@@ -411,41 +472,59 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
     final List<TimelineGroup> groups = Queries.groupByDate(cards);
     final AppSpacing s = AppSpacing.of(context);
-    final List<int> siblingIds = cards.map((PostCardData d) => d.post.id).toList();
+    final List<int> siblingIds = cards
+        .map((PostCardData d) => d.post.id)
+        .toList();
     // 展平：group header + 卡片（懒构建，ListView 语义由 SliverList 承担）。
     final List<Widget> children = <Widget>[];
     int flatIndex = 0;
     for (final TimelineGroup group in groups) {
       // 组头外包带 key 容器：日期目录跳转的 ensureVisible 锚点（同 date 唯一）。
-      children.add(Container(
-        key: _groupKeys.putIfAbsent(group.date, GlobalKey.new),
-        child: _GroupHeader(
-          date: group.date,
-          hasCollected: group.posts.any((PostCardData d) => d.post.origin == Origin.collected),
-        ),
-      ));
-      for (final PostCardData card in group.posts) {
-        final int index = flatIndex++;
-        children.add(Padding(
-          padding: EdgeInsets.only(bottom: s.cardGap),
-          child: StaggerItem(
-            index: index,
-            child: PostCard(
-              data: card,
-              onTap: () => openPostDetail(
-                context,
-                ref,
-                PostSelection(postId: card.post.id, siblings: siblingIds, position: index),
-              ),
-              onBookTap: _openSearch,
-              onChannelTap: (String channel) => _openSearchWithChannel(channel),
-              onLongPress: () => _showPostMenu(card),
+      children.add(
+        Container(
+          key: _groupKeys.putIfAbsent(group.date, GlobalKey.new),
+          child: _GroupHeader(
+            date: group.date,
+            hasCollected: group.posts.any(
+              (PostCardData d) => d.post.origin == Origin.collected,
             ),
           ),
-        ));
+        ),
+      );
+      for (final PostCardData card in group.posts) {
+        final int index = flatIndex++;
+        children.add(
+          Padding(
+            padding: EdgeInsets.only(bottom: s.cardGap),
+            child: StaggerItem(
+              index: index,
+              child: PostCard(
+                data: card,
+                onTap: () => openPostDetail(
+                  context,
+                  ref,
+                  PostSelection(
+                    postId: card.post.id,
+                    siblings: siblingIds,
+                    position: index,
+                  ),
+                ),
+                onBookTap: _openSearch,
+                onChannelTap: (String channel) =>
+                    _openSearchWithChannel(channel),
+                onLongPress: () => _showPostMenu(card),
+              ),
+            ),
+          ),
+        );
       }
     }
-    return SliverList(delegate: SliverChildBuilderDelegate((BuildContext context, int i) => children[i], childCount: children.length));
+    return SliverList(
+      delegate: SliverChildBuilderDelegate(
+        (BuildContext context, int i) => children[i],
+        childCount: children.length,
+      ),
+    );
   }
 
   void _openSearchWithChannel(String channel) {
@@ -466,7 +545,11 @@ class _HomePageState extends ConsumerState<HomePage> {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             ListTile(
-              leading: AppIcon('copy', size: 20, color: AppColors.of(context).textSecondary),
+              leading: AppIcon(
+                'copy',
+                size: 20,
+                color: AppColors.of(context).textSecondary,
+              ),
               title: const Text('复制标题'),
               onTap: () {
                 Clipboard.setData(ClipboardData(text: card.post.title ?? ''));
@@ -475,33 +558,49 @@ class _HomePageState extends ConsumerState<HomePage> {
               },
             ),
             if (card.books.isNotEmpty)
-            ListTile(
-              leading: AppIcon('star', size: 20, color: AppColors.of(context).textSecondary),
-              title: Text('收藏《${BookNameChip.stripBrackets(card.books.first.name)}》'),
-              onTap: () async {
-                final BookChip chip = card.books.first;
-                final NavigatorState navigator = Navigator.of(sheetContext);
-                final BuildContext rootContext = context;
-                if (chip.bookGroupId != null) {
-                  await ref.read(queriesProvider).toggleFavorite(
-                    targetType: FavoriteTarget.bookGroup,
-                    targetId: chip.bookGroupId!,
-                    title: '《${BookNameChip.stripBrackets(chip.name)}》',
-                  );
-                }
-                navigator.pop();
-                if (rootContext.mounted) {
-                  showAppToast(rootContext, '已收藏');
-                }
-              },
-            ),
+              ListTile(
+                leading: AppIcon(
+                  'star',
+                  size: 20,
+                  color: AppColors.of(context).textSecondary,
+                ),
+                title: Text(
+                  '收藏《${BookNameChip.stripBrackets(card.books.first.name)}》',
+                ),
+                onTap: () async {
+                  final BookChip chip = card.books.first;
+                  final NavigatorState navigator = Navigator.of(sheetContext);
+                  final BuildContext rootContext = context;
+                  if (chip.bookGroupId != null) {
+                    await ref
+                        .read(queriesProvider)
+                        .toggleFavorite(
+                          targetType: FavoriteTarget.bookGroup,
+                          targetId: chip.bookGroupId!,
+                          title: '《${BookNameChip.stripBrackets(chip.name)}》',
+                        );
+                  }
+                  navigator.pop();
+                  if (rootContext.mounted) {
+                    showAppToast(rootContext, '已收藏');
+                  }
+                },
+              ),
             ListTile(
               // 查看原帖 = 进帖子详情（楼层流）；article → 设计稿 i-list（楼层/目录语义）。
-              leading: AppIcon('list', size: 20, color: AppColors.of(context).textSecondary),
+              leading: AppIcon(
+                'list',
+                size: 20,
+                color: AppColors.of(context).textSecondary,
+              ),
               title: const Text('查看原帖'),
               onTap: () {
                 Navigator.of(sheetContext).pop();
-                openPostDetail(context, ref, PostSelection(postId: card.post.id));
+                openPostDetail(
+                  context,
+                  ref,
+                  PostSelection(postId: card.post.id),
+                );
               },
             ),
           ],
@@ -545,12 +644,17 @@ class _SeedImportProgress extends StatelessWidget {
           Row(
             children: <Widget>[
               Expanded(
-                child: Text('首次启动 · 正在导入内置书库', style: t.bodyStrong.copyWith(color: c.text)),
+                child: Text(
+                  '首次启动 · 正在导入内置书库',
+                  style: t.bodyStrong.copyWith(color: c.text),
+                ),
               ),
               if (determinate)
                 Text(
                   '${(seedState.progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                  style: AppTypography.tabular(t.label.copyWith(color: c.textMuted)),
+                  style: AppTypography.tabular(
+                    t.label.copyWith(color: c.textMuted),
+                  ),
                 ),
             ],
           ),
@@ -563,7 +667,10 @@ class _SeedImportProgress extends StatelessWidget {
           ),
           if (seedState.message.isNotEmpty) ...<Widget>[
             SizedBox(height: s.space3),
-            Text(seedState.message, style: t.caption.copyWith(color: c.textMuted)),
+            Text(
+              seedState.message,
+              style: t.caption.copyWith(color: c.textMuted),
+            ),
           ],
           SizedBox(height: s.space1),
           Text(
@@ -598,7 +705,12 @@ class _GroupHeader extends StatelessWidget {
     }
     final int? month = int.tryParse(parts[1]);
     final int? day = int.tryParse(parts[2]);
-    if (month == null || day == null || month < 1 || month > 12 || day < 1 || day > 31) {
+    if (month == null ||
+        day == null ||
+        month < 1 ||
+        month > 12 ||
+        day < 1 ||
+        day > 31) {
       return date;
     }
     return '$month月$day日';
@@ -619,7 +731,10 @@ class _GroupHeader extends StatelessWidget {
     return Padding(
       // 测试/无障碍锚点：一天一个组头（§5.2 日期分组流）。
       key: ValueKey<String>('timeline-group-$date'),
-      padding: EdgeInsets.only(top: s.groupHeaderTop, bottom: s.groupHeaderBottom),
+      padding: EdgeInsets.only(
+        top: s.groupHeaderTop,
+        bottom: s.groupHeaderBottom,
+      ),
       child: Padding(
         padding: EdgeInsets.symmetric(horizontal: s.space1),
         child: Row(
@@ -633,16 +748,26 @@ class _GroupHeader extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: AppTypography.tabular(
-                  t.headline.copyWith(fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: 0.6, color: c.text),
+                  t.headline.copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.6,
+                    color: c.text,
+                  ),
                 ),
               ),
             ),
             if (hints.isNotEmpty) ...<Widget>[
               SizedBox(width: s.space3),
-              Text(hints.join(' · '), style: t.label.copyWith(color: c.accentStrong)),
+              Text(
+                hints.join(' · '),
+                style: t.label.copyWith(color: c.accentStrong),
+              ),
             ],
             SizedBox(width: s.space3),
-            Expanded(child: Container(height: AppMetrics.hairline, color: c.border)),
+            Expanded(
+              child: Container(height: AppMetrics.hairline, color: c.border),
+            ),
           ],
         ),
       ),
@@ -665,8 +790,13 @@ class _SearchFieldStub extends StatelessWidget {
       borderRadius: AppRadius.xlBorder,
       child: Container(
         height: AppMetrics.inputHeight,
-        padding: EdgeInsets.symmetric(horizontal: AppSpacing.of(context).inputPaddingH),
-        decoration: BoxDecoration(color: c.surfaceSunken, borderRadius: AppRadius.xlBorder),
+        padding: EdgeInsets.symmetric(
+          horizontal: AppSpacing.of(context).inputPaddingH,
+        ),
+        decoration: BoxDecoration(
+          color: c.surfaceSunken,
+          borderRadius: AppRadius.xlBorder,
+        ),
         child: Row(
           children: <Widget>[
             AppIcon('search', size: 20, color: c.textMuted),
@@ -688,8 +818,9 @@ class _SearchFieldStub extends StatelessWidget {
 }
 
 /// 采集提示卡数据源（collection_state.new_since_visit 之和，drift watch 自动刷新）。
-final StreamProvider<int> newContentCountProvider =
-    StreamProvider<int>((Ref ref) => ref.watch(queriesProvider).watchNewContentCount());
+final StreamProvider<int> newContentCountProvider = StreamProvider<int>(
+  (Ref ref) => ref.watch(queriesProvider).watchNewContentCount(),
+);
 
 Future<void> _refreshHome(WidgetRef ref) async {
   ref.read(homePageCountProvider.notifier).state = 1;
@@ -730,8 +861,14 @@ class _NewContentCard extends ConsumerWidget {
           onTap: () => _refreshHome(ref),
           borderRadius: AppRadius.lgBorder,
           child: Container(
-            padding: EdgeInsets.symmetric(horizontal: s.space4, vertical: s.space3),
-            decoration: BoxDecoration(color: c.accentSoft, borderRadius: AppRadius.lgBorder),
+            padding: EdgeInsets.symmetric(
+              horizontal: s.space4,
+              vertical: s.space3,
+            ),
+            decoration: BoxDecoration(
+              color: c.accentSoft,
+              borderRadius: AppRadius.lgBorder,
+            ),
             child: Row(
               children: <Widget>[
                 // 自采新内容提示卡 = 设计稿 i-collect（notice-card，index.html:1150）。
@@ -740,12 +877,20 @@ class _NewContentCard extends ConsumerWidget {
                 Expanded(
                   child: Text(
                     '自采新内容 +$n 条',
-                    style: AppTypography.tabular(t.secondary.copyWith(color: c.accentStrong, fontWeight: FontWeight.w600)),
+                    style: AppTypography.tabular(
+                      t.secondary.copyWith(
+                        color: c.accentStrong,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
                 Text('查看', style: t.bodyStrong.copyWith(color: c.accentStrong)),
                 // 行尾引导 chev = .ic sm 16 档（图标档位 24/20/16/13，设计无此 18 值）。
-                RotatedBox(quarterTurns: 3, child: AppIcon('chev', size: 16, color: c.accentStrong)),
+                RotatedBox(
+                  quarterTurns: 3,
+                  child: AppIcon('chev', size: 16, color: c.accentStrong),
+                ),
               ],
             ),
           ),
@@ -795,7 +940,12 @@ class _FeatureGrid extends ConsumerWidget {
 /// 入口 tile（.entry-tile：min-h68 · r20 · 图标 20 accent-strong · b 14 / small label muted，
 /// index.html:646–656）。
 class _GridEntry extends StatelessWidget {
-  const _GridEntry({required this.iconName, required this.label, this.subtitle, required this.onTap});
+  const _GridEntry({
+    required this.iconName,
+    required this.label,
+    this.subtitle,
+    required this.onTap,
+  });
 
   final String iconName;
   final String label;
@@ -829,11 +979,21 @@ class _GridEntry extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   // index.html:655 b = body-strong 14px。
-                  Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.bodyStrong.copyWith(fontSize: 14, color: c.text)),
+                  Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.bodyStrong.copyWith(fontSize: 14, color: c.text),
+                  ),
                   // small 单行截断（真机反馈问题A：书名换行会撑高本卡、与右卡不等高；
                   // 完整书名进 /rank 页可见，此处只做预览）。
                   if (subtitle != null)
-                    Text(subtitle!, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.label.copyWith(color: c.textMuted)),
+                    Text(
+                      subtitle!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: t.label.copyWith(color: c.textMuted),
+                    ),
                 ],
               ),
             ),
@@ -845,7 +1005,9 @@ class _GridEntry extends StatelessWidget {
 }
 
 /// 随机书荒面板 key（固定高度断言用；面板高度不随内容/滑动变化）。
-const ValueKey<String> kRandomBooksSheetKey = ValueKey<String>('random-books-sheet');
+const ValueKey<String> kRandomBooksSheetKey = ValueKey<String>(
+  'random-books-sheet',
+);
 
 void _showRandomSheet(BuildContext context, WidgetRef ref) {
   showModalBottomSheet<void>(
@@ -859,7 +1021,8 @@ void _showRandomSheet(BuildContext context, WidgetRef ref) {
     builder: (BuildContext sheetContext) {
       final MediaQueryData mq = MediaQuery.of(sheetContext);
       final double height =
-          (mq.size.height - mq.viewPadding.top - mq.viewPadding.bottom) * AppMetrics.randomSheetHeightFactor;
+          (mq.size.height - mq.viewPadding.top - mq.viewPadding.bottom) *
+          AppMetrics.randomSheetHeightFactor;
       return SizedBox(
         key: kRandomBooksSheetKey,
         height: height,
@@ -891,7 +1054,11 @@ class _RandomBooksSheet extends ConsumerWidget {
         ),
         if (books.isEmpty && async.isLoading) const SkeletonBlock(height: 96),
         if (books.isEmpty && !async.isLoading)
-          const AppEmptyState(title: '书库为空', message: '导入种子数据包后即可随机抽书', svgIcon: 'book'),
+          const AppEmptyState(
+            title: '书库为空',
+            message: '导入种子数据包后即可随机抽书',
+            svgIcon: 'book',
+          ),
         StaggerPanel(
           spacing: s.cardGap,
           switchKey: ValueKey<int>(books.isEmpty ? 0 : books.first.id),
