@@ -51,7 +51,7 @@ void main() {
       throwsA(isA<SourceFailure>()),
     );
     expect(
-      () => validateForumBase('https://user:pass@forum.example'),
+      () => validateForumBase('https://user@forum.example'),
       throwsA(isA<SourceFailure>()),
     );
   });
@@ -124,6 +124,36 @@ void main() {
       throwsA(isA<SourceFailure>()),
     );
     expect(adapter.requests.length, 1);
+  });
+
+  test('search keeps the form session cookie and rejects truncated downloads', () async {
+    final ForumAdapter adapter = ForumAdapter((options) {
+      if (options.uri.path == '/attachment.php') {
+        return ResponseBody.fromString('partial', 200, headers: <String, List<String>>{
+          'content-length': <String>['100'],
+        });
+      }
+      if (options.method == 'GET') {
+        return ResponseBody.fromString('<input name="formhash" value="abcd">', 200,
+          headers: <String, List<String>>{'set-cookie': <String>['session=rotated; Path=/; Secure']},
+        );
+      }
+      return ResponseBody.fromString('<h3 class="xs3"><a href="thread-1.html">书</a></h3>', 200);
+    });
+    final ForumSourceClient client = ForumSourceClient(dio: Dio()..httpClientAdapter = adapter);
+    await client.search(base, '书');
+    expect(adapter.requests.last.headers['Cookie'], contains('session=rotated'));
+    final Directory temporary = await Directory.systemTemp.createTemp('booksift-partial-');
+    try {
+      final BookAttachment attachment = BookAttachment('book.txt', base.resolve('attachment.php'), base);
+      await expectLater(client.download(base, attachment, temporary, cancelToken: CancelToken()), throwsA(isA<SourceFailure>()));
+      expect(await temporary.list().isEmpty, isTrue);
+      final CancelToken canceled = CancelToken()..cancel();
+      await expectLater(client.download(base, attachment, temporary, cancelToken: canceled), throwsA(isA<DioException>()));
+      expect(await temporary.list().isEmpty, isTrue);
+    } finally {
+      await temporary.delete(recursive: true);
+    }
   });
 
   test('login pages are reported instead of empty search results', () async {

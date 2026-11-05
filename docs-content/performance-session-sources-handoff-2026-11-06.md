@@ -7,7 +7,7 @@
 - 分支：`codex/performance-session-sources`，基线 `31dc9ac`。
 - 主工作区 `/home/dev/code/BookSift` 保持原样。禁止推送远程。
 - 计划见 `performance-session-sources-plan-2026-11-06.md`。
-- 阶段：功能实现完成且已分批本地提交，进行最终原生验证与清理。
+- 阶段：功能实现、原生验证、清理均完成，所有改动已本地提交；实站登录后书源验收限制见下文。
 
 ## 初步事实
 
@@ -62,3 +62,46 @@
 - 修复中文 Windows 编译：MSVC `/utf-8`，避免 GBK 默认代码页把 UTF-8 中文注释解析成语法错误；已安装缺失的 ATL 组件。
 - 首次字数后台修复完成后，后续启动先查维护闸门；没有待办时不加载分类词典、不创建维护 isolate。
 - Android Java 17 / SDK36 / NDK28 / emulator / API35 x86_64 镜像已安装，模拟器 boot completed 已确认；本任务构建使用临时 Maven 镜像/代理与 1.5GB Gradle heap，未改仓库远程仓库源。
+
+## 最终验收记录
+
+| 环境/验证 | 结果 | 边界 |
+| --- | --- | --- |
+| Windows Profile 旧版首页/查询对照 | 首批内容 1119ms；事件循环最大间隔 434ms | 同脚本、同种子、旧代码 `31dc9ac` |
+| Windows Profile 改后两次 | 首批内容 269ms / 154ms；最大间隔 142ms / 41ms | 测试挂载后计时；非 OS 到内容冷启动 |
+| Windows 原生恢复 | 帖子确认跳转、首页页数和 500px 偏移均通过 | 使用独立临时库 |
+| Android API35 x86_64 模拟器 Profile | 首批内容 999ms；最大间隔 157ms | KVM + SwiftShader；同完整种子，无 Android 旧版对照 |
+| Android adb 安装/启动及恢复 | 安装成功，原生测试全部通过，首页/帖子恢复通过 | adb COLD TotalTime=7285ms，含测试解压，不能代表产品冷启动 |
+| Android 正式入口 Release 构建 | x86_64 APK 91.0MB 构建成功 | 本地默认 debug 证书签署的 Release；仅验收，不发布，清理时删除 |
+| Android 正式入口 adb 操作 | 首次选择关闭索引后导入成功；force-stop 后 COLD TotalTime=3542ms；UIAutomator 确认首页正文可见、不再出现导入提示 | 完整库、Release、模拟器，不代表真实手机性能 |
+| Android 强制终止恢复 | 点开帖子、滚动、force-stop、重启后显示正确帖名的「继续上次浏览？」 | 正式 main 入口，非注入会话状态 |
+| 完整回归 | 1072 passed / 14 skipped | 跳过项来自已有环境/慢测试门槛 |
+| 后续聚焦回归 | 34 passed / 1 skipped；37 passed；12 passed | 维护闸门、首页恢复、Cookie 轮转、取消/截断下载等最终补强 |
+| 静态/文档 | app 下 analyze 无问题；文档版本检查通过 | 根目录独立 classifier 打包示例不在 app 分析范围 |
+| 字数修复 | 28,986 行修正，2,857 条明确小说字数，二刷 0 改动 | 真实种子副本；用户库未触碰 |
+| 数据库整理 | 175,370,240 → 175,222,784 字节，integrity=ok | 此副本本来没有空闲页，收益仅约144KiB；不能承诺所有库大幅变小 |
+
+### 已知限制
+
+- 新装首次解压/导入 61MiB 种子，以及首次18.8s的字数后台修复，仍有一次性成本；没有删除正文来换体积。
+- 按 ABI 发布 APK 已加入本地 workflow；未触发 Actions，也未发布，因此尚无新通用/ARM64 安装包的同条件体积比较。
+- 两个论坛的实站登录后搜索/下载未验收：尚香需账号，搜书吧导航证书/404。模拟接口测试通过不等于实站成功。
+- 系统保存位置使用 file_picker 13 的原生 saveFile API；没有自动操作 Android/Windows 保存对话框做完整下载落盘实站验收。
+- 阅读进度每500ms持久化；被系统强杀时，最后不足500ms的滚动可能丢失。首页按页数/像素恢复，内容新增或窗口宽度变化时可能有位置偏移。
+- Java、Android SDK、Flutter SDK配置、Windows ATL 是可复用工具链，会保留；任务专用 AVD、Windows临时构建副本、测试库、截图和日志会清理。
+
+## 本地提交
+
+- `61f5a5d` 计划与交接。
+- `cbb7d00` 首屏与存储整理。
+- `1fc97fb` 阅读会话恢复。
+- `7552d1e` 小说字数修复。
+- `691dc01` 书源搜索与下载。
+- `5a8a5b9` 原生验收与边界修复。
+- 最后收尾提交包含下载截断/取消验证、测量记录与清理回执。
+
+## 清理范围
+
+仅清理本任务工作树生成的 build/.dart_tool/Android 构建残留、`/tmp/booksift-performance-20261106`、本任务工具安装下载临时文件、`C:\dev\booksift-native-20261106` 和 `booksift_20261106` AVD。保留项目原有 fixture、测试源码、内置种子和其他工作区产物；保留独立分支及工作树供审阅。主工作区 main 未修改，没有 push、PR、merge 或发布。
+
+清理已执行完成：AVD 删除、任务浏览器会话关闭、Windows 临时副本删除；本任务 APK、构建缓存、测试库、UI dump 和日志已删除。分支和 main 均为干净状态。

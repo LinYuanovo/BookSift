@@ -328,7 +328,7 @@ class ContentDocuments extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
-  /// v5 = 原始内容留档；v4 在 v3（书签楼层位置 bookmarks.floor_seq）之上补齐查询索引
+  /// v6 = FTS 仅监听正文列更新；v5 = 原始内容留档；v4 在 v3 上补齐查询索引
   /// （[_createQueryIndexes]）。此前真机 app.sqlite 全程无索引，检索/榜单/时间线/去重
   /// 均在全表扫（book_entries 5.3 万、floors 16.5 万行）。
   /// 新装用户由 onCreate 直接落 v5；v2/v3 逐级加列（带 DEFAULT/

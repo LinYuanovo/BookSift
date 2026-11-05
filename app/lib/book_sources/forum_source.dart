@@ -363,7 +363,7 @@ class ForumSourceClient {
         );
         _acceptCookies(base, response.headers);
         if ((response.statusCode ?? 0) < 300) break;
-        await response.data!.stream.drain<void>();
+        await response.data!.stream.listen((_) {}).cancel();
         final String? location = response.headers.value('location');
         if (location == null) throw const SourceFailure('无效附件跳转');
         current = current.resolve(location);
