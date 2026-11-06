@@ -474,9 +474,7 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
         title: _searchField(context),
         actions: <Widget>[
           IconButton(tooltip: '书源搜索与下载', icon: const AppIcon('book'),
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (_) => BookSourcePage(initialQuery: draft.filter.query),
-            )),
+            onPressed: () => openBookSourcePage(context, initialQuery: draft.filter.query),
           ),
         ],
       ),

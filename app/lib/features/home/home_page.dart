@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
 import '../../core/widgets/app_toast.dart';
+import '../../core/widgets/app_dialog.dart';
 import '../../core/icons.dart';
 import '../../core/nav/overlay_motion.dart';
 import '../../core/widgets/scroll_chrome.dart';
@@ -130,8 +131,9 @@ class _HomePageState extends ConsumerState<HomePage> {
       _restoring = true;
       final bool? resume = await showDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('继续上次浏览？'),
+        animationStyle: dialogAnimationStyle(context),
+        builder: (dialogContext) => AppDialog(
+          title: '继续上次浏览？',
           content: Text(previous.postId == null
               ? '回到上次的首页浏览位置。'
               : '继续阅读「${previous.title}」。'),

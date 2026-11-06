@@ -123,3 +123,22 @@
 两笔购买和浏览器/生产Dart下载已成功，文件大小及完整哈希见书源文档；无重复购买。新增可显式开启的 `integration_test/book_source_live_test.dart`，已在Android API35 x86_64完成生产UI真实搜索、附件选择、下载、DocumentsUI指定目录保存。ADB拉回两个文件，哈希与浏览器和Dart下载一致；原生测试全部通过。私有临时asset仅用于注入已授权登录态/测试代理，不入库。Windows Computer Use 因主机WSL路径兼容错误无法初始化，尚未验证Windows保存对话框。
 
 本轮聚焦回归12项通过，app analyze无问题，文档检查通过。完成授权目标的Android真实流程和共享Dart下载验证；私有测试文件、下载书籍、截图/HTML/日志、含临时凭证的APK/asset、AVD、独立代理和构建目录均已清理。保留可复用测试源码及非敏感验收记录。主节点未切换，主工作区不改、无push。
+
+## 追加：设计 token 审计与修复
+
+发现：BookTheme 已覆盖大部分页面色板/卡片/按钮几何，但新增书源页仍使用默认 SegmentedButton（含 Material 勾选图标）、默认输入装饰/进度条、默认返回图标和 MaterialPageRoute；设置、阅读恢复和整理存储弹窗缺少显式字阶/间距/动效。此前功能验收不代表设计系统验收。
+
+计划：改用现有 SegmentedPill、SVG 图标、共享页面转场；输入、弹窗、进度和结果卡显式消费 AppColors/AppTypography/AppSpacing/AppRadius/AppMotionTheme；覆盖窄屏、深色、主题色、字体放大、键盘、加载/错误与附件弹窗。仅修改本任务新增 UI，保留系统原生文件选择器的系统外观。完成后本地提交、清理临时渲染图片和构建产物，不推送。
+
+已完成：
+
+- 书源切换复用 SegmentedPill；返回按钮用 AppIcon SVG；入口复用 openCenterPage/MotionPage，在宽屏遵循中间栏栈，取消 MaterialPageRoute。
+- 新增 AppTextField：AppTypography.body、raised背景、xl24圆角、borderStrong/accent焦点描边、inputHeight48下限、主题动效；无默认下划线输入装饰。书名、论坛地址、Cookie共用。
+- 新增 AppDialog：headline/body字阶、cardPadding、420宽度token、可滚动内容和可换行操作区；书源设置、恢复提示、存储整理接入，弹窗动效统一dialogAnimationStyle。
+- 附件选择仍使用框架SimpleDialog作为容器，但标题/行高/间距/字体/SVG均显式接入token，表面/圆角由BookTheme管理。
+- 搜索结果改为项目Card与cardTitle/caption，状态文本使用语义色，进度条指定accent/sunken/pill并按减弱动效停止无限动画。页面统一滚动，键盘和大字体不会挤出固定头部。
+- 额外修复设置弹窗退出动画完成前过早dispose控制器的问题。
+
+验证：95 passed / 1 skipped（原有可选更新截图测试），app analyze无问题、文档检查/diff check通过。覆盖320px深色1.6倍字号、390px浅色、1280px宽屏；设置与附件弹窗、键盘300px inset、主题色/自定义字体槽、focus/加载/错误、恢复与整理弹窗、路由/SVG、已有首页/详情/更新UI。使用系统Noto字体渲染9张临时图片并目视检查浅色页面与深色大字设置弹窗；不把widget渲染称为新一轮Android/Windows原生验收。临时图片、测试日志和构建缓存清理，仅保留测试源码。
+
+范围边界：项目本身基于Material3，允许使用经BookTheme及显式token约束的Material容器/按钮；这不等于采用未定制的Material外观。Android/Windows系统文件选择器保持系统外观，不套应用token。本次没有顺带重做原项目其他旧页面。

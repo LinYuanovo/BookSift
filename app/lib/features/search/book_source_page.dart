@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:animations/animations.dart';
 import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -10,7 +11,26 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../book_sources/forum_source.dart';
 import '../../book_sources/source_settings.dart';
 import '../../core/icons.dart';
+import '../../core/nav/center_slot.dart';
+import '../../core/nav/overlay_motion.dart';
+import '../../core/widgets/app_dialog.dart';
+import '../../core/widgets/app_text_field.dart';
 import '../../core/widgets/app_toast.dart';
+import '../../core/widgets/scroll_chrome.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_motion.dart';
+import '../../theme/app_radius.dart';
+import '../../theme/app_spacing.dart';
+import '../../theme/app_typography.dart';
+import '../home/cards.dart';
+
+void openBookSourcePage(BuildContext context, {String initialQuery = ''}) {
+  openCenterPage(
+    context,
+    BookSourcePage(initialQuery: initialQuery),
+    type: SharedAxisTransitionType.horizontal,
+  );
+}
 
 class BookSourcePage extends ConsumerStatefulWidget {
   const BookSourcePage({super.key, this.initialQuery = ''});
@@ -30,11 +50,15 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
   String? _message;
   String? _progress;
   CancelToken? _cancel;
+  final ScrollController _scroll = ScrollController();
+  bool _failed = false;
+  double? _progressValue;
 
   @override
   void dispose() {
     _cancel?.cancel();
     _query.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -60,6 +84,8 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
     setState(() {
       _busy = true;
       _message = null;
+      _failed = false;
+      _progressValue = null;
       _books = <ForumBook>[];
     });
     try {
@@ -74,7 +100,12 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
         });
       }
     } catch (error) {
-      if (mounted) setState(() => _message = _error(error));
+      if (mounted) {
+        setState(() {
+          _message = _error(error);
+          _failed = true;
+        });
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -93,6 +124,9 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
   }
 
   Future<void> _configure() async {
+    final AppColors colors = AppColors.of(context);
+    final AppTypography typography = AppTypography.of(context);
+    final AppSpacing spacing = AppSpacing.of(context);
     ForumSourceSettings settings = const ForumSourceSettings();
     try {
       settings = await ref.read(forumSettingsProvider(_source).future);
@@ -107,98 +141,96 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
     bool resolving = false;
     bool saving = false;
     String? error;
-    await showDialog<void>(
+    final DialogRoute<void> settingsRoute = DialogRoute<void>(
       context: context,
+      animationStyle: dialogAnimationStyle(context),
       builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, update) => AlertDialog(
-          title: Text('${_source.label}设置'),
-          content: SizedBox(
-            width: 460,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+        builder: (dialogContext, update) => AppDialog(
+          title: '${_source.label}设置',
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                '先解析或填写论坛最新地址；需要登录时，在浏览器登录后粘贴 Cookie。登录态仅加密保存在本机，并绑定该地址。',
+                style: typography.secondary.copyWith(
+                  color: colors.textSecondary,
+                ),
+              ),
+              SizedBox(height: spacing.space4),
+              AppTextField(
+                controller: address,
+                label: '论坛最新地址（HTTPS）',
+                keyboardType: TextInputType.url,
+              ),
+              Wrap(
+                spacing: spacing.space2,
+                runSpacing: spacing.space1,
                 children: <Widget>[
-                  const Text(
-                    '先解析或填写论坛最新地址；需要登录时，在浏览器登录后粘贴 Cookie。登录态仅加密保存在本机，并绑定该地址。',
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: address,
-                    decoration: const InputDecoration(
-                      labelText: '论坛最新地址（HTTPS）',
-                    ),
-                  ),
-                  Wrap(
-                    spacing: 8,
-                    children: <Widget>[
-                      TextButton(
-                        onPressed: resolving || saving
-                            ? null
-                            : () async {
+                  TextButton(
+                    onPressed: resolving || saving
+                        ? null
+                        : () async {
+                            update(() {
+                              resolving = true;
+                              error = null;
+                            });
+                            try {
+                              final Uri target = await ref
+                                  .read(forumClientProvider)
+                                  .resolve(_source);
+                              if (dialogContext.mounted) {
                                 update(() {
-                                  resolving = true;
-                                  error = null;
+                                  if (address.text != target.toString()) {
+                                    cookie.clear();
+                                  }
+                                  address.text = target.toString();
                                 });
-                                try {
-                                  final Uri target = await ref
-                                      .read(forumClientProvider)
-                                      .resolve(_source);
-                                  if (dialogContext.mounted) {
-                                    update(() {
-                                      if (address.text != target.toString()) {
-                                        cookie.clear();
-                                      }
-                                      address.text = target.toString();
-                                    });
-                                  }
-                                } catch (failure) {
-                                  if (dialogContext.mounted) {
-                                    update(() => error = _error(failure));
-                                  }
-                                } finally {
-                                  if (dialogContext.mounted) {
-                                    update(() => resolving = false);
-                                  }
-                                }
-                              },
-                        child: Text(resolving ? '解析中…' : '从导航页获取'),
-                      ),
-                      TextButton(
-                        onPressed: () =>
-                            _open(Uri.parse(_source.navigationUrl)),
-                        child: const Text('打开导航页'),
-                      ),
-                      TextButton(
-                        onPressed: () {
-                          try {
-                            _open(validateForumBase(address.text));
-                          } catch (failure) {
-                            update(() => error = _error(failure));
-                          }
-                        },
-                        child: const Text('浏览器登录'),
-                      ),
-                    ],
+                              }
+                            } catch (failure) {
+                              if (dialogContext.mounted) {
+                                update(() => error = _error(failure));
+                              }
+                            } finally {
+                              if (dialogContext.mounted) {
+                                update(() => resolving = false);
+                              }
+                            }
+                          },
+                    child: Text(resolving ? '解析中…' : '从导航页获取'),
                   ),
-                  TextField(
-                    controller: cookie,
-                    obscureText: true,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    decoration: const InputDecoration(
-                      labelText: '登录 Cookie（可留空）',
-                      helperText: '清空后保存可移除本机登录态',
-                    ),
+                  TextButton(
+                    onPressed: () => _open(Uri.parse(_source.navigationUrl)),
+                    child: const Text('打开导航页'),
                   ),
-                  if (error != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Text(error!),
-                    ),
+                  TextButton(
+                    onPressed: () {
+                      try {
+                        _open(validateForumBase(address.text));
+                      } catch (failure) {
+                        update(() => error = _error(failure));
+                      }
+                    },
+                    child: const Text('浏览器登录'),
+                  ),
                 ],
               ),
-            ),
+              SizedBox(height: spacing.space4),
+              AppTextField(
+                controller: cookie,
+                obscureText: true,
+                label: '登录 Cookie（可留空）',
+                helper: '清空后保存可移除本机登录态',
+              ),
+              if (error != null)
+                Padding(
+                  padding: EdgeInsets.only(top: spacing.space3),
+                  child: Text(
+                    error!,
+                    style: typography.secondary.copyWith(color: colors.danger),
+                  ),
+                ),
+            ],
           ),
           actions: <Widget>[
             TextButton(
@@ -245,6 +277,8 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
         ),
       ),
     );
+    await Navigator.of(context, rootNavigator: true).push(settingsRoute);
+    await settingsRoute.completed;
     address.dispose();
     cookie.dispose();
   }
@@ -254,6 +288,8 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
     setState(() {
       _busy = true;
       _message = null;
+      _failed = false;
+      _progressValue = null;
       _progress = '读取附件…';
     });
     Directory? temporary;
@@ -268,13 +304,45 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
       if (!mounted) return;
       final BookAttachment? selected = await showDialog<BookAttachment>(
         context: context,
+        animationStyle: dialogAnimationStyle(context),
         builder: (dialogContext) => SimpleDialog(
-          title: const Text('选择附件'),
+          title: Text(
+            '选择附件',
+            style: AppTypography.of(
+              context,
+            ).headline.copyWith(color: AppColors.of(context).text),
+          ),
+          titlePadding: EdgeInsets.all(AppSpacing.of(context).cardPadding),
+          contentPadding: EdgeInsets.only(
+            bottom: AppSpacing.of(context).cardPadding,
+          ),
           children: <Widget>[
             for (final BookAttachment file in files)
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(dialogContext, file),
-                child: Text(file.name),
+                padding: EdgeInsets.symmetric(
+                  horizontal: AppSpacing.of(context).cardPadding,
+                  vertical: AppSpacing.of(context).space3,
+                ),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minHeight: AppMetrics.minTouchTarget,
+                  ),
+                  child: Row(
+                    children: <Widget>[
+                      AppIcon('book', color: AppColors.of(context).textMuted),
+                      SizedBox(width: AppSpacing.of(context).space3),
+                      Expanded(
+                        child: Text(
+                          file.name,
+                          style: AppTypography.of(
+                            context,
+                          ).body.copyWith(color: AppColors.of(context).text),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
           ],
         ),
@@ -293,11 +361,14 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
         cancelToken: token,
         onProgress: (received, total) {
           if (mounted) {
-            setState(
-              () => _progress = total > 0
+            setState(() {
+              _progressValue = total > 0
+                  ? (received / total).clamp(0.0, 1.0)
+                  : null;
+              _progress = total > 0
                   ? '下载 ${(received * 100 / total).toStringAsFixed(0)}%'
-                  : '已下载 ${(received / 1048576).toStringAsFixed(1)} MB',
-            );
+                  : '已下载 ${(received / 1048576).toStringAsFixed(1)} MB';
+            });
           }
         },
       );
@@ -305,6 +376,7 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
       setState(() {
         _cancel = null;
         _progress = '选择保存位置…';
+        _progressValue = 1;
       });
       final String name = selected.name.replaceAll(
         RegExp(r'[<>:"/\\|?*\x00-\x1f]'),
@@ -322,7 +394,12 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
         );
       }
     } catch (error) {
-      if (mounted) setState(() => _message = _error(error));
+      if (mounted) {
+        setState(() {
+          _message = _error(error);
+          _failed = !(error is DioException && CancelToken.isCancel(error));
+        });
+      }
     } finally {
       _cancel = null;
       if (temporary != null && await temporary.exists()) {
@@ -343,82 +420,192 @@ class _BookSourcePageState extends ConsumerState<BookSourcePage> {
 
   @override
   Widget build(BuildContext context) {
+    final AppColors colors = AppColors.of(context);
+    final AppTypography typography = AppTypography.of(context);
+    final AppSpacing spacing = AppSpacing.of(context);
+    final AppMotionTheme motion = AppMotionTheme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('书源搜索与下载'),
+        automaticallyImplyLeading: false,
+        leading: (ModalRoute.of(context)?.canPop ?? false)
+            ? IconButton(
+                tooltip: '返回',
+                onPressed: () => Navigator.maybePop(context),
+                icon: AppIcon('back', color: colors.textSecondary),
+              )
+            : null,
+        title: Text(
+          '书源搜索与下载',
+          style: typography.headline.copyWith(color: colors.text),
+        ),
         actions: <Widget>[
           IconButton(
             tooltip: '书源设置',
             onPressed: _busy ? null : _configure,
-            icon: const AppIcon('gear'),
+            icon: AppIcon(
+              'gear',
+              color: _busy ? colors.textMuted : colors.textSecondary,
+            ),
           ),
         ],
       ),
-      body: Column(
-        children: <Widget>[
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              children: <Widget>[
-                SegmentedButton<ForumSource>(
-                  segments: <ButtonSegment<ForumSource>>[
-                    for (final ForumSource source in ForumSource.values)
-                      ButtonSegment(value: source, label: Text(source.label)),
-                  ],
-                  selected: <ForumSource>{_source},
-                  onSelectionChanged: _busy
-                      ? null
-                      : (selected) => setState(() {
-                          _source = selected.single;
-                          _books = <ForumBook>[];
-                          _message = null;
-                        }),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _query,
-                  onSubmitted: (_) => _search(),
-                  decoration: InputDecoration(
-                    labelText: '书名',
-                    suffixIcon: IconButton(
-                      tooltip: '搜索书源',
-                      onPressed: _busy ? null : _search,
-                      icon: const AppIcon('search'),
-                    ),
+      body: SafeArea(
+        top: false,
+        child: ScrollChrome(
+          controller: _scroll,
+          child: CustomScrollView(
+            controller: _scroll,
+            slivers: <Widget>[
+              SliverPadding(
+                padding: EdgeInsets.all(spacing.pagePadding),
+                sliver: SliverToBoxAdapter(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      IgnorePointer(
+                        ignoring: _busy,
+                        child: SegmentedPill<ForumSource>(
+                          options: <(ForumSource, String)>[
+                            for (final ForumSource source in ForumSource.values)
+                              (source, source.label),
+                          ],
+                          selected: _source,
+                          onChanged: (selected) {
+                            if (!_busy) {
+                              setState(() {
+                                _source = selected;
+                                _books = <ForumBook>[];
+                                _message = null;
+                                _failed = false;
+                              });
+                            }
+                          },
+                        ),
+                      ),
+                      SizedBox(height: spacing.space4),
+                      AppTextField(
+                        controller: _query,
+                        label: '书名',
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: (_) => _search(),
+                        action: IconButton(
+                          tooltip: '搜索书源',
+                          onPressed: _busy ? null : _search,
+                          icon: AppIcon(
+                            'search',
+                            color: _busy
+                                ? colors.textMuted
+                                : colors.accentStrong,
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: spacing.space3),
+                      Text(
+                        '选择结果后查看附件，再选择保存位置。付费、回复和权限要求请在原站处理。',
+                        style: typography.caption.copyWith(
+                          color: colors.textMuted,
+                        ),
+                      ),
+                      if (_busy) ...<Widget>[
+                        SizedBox(height: spacing.space4),
+                        LinearProgressIndicator(
+                          value:
+                              _progressValue ??
+                              (motion.reduceMotion ? 0 : null),
+                          color: colors.accent,
+                          backgroundColor: colors.surfaceSunken,
+                          minHeight: spacing.space1,
+                          borderRadius: AppRadius.pillBorder,
+                          stopIndicatorRadius: 0,
+                          trackGap: 0,
+                          semanticsLabel: _progress ?? '正在搜索',
+                        ),
+                      ],
+                      if (_progress != null)
+                        Padding(
+                          padding: EdgeInsets.only(top: spacing.space2),
+                          child: Text(
+                            _progress!,
+                            style: AppTypography.tabular(
+                              typography.caption.copyWith(
+                                color: colors.textSecondary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (_cancel != null)
+                        TextButton(
+                          onPressed: () => _cancel?.cancel(),
+                          child: const Text('取消下载'),
+                        ),
+                      if (_message != null)
+                        Padding(
+                          padding: EdgeInsets.only(top: spacing.space3),
+                          child: Text(
+                            _message!,
+                            style: typography.secondary.copyWith(
+                              color: _failed
+                                  ? colors.danger
+                                  : colors.textSecondary,
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 8),
-                const Text('选择结果后查看附件，再选择保存位置。付费、回复和权限要求请在原站处理。'),
-                if (_busy) const LinearProgressIndicator(),
-                if (_progress != null) Text(_progress!),
-                if (_cancel != null)
-                  TextButton(
-                    onPressed: () => _cancel?.cancel(),
-                    child: const Text('取消下载'),
-                  ),
-                if (_message != null) Text(_message!),
-              ],
-            ),
+              ),
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  spacing.pagePadding,
+                  0,
+                  spacing.pagePadding,
+                  spacing.space8,
+                ),
+                sliver: SliverList.builder(
+                  itemCount: _books.length,
+                  itemBuilder: (context, index) {
+                    final ForumBook book = _books[index];
+                    return Padding(
+                      padding: EdgeInsets.only(bottom: spacing.cardGap),
+                      child: Card(
+                        child: ListTile(
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: spacing.cardPadding,
+                            vertical: spacing.space2,
+                          ),
+                          title: Text(
+                            book.title,
+                            style: typography.cardTitle.copyWith(
+                              color: colors.text,
+                            ),
+                          ),
+                          subtitle: Padding(
+                            padding: EdgeInsets.only(top: spacing.space1),
+                            child: Text(
+                              book.url.host,
+                              style: typography.caption.copyWith(
+                                color: colors.textMuted,
+                              ),
+                            ),
+                          ),
+                          onTap: _busy ? null : () => _download(book),
+                          trailing: IconButton(
+                            tooltip: '打开原帖',
+                            icon: AppIcon(
+                              'external',
+                              color: colors.textSecondary,
+                            ),
+                            onPressed: () => _open(book.url),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _books.length,
-              itemBuilder: (context, index) {
-                final ForumBook book = _books[index];
-                return ListTile(
-                  title: Text(book.title),
-                  subtitle: Text(book.url.host),
-                  onTap: _busy ? null : () => _download(book),
-                  trailing: IconButton(
-                    tooltip: '打开原帖',
-                    icon: const AppIcon('external'),
-                    onPressed: () => _open(book.url),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

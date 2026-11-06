@@ -276,9 +276,7 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
         actions: <Widget>[
           if (async.value != null)
             IconButton(tooltip: '搜索下载本书', icon: const AppIcon('book'),
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => BookSourcePage(initialQuery: async.value!.group.nameDisplay ?? async.value!.group.nameNorm),
-              )),
+              onPressed: () => openBookSourcePage(context, initialQuery: async.value!.group.nameDisplay ?? async.value!.group.nameNorm),
             ),
           // 目录入口（评价条目跳转目录，§5.5 同款帖子目录语义；仅条目非空时显示）。
           if (entries.isNotEmpty)
