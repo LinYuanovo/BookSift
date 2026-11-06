@@ -250,7 +250,7 @@ jobs:
   ios:
     name: iOS unsigned IPA
     needs: version
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -291,7 +291,7 @@ jobs:
   macos:
     name: macOS universal zip
     needs: version
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
