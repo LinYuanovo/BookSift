@@ -65,13 +65,18 @@ def verify_apks(artifact_directory, pubspec_path):
             raise ValueError(f"Missing APK metadata: {name}")
         attributes = dict(re.findall(r"(\w+)='([^']*)'", package[0]))
         expected_abis = set(ANDROID_ABIS) if abi is None else {abi}
+        actual_abis = set(re.findall(r"'([^']+)'", native[1]))
         if (
             attributes.get("name") != "com.linyuan.booksift"
             or attributes.get("versionCode") != build_number
             or attributes.get("versionName") != version
-            or set(re.findall(r"'([^']+)'", native[1])) != expected_abis
+            or actual_abis != expected_abis
         ):
-            raise ValueError(f"APK identity, version or ABI mismatch: {name}")
+            raise ValueError(
+                f"APK identity, version or ABI mismatch: {name}; "
+                f"expected com.linyuan.booksift {version}+{build_number} "
+                f"ABIs={sorted(expected_abis)}, got {attributes} ABIs={sorted(actual_abis)}"
+            )
         print(f"Verified {name}: versionCode={build_number}")
 
 

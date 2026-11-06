@@ -66,6 +66,19 @@ android {
 
     buildTypes {
         release {
+            if (providers.gradleProperty("split-per-abi").orNull != "true") {
+                val platformAbis = mapOf(
+                    "android-arm" to "armeabi-v7a",
+                    "android-arm64" to "arm64-v8a",
+                    "android-x64" to "x86_64",
+                )
+                val targetPlatforms = providers.gradleProperty("target-platform")
+                    .orElse("android-arm,android-arm64,android-x64").get().split(",")
+                ndk {
+                    abiFilters.clear()
+                    abiFilters.addAll(targetPlatforms.map { platformAbis.getValue(it) })
+                }
+            }
             // 有 keystore → 正式 release 签名；无 → 回退 debug，`flutter run --release` 仍可用。
             signingConfig =
                 if (hasReleaseSigning) {

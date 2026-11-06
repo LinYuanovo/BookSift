@@ -76,6 +76,7 @@ class AndroidReleaseManifestTest(unittest.TestCase):
             for old, replacement in (
                 ("versionCode='5'", "versionCode='2005'"),
                 ("'arm64-v8a'", "'x86'"),
+                ("'arm64-v8a'", "'arm64-v8a' 'x86_64'"),
             ):
                 def invalid_metadata(arguments, **kwargs):
                     result = metadata(arguments, **kwargs)
