@@ -1636,12 +1636,6 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
   final Stopwatch sw = Stopwatch()..start();
   try {
     var didWork = false;
-    final int repairedWords = await repairNovelWordCounts(db, isCancelled: () => cancelled);
-    didWork = repairedWords > 0;
-    if (cancelled) {
-      job.events.send(const MaintenanceEvent(MaintenanceEventKind.done, cancelled: true));
-      return;
-    }
     // 1) post 引用一次性修复（post_ref_repair_v1 闸门；须在种子导入完成后）。
     if (await needsPostRefRepair(db)) {
       final PostRefRepairStats stats = await repairPostReferences(
@@ -1668,6 +1662,12 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
       didWork = didWork || stats.entriesRepaired > 0 ||
           stats.bookmarksRepaired > 0 ||
           stats.favoritesRepaired > 0;
+    }
+    final int repairedWords = await repairNovelWordCounts(db, isCancelled: () => cancelled);
+    didWork = didWork || repairedWords > 0;
+    if (cancelled) {
+      job.events.send(const MaintenanceEvent(MaintenanceEventKind.done, cancelled: true));
+      return;
     }
     // 2) 存量自采/种子重复帖合并（legacy_post_dedup_v2 闸门）。
     if (await needsLegacyPostDedup(db)) {
