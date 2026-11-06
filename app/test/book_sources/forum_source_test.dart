@@ -56,6 +56,48 @@ void main() {
     );
   });
 
+  test(
+    'navigation follows literal redirects and 404 landing pages without credentials',
+    () async {
+      final ForumAdapter adapter = ForumAdapter((options) {
+        expect(options.headers.containsKey('Cookie'), isFalse);
+        if (options.uri.host == 'soushu2025.com') {
+          return ResponseBody.fromString(
+            '<script>window.location.href="http://landing.example/o/";</script>',
+            200,
+          );
+        }
+        if (options.uri.host == 'landing.example') {
+          return ResponseBody.fromString(
+            '<h1>搜书吧</h1><a href="https://ads.example/" class="link">其他服务</a><a href="https://forum.example/" class="link">最新地址</a>',
+            404,
+          );
+        }
+        return ResponseBody.fromString(
+          '<input name="formhash" value="abc"><input name="password">',
+          200,
+        );
+      });
+      final ForumSourceClient client = ForumSourceClient(
+        dio: Dio()..httpClientAdapter = adapter,
+      );
+      expect(await client.resolve(ForumSource.soushu), base);
+      expect(adapter.requests.map((request) => request.uri.host), <String>[
+        'soushu2025.com',
+        'landing.example',
+        'forum.example',
+      ]);
+    },
+  );
+
+  test('download-label attachments take the file name from their own block', () {
+    final List<BookAttachment> files = parseBookAttachments(
+      '<dl><dd><p><span>原文.txt</span></p><p><a href="forum.php?mod=attachment&amp;aid=abc">下载</a></p></dd></dl>',
+      base,
+    );
+    expect(files.single.name, '原文.txt');
+  });
+
   test('Discuz results and attachments are deduplicated and same origin', () {
     const String page =
         '<div class="slst"><h3 class="xs3"><a href="thread-10-1-1.html">红楼梦</a></h3><h3 class="xs3"><a href="https://ads.example/book">广告</a></h3></div>';
@@ -126,35 +168,71 @@ void main() {
     expect(adapter.requests.length, 1);
   });
 
-  test('search keeps the form session cookie and rejects truncated downloads', () async {
-    final ForumAdapter adapter = ForumAdapter((options) {
-      if (options.uri.path == '/attachment.php') {
-        return ResponseBody.fromString('partial', 200, headers: <String, List<String>>{
-          'content-length': <String>['100'],
-        });
-      }
-      if (options.method == 'GET') {
-        return ResponseBody.fromString('<input name="formhash" value="abcd">', 200,
-          headers: <String, List<String>>{'set-cookie': <String>['session=rotated; Path=/; Secure']},
+  test(
+    'search keeps the form session cookie and rejects truncated downloads',
+    () async {
+      final ForumAdapter adapter = ForumAdapter((options) {
+        if (options.uri.path == '/attachment.php') {
+          return ResponseBody.fromString(
+            'partial',
+            200,
+            headers: <String, List<String>>{
+              'content-length': <String>['100'],
+            },
+          );
+        }
+        if (options.method == 'GET') {
+          return ResponseBody.fromString(
+            '<input name="formhash" value="abcd">',
+            200,
+            headers: <String, List<String>>{
+              'set-cookie': <String>['session=rotated; Path=/; Secure'],
+            },
+          );
+        }
+        return ResponseBody.fromString(
+          '<h3 class="xs3"><a href="thread-1.html">书</a></h3>',
+          200,
         );
+      });
+      final ForumSourceClient client = ForumSourceClient(
+        dio: Dio()..httpClientAdapter = adapter,
+      );
+      await client.search(base, '书');
+      expect(
+        adapter.requests.last.headers['Cookie'],
+        contains('session=rotated'),
+      );
+      final Directory temporary = await Directory.systemTemp.createTemp(
+        'booksift-partial-',
+      );
+      try {
+        final BookAttachment attachment = BookAttachment(
+          'book.txt',
+          base.resolve('attachment.php'),
+          base,
+        );
+        await expectLater(
+          client.download(
+            base,
+            attachment,
+            temporary,
+            cancelToken: CancelToken(),
+          ),
+          throwsA(isA<SourceFailure>()),
+        );
+        expect(await temporary.list().isEmpty, isTrue);
+        final CancelToken canceled = CancelToken()..cancel();
+        await expectLater(
+          client.download(base, attachment, temporary, cancelToken: canceled),
+          throwsA(isA<DioException>()),
+        );
+        expect(await temporary.list().isEmpty, isTrue);
+      } finally {
+        await temporary.delete(recursive: true);
       }
-      return ResponseBody.fromString('<h3 class="xs3"><a href="thread-1.html">书</a></h3>', 200);
-    });
-    final ForumSourceClient client = ForumSourceClient(dio: Dio()..httpClientAdapter = adapter);
-    await client.search(base, '书');
-    expect(adapter.requests.last.headers['Cookie'], contains('session=rotated'));
-    final Directory temporary = await Directory.systemTemp.createTemp('booksift-partial-');
-    try {
-      final BookAttachment attachment = BookAttachment('book.txt', base.resolve('attachment.php'), base);
-      await expectLater(client.download(base, attachment, temporary, cancelToken: CancelToken()), throwsA(isA<SourceFailure>()));
-      expect(await temporary.list().isEmpty, isTrue);
-      final CancelToken canceled = CancelToken()..cancel();
-      await expectLater(client.download(base, attachment, temporary, cancelToken: canceled), throwsA(isA<DioException>()));
-      expect(await temporary.list().isEmpty, isTrue);
-    } finally {
-      await temporary.delete(recursive: true);
-    }
-  });
+    },
+  );
 
   test('login pages are reported instead of empty search results', () async {
     final ForumSourceClient client = ForumSourceClient(

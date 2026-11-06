@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,6 +6,7 @@ import 'package:charset/charset.dart';
 import 'package:dio/dio.dart';
 import 'package:html/dom.dart';
 import 'package:html/parser.dart' as html;
+import 'page_redirect.dart';
 
 enum ForumSource {
   shangxiang('尚香书苑', 'https://sxsy.pw/'),
@@ -13,6 +15,15 @@ enum ForumSource {
   const ForumSource(this.label, this.navigationUrl);
   final String label;
   final String navigationUrl;
+
+  List<String> get navigationUrls => this == ForumSource.soushu
+      ? <String>[
+          navigationUrl,
+          'https://soushu2022.com/',
+          'https://soushu2030.com/',
+          'https://soushu2035.com/',
+        ]
+      : <String>[navigationUrl];
 }
 
 class SourceFailure implements Exception {
@@ -56,8 +67,8 @@ Uri? navigationTarget(String source, Uri page, ForumSource site) {
   for (final Element anchor in document.querySelectorAll(selector)) {
     final String label = anchor.text.trim();
     if (site == ForumSource.soushu &&
-        !anchor.classes.contains('link') &&
         !label.contains('搜书吧') &&
+        !label.contains('最新地址') &&
         !label.contains('进入')) {
       continue;
     }
@@ -99,9 +110,22 @@ List<BookAttachment> parseBookAttachments(String source, Uri postUrl) {
     if (target.origin != postUrl.origin || !seen.add(target.toString())) {
       continue;
     }
-    final String name = anchor.text.trim().isEmpty
+    String name = anchor.text.trim().isEmpty
         ? anchor.attributes['title'] ?? ''
         : anchor.text.trim();
+    if (name == '下载' || name == '下载附件') {
+      Element? block = anchor.parent;
+      while (block != null && block.localName != 'dd') {
+        block = block.parent;
+      }
+      final String label = block?.querySelector('p')?.text.trim() ?? '';
+      name =
+          RegExp(
+            r'(.+?\.(?:txt|epub|pdf|mobi|azw3|zip|7z|rar))',
+            caseSensitive: false,
+          ).firstMatch(label)?[1]?.trim() ??
+          name;
+    }
     if (!RegExp(
       r'\.(txt|epub|pdf|mobi|azw3|zip|7z|rar)$',
       caseSensitive: false,
@@ -167,9 +191,11 @@ class ForumSourceClient {
     String? body,
     Uri? referer,
     CancelToken? cancelToken,
+    bool publicNavigation = false,
   }) async {
     for (int hop = 0; hop < 6; hop++) {
-      if (uri.scheme != 'https' ||
+      if ((uri.scheme != 'https' &&
+              !(publicNavigation && uri.scheme == 'http')) ||
           uri.userInfo.isNotEmpty ||
           (credentialOrigin != null && uri.origin != credentialOrigin.origin)) {
         throw const SourceFailure('论坛跳转到了其他地址，请重新确认最新地址和登录状态');
@@ -182,7 +208,9 @@ class ForumSourceClient {
           method: body == null ? 'GET' : 'POST',
           responseType: ResponseType.bytes,
           followRedirects: false,
-          validateStatus: (status) => status != null && status < 400,
+          validateStatus: (status) =>
+              status != null &&
+              (status < 400 || publicNavigation && status == 404),
           headers: <String, String>{
             'User-Agent': 'Mozilla/5.0 BookSift/1.0',
             if (credentialOrigin?.origin == uri.origin &&
@@ -197,12 +225,20 @@ class ForumSourceClient {
       if (credentialOrigin?.origin == uri.origin) {
         _acceptCookies(uri, response.headers);
       }
-      if ((response.statusCode ?? 0) >= 300) {
+      if ((response.statusCode ?? 0) >= 300 &&
+          (response.statusCode ?? 0) < 400) {
         final String? location = response.headers.value('location');
         if (location == null) throw const SourceFailure('论坛返回了无效跳转');
         uri = uri.resolve(location);
         body = null;
         continue;
+      }
+      if (body == null && credentialOrigin != null) {
+        final Uri? signed = signedForumRedirect(_decode(response), uri);
+        if (signed != null) {
+          uri = signed;
+          continue;
+        }
       }
       return response;
     }
@@ -240,17 +276,59 @@ class ForumSourceClient {
   }
 
   Future<Uri> resolve(ForumSource site) async {
-    final Uri navigation = Uri.parse(site.navigationUrl);
-    final Response<List<int>> response = await _request(navigation);
-    final Uri? target = navigationTarget(
-      _decode(response),
-      response.realUri,
-      site,
-    );
-    if (target == null) throw const SourceFailure('导航页未提供可确认的论坛地址，请在设置中填写最新地址');
-    return validateForumBase(
-      target.toString().replaceAll(RegExp(r'[?#]+$'), ''),
-    );
+    for (final String address in site.navigationUrls) {
+      for (final String scheme in <String>[
+        'https',
+        if (site == ForumSource.soushu) 'http',
+      ]) {
+        Uri next = Uri.parse(address).replace(scheme: scheme);
+        final Set<Uri> visited = <Uri>{};
+        final CancelToken cancellation = CancelToken();
+        final Timer deadline = Timer(
+          const Duration(seconds: 18),
+          () => cancellation.cancel(),
+        );
+        try {
+          for (int hop = 0; hop < 5 && visited.add(next); hop++) {
+            final Response<List<int>> response = await _request(
+              next,
+              publicNavigation: true,
+              cancelToken: cancellation,
+            );
+            final String source = _decode(response);
+            final Uri? target = navigationTarget(
+              source,
+              response.realUri,
+              site,
+            );
+            if (target != null) {
+              final Uri base = validateForumBase(
+                target.toString().replaceAll(RegExp(r'[?#]+$'), ''),
+              );
+              final Response<List<int>> check = await _request(
+                base.resolve('search.php?mod=forum'),
+                cancelToken: cancellation,
+              );
+              final String forum = _decode(check);
+              if (forum.contains('formhash') &&
+                  (forum.contains('srchtxt') || forum.contains('password'))) {
+                return base;
+              }
+            }
+            final Uri? redirect = publicPageRedirect(source, response.realUri);
+            if (redirect == null) break;
+            next = redirect;
+          }
+        } on DioException {
+          continue;
+        } on SourceFailure {
+          continue;
+        } finally {
+          deadline.cancel();
+        }
+      }
+    }
+    throw const SourceFailure('导航地址暂不可用，请打开导航页或填写最新地址');
   }
 
   Future<List<ForumBook>> search(
@@ -325,6 +403,12 @@ class ForumSourceClient {
       response.realUri,
     );
     if (files.isEmpty) {
+      if (page.contains('action=attachpay')) {
+        throw const SourceFailure('此帖附件需要站内购买，请先打开原帖确认价格并购买，再返回重试');
+      }
+      if (page.trimLeft().startsWith('<script') && page.contains('getName.caller')) {
+        throw const SourceFailure('网站要求浏览器验证，请打开原帖完成验证后重试');
+      }
       throw const SourceFailure('没有可直接下载的附件；可能需要购买、回复或更高权限，请打开原帖处理');
     }
     return files;
