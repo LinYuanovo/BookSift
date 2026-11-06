@@ -30,13 +30,13 @@
 | --- | --- | --- |
 | Android | [`BookSift-android-v{{version}}.apk`](https://github.com/LinYuanovo/BookSift/releases/download/v{{version}}/BookSift-android-v{{version}}.apk) | 直接安装，无需 Google Play |
 | Windows | [`BookSift-windows-x64-v{{version}}.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v{{version}}/BookSift-windows-x64-v{{version}}.zip) | 解压即用，无需安装 |
-| 完整性 | `同名 .sha256` | 一行 64 位十六进制摘要，用于校验下载文件 |
+| 完整性 | `version.json` | 汇总所有安装包的 SHA-256，用于校验下载文件 |
 
 ::: tip 建议校验一下
 ```powershell
 certutil -hashfile .\BookSift-android-v{{version}}.apk SHA256
 ```
-与 `.sha256` 文件里的值逐字对上再安装。
+与 `version.json` 中的 `app.apk_sha256` 逐字对上再安装；架构 APK 的校验值在 `app.android_apks`，其他平台使用对应的 `*_sha256` 字段。
 :::
 
 ## Android 安装
@@ -45,7 +45,7 @@ certutil -hashfile .\BookSift-android-v{{version}}.apk SHA256
 2. 点开安装，系统提示「安装未知应用」时，允许当前来源（文件管理器 / 浏览器）安装；
 3. 若杀毒或系统扫描提示风险，属于未上架应用常见的误报，可加白名单。
 
-当前版本只提供 Android 与 Windows 桌面版，iOS 尚未发布。
+完整发布流程还提供 Linux、macOS 和未签名 iOS 包；iOS 包需要自行签名后安装。
 
 ## Windows 安装
 

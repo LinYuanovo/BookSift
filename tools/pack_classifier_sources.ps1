@@ -22,7 +22,6 @@ New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 $distPath = (Resolve-Path -LiteralPath $DistDir).Path
 $packName = "classifier-source-v$Version"
 $zipPath = Join-Path $distPath "$packName.zip"
-$hashPath = "$zipPath.sha256"
 $resolvedZipPath = [System.IO.Path]::GetFullPath($zipPath)
 if (-not $resolvedZipPath.StartsWith($distPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
   throw "分类源码包目标越出 dist_release：$resolvedZipPath"
@@ -53,7 +52,18 @@ try {
   if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
   Compress-Archive -Path (Join-Path $packageRoot '*') -DestinationPath $zipPath -CompressionLevel Optimal
   $sha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-  Set-Content -LiteralPath $hashPath -Value $sha -Encoding ascii
+  $manifestPath = Join-Path $distPath 'version.json'
+  $manifest = if (Test-Path -LiteralPath $manifestPath) {
+    Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -AsHashtable
+  } else { @{} }
+  if ($manifest.app.version -ne $Version) { $manifest = @{ app = @{ version = $Version } } }
+  if (-not $manifest.assets) { $manifest.assets = @{} }
+  $manifest.assets["$packName.zip"] = @{
+    url = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/$packName.zip"
+    sha256 = $sha
+    size = (Get-Item -LiteralPath $zipPath).Length
+  }
+  $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding utf8
   Write-Host "  ✓ $([System.IO.Path]::GetFileName($zipPath))  $((Get-Item -LiteralPath $zipPath).Length) B"
   Write-Host "    sha256 $sha"
 } finally {

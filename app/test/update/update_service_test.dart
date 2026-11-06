@@ -80,7 +80,7 @@ void main() {
       ]);
     });
 
-    test('五个平台只匹配固定资产名并读取各自 sha256', () async {
+    test('五个平台从 version.json 读取摘要且不误选架构 APK', () async {
       const Map<String, String> assetUrls = <String, String>{
         'BookSift-android-v1.1.0.apk':
             'https://github.com/o/r/releases/download/v1.1.0/BookSift-android-v1.1.0.apk',
@@ -96,19 +96,44 @@ void main() {
       final Map<String, ScriptedResponse> routes = <String, ScriptedResponse>{
         kTestGithubUrl: ScriptedResponse(
           releaseJsonWithAssets(<String, String>{
+            for (final String abi in <String>[
+              'arm64-v8a',
+              'armeabi-v7a',
+              'x86_64',
+            ])
+              'BookSift-android-$abi-v1.1.0.apk':
+                  'https://github.com/o/r/releases/download/v1.1.0/BookSift-android-$abi-v1.1.0.apk',
+            'version.json':
+                'https://github.com/o/r/releases/download/v1.1.0/version.json',
             ...assetUrls,
-            for (final MapEntry<String, String> entry in assetUrls.entries)
-              '${entry.key}.sha256': '${entry.value}.sha256',
             'unrelated.apk':
                 'https://github.com/o/r/releases/download/v1.1.0/unrelated.apk',
           }),
         ),
       };
-      for (final MapEntry<String, String> entry in assetUrls.entries) {
-        routes['${entry.value}.sha256'] = ScriptedResponse(
-          '$kTestSha256  ${entry.key}\n',
+      const List<String> platforms = <String>[
+        'apk',
+        'ios',
+        'windows',
+        'macos',
+        'linux',
+      ];
+      final Map<String, Object?> manifestApp = <String, Object?>{
+        'version': '1.1.0',
+      };
+      for (int index = 0; index < platforms.length; index++) {
+        manifestApp['${platforms[index]}_url'] = assetUrls.values.elementAt(
+          index,
         );
+        manifestApp['${platforms[index]}_sha256'] = '${index + 1}'
+            .padLeft(64, 'a')
+            .toUpperCase();
       }
+      const String manifestUrl =
+          'https://github.com/o/r/releases/download/v1.1.0/version.json';
+      routes[manifestUrl] = ScriptedResponse(
+        jsonEncode(<String, Object?>{'app': manifestApp}),
+      );
       final ScriptedAdapter adapter = ScriptedAdapter(routes);
 
       final UpdateInfo info = await testGithubSource(
@@ -116,19 +141,84 @@ void main() {
       ).fetch();
 
       expect(info.apkUrl, assetUrls['BookSift-android-v1.1.0.apk']);
-      expect(info.apkSha256, kTestSha256);
+      expect(info.apkSha256, '1'.padLeft(64, 'a'));
       expect(info.iosUrl, assetUrls['BookSift-ios-v1.1.0.ipa']);
-      expect(info.iosSha256, kTestSha256);
+      expect(info.iosSha256, '2'.padLeft(64, 'a'));
       expect(info.windowsUrl, assetUrls['BookSift-windows-x64-v1.1.0.zip']);
-      expect(info.windowsSha256, kTestSha256);
+      expect(info.windowsSha256, '3'.padLeft(64, 'a'));
       expect(info.macosUrl, assetUrls['BookSift-macos-universal-v1.1.0.zip']);
-      expect(info.macosSha256, kTestSha256);
+      expect(info.macosSha256, '4'.padLeft(64, 'a'));
       expect(info.linuxUrl, assetUrls['BookSift-linux-x64-v1.1.0.tar.gz']);
-      expect(info.linuxSha256, kTestSha256);
+      expect(info.linuxSha256, '5'.padLeft(64, 'a'));
       expect(adapter.requestedUrls.toSet(), <String>{
         kTestGithubUrl,
-        for (final String url in assetUrls.values) '$url.sha256',
+        manifestUrl,
       });
+    });
+
+    test('清单错版本、错地址、缺失或损坏摘要均拒绝', () async {
+      const String manifestUrl =
+          'https://github.com/o/r/releases/download/v1.1.0/version.json';
+      for (final Map<String, Object?> invalid in <Map<String, Object?>>[
+        <String, Object?>{'version': '1.0.0'},
+        <String, Object?>{'apk_url': '$kTestApkUrl.other'},
+        <String, Object?>{'apk_sha256': null},
+        <String, Object?>{'apk_sha256': 'bad'},
+      ]) {
+        final ScriptedAdapter adapter = ScriptedAdapter(
+          <String, ScriptedResponse>{
+            kTestGithubUrl: ScriptedResponse(
+              releaseJsonWithAssets(<String, String>{
+                'BookSift-android-v1.1.0.apk': kTestApkUrl,
+                'BookSift-android-v1.1.0.apk.sha256': kTestSha256AssetUrl,
+                'version.json': manifestUrl,
+              }),
+            ),
+            manifestUrl: ScriptedResponse(
+              jsonEncode(<String, Object?>{
+                'app': <String, Object?>{
+                  'version': '1.1.0',
+                  'apk_url': kTestApkUrl,
+                  'apk_sha256': kTestSha256,
+                  ...invalid,
+                },
+              }),
+            ),
+          },
+        );
+        await expectLater(
+          testGithubSource(scriptedDio(adapter)).fetch(),
+          throwsA(
+            isA<UpdateFetchException>().having(
+              (error) => error.kind,
+              'kind',
+              UpdateFetchFailureKind.badPayload,
+            ),
+          ),
+        );
+        expect(adapter.requestedUrls, <String>[kTestGithubUrl, manifestUrl]);
+      }
+    });
+
+    test('清单无法读取时走备源而不是无校验下载', () async {
+      const String manifestUrl =
+          'https://github.com/o/r/releases/download/v1.1.0/version.json';
+      final ScriptedAdapter adapter = ScriptedAdapter(
+        <String, ScriptedResponse>{
+          kTestGithubUrl: ScriptedResponse(
+            releaseJsonWithAssets(<String, String>{
+              'BookSift-android-v1.1.0.apk': kTestApkUrl,
+              'version.json': manifestUrl,
+            }),
+          ),
+          manifestUrl: const ScriptedResponse.networkError(),
+          kTestFallbackUrl: ScriptedResponse(versionJson()),
+        },
+      );
+      final UpdateCheckResult result = await checker(adapter: adapter).check();
+      expect(result.outcome, UpdateOutcome.updateAvailable);
+      expect(result.info!.source, UpdateSourceKind.staticJson);
+      expect(result.info!.apkSha256, kTestSha256);
     });
 
     test('非固定名称资产不作为任何平台的回退链接', () async {
@@ -317,8 +407,7 @@ void main() {
             'https://cdn.example.com/BookSift-windows-x64-v1.2.0.zip',
         'macos_url':
             'https://cdn.example.com/BookSift-macos-universal-v1.2.0.zip',
-        'linux_url':
-            'https://cdn.example.com/BookSift-linux-x64-v1.2.0.tar.gz',
+        'linux_url': 'https://cdn.example.com/BookSift-linux-x64-v1.2.0.tar.gz',
       };
       final Map<String, Object?> json = (jsonDecode(versionJson()) as Map)
           .cast<String, Object?>();

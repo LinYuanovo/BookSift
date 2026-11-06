@@ -18,13 +18,18 @@ import '../../data/repo/queries_providers.dart';
 
 /// 搜索草稿：六维条件 + 是否已提交（提交后才出结果区）。
 class SearchDraft {
-  const SearchDraft({this.filter = const SearchFilter(), this.submitted = false});
+  const SearchDraft({
+    this.filter = const SearchFilter(),
+    this.submitted = false,
+  });
 
   final SearchFilter filter;
   final bool submitted;
 
-  SearchDraft copyWith({SearchFilter? filter, bool? submitted}) =>
-      SearchDraft(filter: filter ?? this.filter, submitted: submitted ?? this.submitted);
+  SearchDraft copyWith({SearchFilter? filter, bool? submitted}) => SearchDraft(
+    filter: filter ?? this.filter,
+    submitted: submitted ?? this.submitted,
+  );
 }
 
 class SearchDraftNotifier extends StateNotifier<SearchDraft> {
@@ -103,7 +108,8 @@ class SearchDraftNotifier extends StateNotifier<SearchDraft> {
   }
 
   /// 点历史行 = 复现全部六维并直接出结果（§5.3）。
-  void applyHistory(SearchHistoryEntry h) => applyFilter(SearchFilter.fromHistory(h));
+  void applyHistory(SearchHistoryEntry h) =>
+      applyFilter(SearchFilter.fromHistory(h));
 
   /// 设置单个维度值（null = 回「全部」）；已提交态即时刷新结果，不重复写历史。
   void setDimension(CategoryDim dim, String? value) {
@@ -132,7 +138,9 @@ class SearchDraftNotifier extends StateNotifier<SearchDraft> {
 
   void toggleSort() {
     final SearchFilter next = state.filter.copyWith(
-      sort: state.filter.sort == SearchSort.timeDesc ? SearchSort.timeAsc : SearchSort.timeDesc,
+      sort: state.filter.sort == SearchSort.timeDesc
+          ? SearchSort.timeAsc
+          : SearchSort.timeDesc,
     );
     state = SearchDraft(filter: next, submitted: state.submitted);
     _persist();
@@ -152,26 +160,35 @@ class SearchDraftNotifier extends StateNotifier<SearchDraft> {
 }
 
 final searchDraftProvider =
-    StateNotifierProvider<SearchDraftNotifier, SearchDraft>((Ref ref) => SearchDraftNotifier(ref));
+    StateNotifierProvider<SearchDraftNotifier, SearchDraft>(
+      (Ref ref) => SearchDraftNotifier(ref),
+    );
 
 /// debounce 后的联想输入（'' = 不联想）。
-final StateProvider<String> suggestInputProvider = StateProvider<String>((Ref ref) => '');
+final StateProvider<String> suggestInputProvider = StateProvider<String>(
+  (Ref ref) => '',
+);
 
 final suggestProvider = FutureProvider.autoDispose.family<List<String>, String>(
   (Ref ref, String prefix) => ref.watch(queriesProvider).suggestBooks(prefix),
 );
 
 /// 结果分页页数（每页 40，继承宝典分页默认值；本地库以更大 limit 重查即翻页）。
-final StateProvider<int> resultPageProvider = StateProvider<int>((Ref ref) => 1);
-
-final searchResultProvider = FutureProvider.autoDispose.family<SearchOutcome, SearchFilter>(
-  (Ref ref, SearchFilter f) => ref.watch(queriesProvider).searchBooks(f),
+final StateProvider<int> resultPageProvider = StateProvider<int>(
+  (Ref ref) => 1,
 );
+
+final searchResultProvider = FutureProvider.autoDispose
+    .family<SearchOutcome, SearchFilter>(
+      (Ref ref, SearchFilter f) => ref.watch(queriesProvider).searchBooks(f),
+    );
 
 /// 搜索页六维联动计数（§5.3）：随当前草稿条件变化，各维度候选值命中数实时联动。
-final searchFilterCountsProvider = FutureProvider.autoDispose.family<CategoryCounts, SearchFilter>(
-  (Ref ref, SearchFilter f) => ref.watch(queriesProvider).searchDimensionCounts(f),
-);
+final searchFilterCountsProvider = FutureProvider.autoDispose
+    .family<CategoryCounts, SearchFilter>(
+      (Ref ref, SearchFilter f) =>
+          ref.watch(queriesProvider).searchDimensionCounts(f),
+    );
 
 // ── 搜索结果浏览位置记忆（C：关 App 重开仍在） ────────────────────────────────
 //
@@ -183,18 +200,21 @@ final searchFilterCountsProvider = FutureProvider.autoDispose.family<CategoryCou
 /// 恢复时由调用方把偏移夹到当前 maxScrollExtent（页数不同也不会跳飞）。
 /// 分隔符用 \u0001 而非 '|'：搜索词本身可以含竖线，不能让条件串味。
 String searchPositionSignature(SearchFilter f) => <String>[
-      f.query,
-      f.year ?? '',
-      f.month ?? '',
-      f.tenDay ?? '',
-      f.channel ?? '',
-      f.category ?? '',
-      f.sort.wire,
-    ].join('\u0001');
+  f.query,
+  f.year ?? '',
+  f.month ?? '',
+  f.tenDay ?? '',
+  f.channel ?? '',
+  f.category ?? '',
+  f.sort.wire,
+].join('\u0001');
 
 /// 浏览位置存储（纯 KV 读写 + LRU 裁剪；与 UI 解耦，plain test() 可直接断言）。
 class SearchPositionStore {
-  const SearchPositionStore(this._kv, {this.key = SettingsKeys.searchPositions});
+  const SearchPositionStore(
+    this._kv, {
+    this.key = SettingsKeys.searchPositions,
+  });
 
   final SearchSettingsKv _kv;
 
@@ -232,7 +252,8 @@ class SearchPositionStore {
       }
       return <String, double>{
         for (final MapEntry<Object?, Object?> e in decoded.entries)
-          if (e.key is String && e.value is num) e.key! as String: (e.value! as num).toDouble(),
+          if (e.key is String && e.value is num)
+            e.key! as String: (e.value! as num).toDouble(),
       };
     } on FormatException {
       // 脏数据（旧版本残留 / 手工改库）不阻断搜索页：一律回落「无记忆」。
@@ -244,20 +265,22 @@ class SearchPositionStore {
 /// 浏览位置存储注入点：queriesProvider 的实现带 settings KV（生产 = Queries）才有；
 /// widget 测试注入的内存仓不带 → null，位置记忆自动停用（也就不可能在
 /// FakeAsync 假时钟区里碰真实库，见 app/test/TESTING.md §1）。
-final Provider<SearchPositionStore?> searchPositionStoreProvider = Provider<SearchPositionStore?>((Ref ref) {
-  // 用 Object 承接：BookRepository 与 SearchSettingsKv 互不为子类型，而 Dart 没有交叉类型，
-  // 声明成 BookRepository 的话下面的 is 判定不会触发类型提升。
-  final Object repo = ref.watch(queriesProvider);
-  return repo is SearchSettingsKv ? SearchPositionStore(repo) : null;
-});
+final Provider<SearchPositionStore?> searchPositionStoreProvider =
+    Provider<SearchPositionStore?>((Ref ref) {
+      // 用 Object 承接：BookRepository 与 SearchSettingsKv 互不为子类型，而 Dart 没有交叉类型，
+      // 声明成 BookRepository 的话下面的 is 判定不会触发类型提升。
+      final Object repo = ref.watch(queriesProvider);
+      return repo is SearchSettingsKv ? SearchPositionStore(repo) : null;
+    });
 
 /// 目录弹层浏览位置存储注入点（与结果列表位置同实现、独立 settings 键）。
-final Provider<SearchPositionStore?> searchTocPositionStoreProvider = Provider<SearchPositionStore?>((Ref ref) {
-  final Object repo = ref.watch(queriesProvider);
-  return repo is SearchSettingsKv
-      ? SearchPositionStore(repo, key: SettingsKeys.searchTocPositions)
-      : null;
-});
+final Provider<SearchPositionStore?> searchTocPositionStoreProvider =
+    Provider<SearchPositionStore?>((Ref ref) {
+      final Object repo = ref.watch(queriesProvider);
+      return repo is SearchSettingsKv
+          ? SearchPositionStore(repo, key: SettingsKeys.searchTocPositions)
+          : null;
+    });
 
 /// 搜索草稿持久化（关 App 重开恢复词 + 六维 + 排序 + 提交态）。
 ///
@@ -280,10 +303,14 @@ class SearchDraftStore {
       }
       final Map<String, String> params = <String, String>{
         for (final MapEntry<Object?, Object?> e in decoded.entries)
-          if (e.key is String && e.value is String) e.key! as String: e.value! as String,
+          if (e.key is String && e.value is String)
+            e.key! as String: e.value! as String,
       };
       final bool submitted = decoded['submitted'] == '1';
-      return SearchDraft(filter: SearchFilter.fromUriParams(params), submitted: submitted);
+      return SearchDraft(
+        filter: SearchFilter.fromUriParams(params),
+        submitted: submitted,
+      );
     } on FormatException {
       return null;
     }
@@ -297,16 +324,21 @@ class SearchDraftStore {
 }
 
 /// 草稿存储注入点（同 [searchPositionStoreProvider]：非 KV 端口 → null = 停用）。
-final Provider<SearchDraftStore?> searchDraftStoreProvider = Provider<SearchDraftStore?>((Ref ref) {
-  final Object repo = ref.watch(queriesProvider);
-  return repo is SearchSettingsKv ? SearchDraftStore(repo) : null;
-});
+final Provider<SearchDraftStore?> searchDraftStoreProvider =
+    Provider<SearchDraftStore?>((Ref ref) {
+      final Object repo = ref.watch(queriesProvider);
+      return repo is SearchSettingsKv ? SearchDraftStore(repo) : null;
+    });
 
 final StreamProvider<List<SearchHistoryEntry>> searchHistoryProvider =
-    StreamProvider<List<SearchHistoryEntry>>((Ref ref) => ref.watch(queriesProvider).watchHistory());
+    StreamProvider<List<SearchHistoryEntry>>(
+      (Ref ref) => ref.watch(queriesProvider).watchHistory(),
+    );
 
 final FutureProvider<List<HotBook>> hotBooksProvider =
-    FutureProvider<List<HotBook>>((Ref ref) => ref.watch(queriesProvider).hotBooks(limit: 12));
+    FutureProvider<List<HotBook>>(
+      (Ref ref) => ref.watch(queriesProvider).hotBooks(limit: 12),
+    );
 
 // ── 贴吧在线搜索（P2-2：c/s/searchpost 匿名 app-form 通道，§8.2/§8.4） ──────
 
@@ -315,30 +347,45 @@ final FutureProvider<List<HotBook>> hotBooksProvider =
 /// （mock dio adapter 脚本化 JSON/错误，零真实网络，TESTING.md §1）。
 final Provider<TiebaSearchClient> tiebaSearchClientProvider =
     Provider<TiebaSearchClient>((Ref ref) {
-  // 与采集同源：带账号身份（BDUSS 作为 searchpost 表单参数参与 APP_SALT 签名）、
-  // 间隔随档放宽（scheduler.intervalMsFor）；凭证失效即自动回落匿名档。
-  final String? bduss =
-      ref.watch(effectiveBdussProvider.select((AsyncValue<String?> s) => s.value));
-  final ({int maxMs, int minMs}) interval = intervalMsFor(bdussImported: bduss != null);
-  final TiebaSearchClient client = TiebaSearchClient(
-    bduss: bduss,
-    minIntervalMs: interval.minMs,
-    maxIntervalMs: interval.maxMs,
-  );
-  ref.onDispose(client.close);
-  return client;
-});
+      // 与采集同源：带账号身份（BDUSS 作为 searchpost 表单参数参与 APP_SALT 签名）、
+      // 间隔随档放宽（scheduler.intervalMsFor）；凭证失效即自动回落匿名档。
+      final String? bduss = ref.watch(
+        effectiveBdussProvider.select((AsyncValue<String?> s) => s.value),
+      );
+      final ({int maxMs, int minMs}) interval = intervalMsFor(
+        bdussImported: bduss != null,
+      );
+      final TiebaSearchClient client = TiebaSearchClient(
+        bduss: bduss,
+        minIntervalMs: interval.minMs,
+        maxIntervalMs: interval.maxMs,
+      );
+      ref.onDispose(client.close);
+      return client;
+    });
 
 /// 搜索来源 Tab：本地库（默认）/ 贴吧在线（§5.3 空态入口 + P2-2 双 Tab）。
-enum SearchTab { local, online }
+enum SearchTab {
+  local('本地库'),
+  online('贴吧在线'),
+  shangxiang('尚香书苑'),
+  soushu('搜书吧');
+
+  const SearchTab(this.label);
+  final String label;
+  bool get isForum => this == shangxiang || this == soushu;
+}
 
 /// autoDispose：离开搜索页即回本地 Tab 默认（在线结果 state 独立保留，切回即见）。
-final searchTabProvider = StateProvider.autoDispose<SearchTab>((Ref ref) => SearchTab.local);
+final searchTabProvider = StateProvider.autoDispose<SearchTab>(
+  (Ref ref) => SearchTab.local,
+);
 
 /// 在线搜索的「吧」切换：默认第一个关注吧，可切到任意 [kDefaultForums] 条目。
 /// 与采集同源（`search_in_forum` 的 `kw` 就是吧名原样，不带「吧」字后缀）。
-final onlineForumProvider =
-    StateProvider.autoDispose<String>((Ref ref) => kDefaultForums.first);
+final onlineForumProvider = StateProvider.autoDispose<String>(
+  (Ref ref) => kDefaultForums.first,
+);
 
 /// 在线搜索阶段。
 enum OnlineStatus { idle, loading, ready, error }
@@ -392,22 +439,22 @@ class OnlineSearchState {
     int? page,
     OnlineErrorKind? errorKind,
     String? errorDetail,
-  }) =>
-      OnlineSearchState(
-        status: status ?? this.status,
-        query: query ?? this.query,
-        forum: forum ?? this.forum,
-        sort: sort ?? this.sort,
-        threads: threads ?? this.threads,
-        hasMore: hasMore ?? this.hasMore,
-        page: page ?? this.page,
-        errorKind: errorKind ?? this.errorKind,
-        errorDetail: errorDetail ?? this.errorDetail,
-      );
+  }) => OnlineSearchState(
+    status: status ?? this.status,
+    query: query ?? this.query,
+    forum: forum ?? this.forum,
+    sort: sort ?? this.sort,
+    threads: threads ?? this.threads,
+    hasMore: hasMore ?? this.hasMore,
+    page: page ?? this.page,
+    errorKind: errorKind ?? this.errorKind,
+    errorDetail: errorDetail ?? this.errorDetail,
+  );
 }
 
 /// CollectRequestException.kind → UI 错误分类（频控口径复用 collector 语义分档）。
-OnlineErrorKind onlineErrorKindOf(CollectRequestException e) => switch (e.kind) {
+OnlineErrorKind onlineErrorKindOf(CollectRequestException e) =>
+    switch (e.kind) {
       CollectFailureKind.rateLimited => OnlineErrorKind.rateLimited,
       CollectFailureKind.serverError => OnlineErrorKind.server,
       CollectFailureKind.network => OnlineErrorKind.network,
@@ -429,7 +476,11 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
     final String targetForum = forum ?? _ref.read(onlineForumProvider);
     final OnlineSort targetSort = sort ?? _ref.read(onlineSortProvider);
     state = OnlineSearchState(
-        status: OnlineStatus.loading, query: q, forum: targetForum, sort: targetSort);
+      status: OnlineStatus.loading,
+      query: q,
+      forum: targetForum,
+      sort: targetSort,
+    );
     await _run(q, targetForum, targetSort, pn: 1, append: false);
   }
 
@@ -439,30 +490,45 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
     if (cur.status == OnlineStatus.loading || !cur.hasMore || cur.page < 1) {
       return;
     }
-    state = cur.copyWith(status: OnlineStatus.loading, errorKind: OnlineErrorKind.none, errorDetail: '');
+    state = cur.copyWith(
+      status: OnlineStatus.loading,
+      errorKind: OnlineErrorKind.none,
+      errorDetail: '',
+    );
     // 翻页沿用本页结果的吧名与排序档；切吧/切档由 UI 重置或重发第一页，不会追错条件。
     await _run(cur.query, cur.forum, cur.sort, pn: cur.page + 1, append: true);
   }
 
   /// 切吧 / 失效重置：清回手动触发入口（不自动发请求，匿名通道单请求口径）。
-  void reset() => state = OnlineSearchState(forum: _ref.read(onlineForumProvider));
+  void reset() =>
+      state = OnlineSearchState(forum: _ref.read(onlineForumProvider));
 
-  Future<void> _run(String q, String forum, OnlineSort sort,
-      {required int pn, required bool append}) async {
+  Future<void> _run(
+    String q,
+    String forum,
+    OnlineSort sort, {
+    required int pn,
+    required bool append,
+  }) async {
     try {
       // only_thread=1：仅主题帖（行 = 帖子粒度）。
       // sm 由排序档映射：相关度=2 / 时间=1（服务端排序，切档必须重发请求）。
-      final OnlineSearchPage page = await _ref.read(tiebaSearchClientProvider).search(
+      final OnlineSearchPage page = await _ref
+          .read(tiebaSearchClientProvider)
+          .search(
             forum,
             q,
             pn: pn,
             rn: 30,
-            sm: sort == OnlineSort.time ? ForumSearchSort.time : ForumSearchSort.relation,
+            sm: sort == OnlineSort.time
+                ? ForumSearchSort.time
+                : ForumSearchSort.relation,
             onlyThread: true,
           );
       if (!mounted) return;
-      final List<OnlineThread> merged =
-          append ? <OnlineThread>[...state.threads, ...page.threads] : page.threads;
+      final List<OnlineThread> merged = append
+          ? <OnlineThread>[...state.threads, ...page.threads]
+          : page.threads;
       state = OnlineSearchState(
         status: OnlineStatus.ready,
         query: q,
@@ -488,12 +554,13 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
         state = state.copyWith(errorKind: kind, errorDetail: detail);
       } else {
         state = OnlineSearchState(
-            status: OnlineStatus.error,
-            query: q,
-            forum: forum,
-            sort: sort,
-            errorKind: kind,
-            errorDetail: detail);
+          status: OnlineStatus.error,
+          query: q,
+          forum: forum,
+          sort: sort,
+          errorKind: kind,
+          errorDetail: detail,
+        );
       }
     }
   }
@@ -505,9 +572,11 @@ class OnlineSearchNotifier extends StateNotifier<OnlineSearchState> {
   }
 }
 
-final StateNotifierProvider<OnlineSearchNotifier, OnlineSearchState> onlineSearchProvider =
+final StateNotifierProvider<OnlineSearchNotifier, OnlineSearchState>
+onlineSearchProvider =
     StateNotifierProvider<OnlineSearchNotifier, OnlineSearchState>(
-        (Ref ref) => OnlineSearchNotifier(ref));
+      (Ref ref) => OnlineSearchNotifier(ref),
+    );
 
 // ── 贴吧在线结果排序（服务端取数，切换必须重发请求） ────────────────────────
 //
@@ -522,10 +591,11 @@ enum OnlineSort { relevance, time }
 
 /// 排序档中文标签（在线排序行 chip 文案）。
 String onlineSortLabel(OnlineSort sort) => switch (sort) {
-      OnlineSort.relevance => '相关度',
-      OnlineSort.time => '时间',
-    };
+  OnlineSort.relevance => '相关度',
+  OnlineSort.time => '时间',
+};
 
 /// 在线结果排序选择（非 autoDispose：本地/在线 Tab 来回切换保持用户选择）。
-final StateProvider<OnlineSort> onlineSortProvider =
-    StateProvider<OnlineSort>((Ref ref) => OnlineSort.relevance);
+final StateProvider<OnlineSort> onlineSortProvider = StateProvider<OnlineSort>(
+  (Ref ref) => OnlineSort.relevance,
+);

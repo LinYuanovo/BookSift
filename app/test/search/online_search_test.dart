@@ -213,9 +213,21 @@ Widget onlineApp(FakeBookRepository repo, ScriptedAdapter adapter, {required Str
 
 /// 切到在线 Tab 并手动触发一次搜索（返回时首个脚本响应已消费）。
 Future<void> gotoOnlineAndSearch(WidgetTester tester) async {
-  await tester.tap(find.text('贴吧在线'));
+  await selectSearchSource(tester, '贴吧在线');
   await tester.pumpAndSettle();
   await tester.tap(find.text('搜索贴吧'));
+  await tester.pumpAndSettle();
+}
+
+Future<void> selectSearchSource(WidgetTester tester, String label) async {
+  final Finder collapsed = find.byKey(const ValueKey<String>('search-sources-collapsed'));
+  if (collapsed.evaluate().isNotEmpty) {
+    await tester.tap(collapsed);
+    await tester.pumpAndSettle();
+  }
+  final Finder target = find.text(label);
+  await tester.ensureVisible(target);
+  await tester.tap(target);
   await tester.pumpAndSettle();
 }
 
@@ -500,13 +512,13 @@ void main() {
 
       // 本地 Tab 默认：结果在场，在线徽标不在场。
       expect(find.text('本地库'), findsOneWidget);
-      expect(find.text('贴吧在线'), findsOneWidget);
+      expect(find.text('贴吧在线'), findsNothing);
       expect(find.text('1 结果'), findsOneWidget);
       expect(find.text('实时联网·匿名'), findsNothing);
       expect(find.text('年·全部'), findsOneWidget, reason: '六维筛选面板属本地库');
       expect(find.byTooltip('确认筛选'), findsOneWidget, reason: '确认钮在场（本地库 Tab 行，设计令牌图标）');
 
-      await tester.tap(find.text('贴吧在线'));
+      await selectSearchSource(tester, '贴吧在线');
       await tester.pumpAndSettle();
       expect(find.text('实时联网·匿名'), findsOneWidget);
       expect(find.text('1 结果'), findsNothing, reason: '本地结果视图退出树');
@@ -514,7 +526,7 @@ void main() {
       expect(find.text('搜索贴吧'), findsOneWidget, reason: 'idle = 手动触发入口');
       expect(adapter.requests, isEmpty, reason: '切 Tab 不发请求（单请求手动触发口径）');
 
-      await tester.tap(find.text('本地库'));
+      await selectSearchSource(tester, '本地库');
       await tester.pumpAndSettle();
       expect(find.text('1 结果'), findsOneWidget);
       expect(adapter.requests, isEmpty);
@@ -702,7 +714,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250)); // 联想 debounce（TESTING.md §3.5）
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pumpAndSettle();
-      await tester.tap(find.text('贴吧在线'));
+      await selectSearchSource(tester, '贴吧在线');
       await tester.pumpAndSettle();
       expect(adapter.requests, isEmpty);
 
@@ -769,7 +781,7 @@ void main() {
         ],
       ));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('贴吧在线'));
+      await selectSearchSource(tester, '贴吧在线');
       await tester.pumpAndSettle();
       await tester.tap(find.text('搜索贴吧'));
       await tester.pumpAndSettle();

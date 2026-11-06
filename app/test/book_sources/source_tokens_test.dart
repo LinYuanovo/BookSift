@@ -5,12 +5,11 @@ import 'dart:ui' as ui;
 import 'package:booksift/book_sources/forum_source.dart';
 import 'package:booksift/book_sources/source_settings.dart';
 import 'package:booksift/core/fonts/font_tokens.dart';
-import 'package:booksift/core/icons.dart';
-import 'package:booksift/core/nav/page_transition.dart';
 import 'package:booksift/core/widgets/app_dialog.dart';
 import 'package:booksift/core/widgets/app_text_field.dart';
 import 'package:booksift/features/home/cards.dart';
 import 'package:booksift/features/search/book_source_page.dart';
+import 'package:booksift/features/search/forum_browser_page.dart';
 import 'package:booksift/theme/app_accent.dart';
 import 'package:booksift/theme/app_colors.dart';
 import 'package:booksift/theme/app_radius.dart';
@@ -22,10 +21,15 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+
+import '../support/fake_book_repository.dart';
+import '../support/harness.dart';
 
 class _SourceClient extends ForumSourceClient {
   Completer<List<ForumBook>>? pending;
   bool fail = false;
+  final List<ForumBrowserRequest> opened = <ForumBrowserRequest>[];
 
   @override
   Future<List<ForumBook>> search(
@@ -88,10 +92,16 @@ Future<void> _mount(
     ProviderScope(
       overrides: <Override>[
         forumClientProvider.overrideWithValue(client),
+        forumBrowserProvider.overrideWithValue((context, request) async {
+          client.opened.add(request);
+          return null;
+        }),
         for (final ForumSource source in ForumSource.values)
           forumSettingsProvider(source).overrideWith(
-            (ref) async =>
-                ForumSourceSettings(base: Uri.parse('https://forum.example/')),
+            (ref) async => ForumSourceSettings(
+              base: Uri.parse('https://forum.example/'),
+              cookie: 'session=valid',
+            ),
           ),
       ],
       child: MaterialApp(
@@ -169,7 +179,7 @@ void main() {
         await tester.tap(find.byType(ListTile).first);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 400));
-        expect(find.byType(SimpleDialogOption), findsOneWidget);
+        expect(client.opened.single.url.path, '/thread-1.html');
         expect(find.byType(Icon), findsNothing);
         expect(tester.takeException(), isNull);
         await _snapshot(
@@ -177,12 +187,10 @@ void main() {
           capture,
           'attachments-${configuration.$1.name}-${configuration.$2}',
         );
-        Navigator.of(tester.element(find.byType(SimpleDialogOption))).pop();
-        await tester.pumpAndSettle();
         await tester.tap(find.byTooltip('书源设置'));
         await tester.pumpAndSettle();
         expect(find.byType(AppDialog), findsOneWidget);
-        expect(find.byType(AppTextField), findsNWidgets(3));
+        expect(find.byType(AppTextField), findsNWidgets(5));
         expect(tester.takeException(), isNull);
         await _snapshot(
           tester,
@@ -262,15 +270,6 @@ void main() {
         0,
         reason: 'reduced motion has no looping indicator',
       );
-      await tester.tap(find.text('搜书吧'), warnIfMissed: false);
-      expect(
-        tester
-            .widget<SegmentedPill<ForumSource>>(
-              find.byType(SegmentedPill<ForumSource>),
-            )
-            .selected,
-        ForumSource.shangxiang,
-      );
       client.pending!.complete(<ForumBook>[]);
       await tester.pumpAndSettle();
       client.fail = true;
@@ -285,35 +284,36 @@ void main() {
     },
   );
 
-  testWidgets('entry uses project motion route and SVG back action', (
-    tester,
-  ) async {
+  testWidgets('book entry opens the unified search source', (tester) async {
     await tester.pumpWidget(
       ProviderScope(
-        child: MaterialApp(
+        overrides: testOverrides(FakeBookRepository()),
+        child: MaterialApp.router(
           theme: BookTheme.light,
-          home: Builder(
-            builder: (context) => TextButton(
-              onPressed: () => openBookSourcePage(context, initialQuery: '三体'),
-              child: const Text('打开'),
-            ),
+          routerConfig: GoRouter(
+            routes: <RouteBase>[
+              GoRoute(
+                path: '/',
+                builder: (context, state) => TextButton(
+                  onPressed: () =>
+                      openBookSourcePage(context, initialQuery: '三体'),
+                  child: const Text('打开'),
+                ),
+              ),
+              GoRoute(
+                path: '/search',
+                builder: (context, state) => Text(
+                  '${state.uri.queryParameters['source']}:${state.uri.queryParameters['q']}',
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
     await tester.tap(find.text('打开'));
     await tester.pumpAndSettle();
-    final ModalRoute<dynamic>? route = ModalRoute.of(
-      tester.element(find.byType(BookSourcePage)),
-    );
-    expect(route?.settings, isA<MotionPage<void>>());
-    expect(
-      find.descendant(of: find.byTooltip('返回'), matching: find.byType(AppIcon)),
-      findsOneWidget,
-    );
+    expect(find.text('shangxiang:三体'), findsOneWidget);
     expect(find.byType(Icon), findsNothing);
-    await tester.tap(find.byTooltip('返回'));
-    await tester.pumpAndSettle();
-    expect(find.byType(BookSourcePage), findsNothing);
   });
 }

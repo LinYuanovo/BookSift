@@ -70,7 +70,7 @@
 | macOS | [`BookSift-macos-universal-v{{version}}.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v{{version}}/BookSift-macos-universal-v{{version}}.zip) | 包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
 | Linux | [`BookSift-linux-x64-v{{version}}.tar.gz`](https://github.com/LinYuanovo/BookSift/releases/download/v{{version}}/BookSift-linux-x64-v{{version}}.tar.gz) | Ubuntu 22.04+，需 GTK3 / libsecret |
 
-发布页不一定同时提供所有平台的包；每个文件旁都有同名 `.sha256`，建议用 `certutil -hashfile <文件> SHA256` 校验。
+发布页不一定同时提供所有平台的包；所有校验值统一放在 `version.json`，建议用 `certutil -hashfile <文件> SHA256` 计算后与清单比对。
 
 应用内更新详见[在线更新契约](website/guide/update.md)。
 

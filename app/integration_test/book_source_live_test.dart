@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:booksift/book_sources/forum_source.dart';
 import 'package:booksift/book_sources/source_settings.dart';
 import 'package:booksift/features/search/book_source_page.dart';
+import 'package:booksift/features/search/forum_browser_page.dart';
 import 'package:booksift/theme/book_theme.dart';
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
@@ -78,6 +79,8 @@ void main() {
           await _wait(tester, result, seconds: 90);
           await tester.ensureVisible(result.first);
           await tester.tap(result.first);
+          await _wait(tester, find.byType(ForumBrowserPage), seconds: 60);
+          await tester.tap(find.text('选择附件'));
           await _wait(tester, find.byType(SimpleDialogOption), seconds: 60);
           await tester.tap(find.byType(SimpleDialogOption).first);
           await _wait(tester, find.text('选择保存位置…'), seconds: 90);

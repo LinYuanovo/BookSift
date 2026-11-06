@@ -88,8 +88,8 @@ void main() {
       // 分段控件优先占宽：默认字阶下「本地库 / 贴吧在线」固有宽 ≈150；
       // 旧布局（与 Spacer 1:1 平分余量）会被压到 ≈121 → 标签出「本…/贴…」。
       expect(
-        tester.getSize(find.byType(SegmentedPill<SearchTab>)).width,
-        greaterThan(140),
+        tester.getSize(find.byKey(const ValueKey<String>('search-sources-collapsed'))).width,
+        greaterThan(80),
         reason: '411dp 档也不出「本…/贴…」截断',
       );
 
@@ -119,7 +119,7 @@ void main() {
       expect(tester.takeException(), isNull, reason: '宽屏零溢出');
 
       // 顺序：本地库/贴吧在线 → 清除 → 确认 → 目录（全部同一排）。
-      final double xTabs = tester.getTopRight(find.text('贴吧在线')).dx;
+      final double xTabs = tester.getTopRight(find.text('本地库')).dx;
       final Finder clear = find.byTooltip('清除筛选');
       final Finder confirm = find.byTooltip('确认筛选');
       final Finder toc = find.byTooltip('目录');

@@ -14,7 +14,6 @@ library;
 import 'package:booksift/core/icons.dart';
 import 'package:booksift/core/widgets/scroll_chrome.dart';
 import 'package:booksift/features/home/cards.dart';
-import 'package:booksift/features/search/search_state.dart';
 import 'package:booksift/theme/app_spacing.dart';
 import 'package:dio/dio.dart' show ResponseBody;
 import 'package:flutter/material.dart';
@@ -113,7 +112,7 @@ void main() {
         tester.widget<AppIcon>(find.descendant(of: tocBtn, matching: find.byType(AppIcon))).assetName,
         'assets/icons/list.svg',
       );
-      final Finder pill = find.byType(SegmentedPill<SearchTab>);
+      final Finder pill = find.byKey(const ValueKey<String>('search-sources-collapsed'));
       expect(tester.getCenter(tocBtn).dy, closeTo(tester.getCenter(pill).dy, 0.5), reason: '与 Tab 同一行');
       expect(tester.getTopLeft(tocBtn).dx, greaterThan(tester.getTopRight(pill).dx), reason: '行最右端');
 

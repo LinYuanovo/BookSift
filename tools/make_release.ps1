@@ -15,7 +15,7 @@
   更新检查契约（只读对齐 app/lib/core/update/update_service.dart，勿改）：
     GitHub tag        = v{version}
     APK 资产名        = BookSift-android-v{version}.apk
-    sha256 资产名     = BookSift-android-v{version}.apk.sha256（App 侧取内容中首个 64 位 hex）
+    校验清单         = version.json（不生成独立 .sha256 文件）
     主源 owner/repo   = LinYuanovo/BookSift
                         （以 app/lib/core/update/update_controller.dart 的 kUpdateGithubOwner/Repo 为准，
                          两处需同步）
@@ -37,7 +37,7 @@
   跳过种子包 zip 的复制与 sha256（只想快速验证 APK 时用）。
 
 .PARAMETER Publish
-  打包完成后执行 gh release create 并上传本版本发布包、校验文件及种子/分类器包。默认关。
+  打包完成后执行 gh release create 并上传本版本发布包、version.json 及种子/分类器包。默认关。
 
 .PARAMETER BuildTimeoutSec
   flutter build 的墙钟上限秒数，默认 1800（首次构建需下载 Gradle 依赖，别调太小）。
@@ -104,8 +104,6 @@ New-Item -ItemType Directory -Force -Path $LogDir  | Out-Null
 
 function Write-Step { param([string]$Msg) Write-Host "`n── $Msg ──" -ForegroundColor Cyan }
 function Get-Sha256 { param([string]$Path) (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLower() }
-# sha256 旁文件：纯 64 位 hex 一行（App 侧用 [0-9a-fA-F]{64} 首个匹配取值）
-function Write-Sha256File { param([string]$Target) Set-Content -LiteralPath "$Target.sha256" -Value (Get-Sha256 $Target) -Encoding ascii }
 
 # ── 1. 版本号 ───────────────────────────────────────────────────────────
 Write-Step '1/6 解析版本号'
@@ -334,7 +332,6 @@ Write-Step '5/6 组装 dist_release/'
 $apkName  = "BookSift-android-v$Version.apk"
 $apkDest  = Join-Path $DistDir $apkName
 Copy-Item -LiteralPath $builtApk -Destination $apkDest -Force
-Write-Sha256File $apkDest
 $apkSha = Get-Sha256 $apkDest
 $apkSize = (Get-Item -LiteralPath $apkDest).Length
 Write-Host "  ✓ $apkName  $([math]::Round($apkSize/1MB,2)) MiB" -ForegroundColor Green
@@ -353,7 +350,6 @@ if ($SkipSeed) {
   $seedName = "seed_pack_lite_v$SeedPackVersion.zip"
   $seedDest = Join-Path $DistDir $seedName
   Copy-Item -LiteralPath $seedSrc -Destination $seedDest -Force
-  Write-Sha256File $seedDest
   $seedSha  = Get-Sha256 $seedDest
   $seedSize = (Get-Item -LiteralPath $seedDest).Length
   Write-Host "  ✓ $seedName  $([math]::Round($seedSize/1MB,2)) MiB (deflate, App 可导入)" -ForegroundColor Green
@@ -401,13 +397,39 @@ $versionJson = [ordered]@{
     lanzou_backup = ''
   }
 }
-$vjPath = Join-Path $DistDir 'version.json'
-$versionJson | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $vjPath -Encoding utf8
-Write-Host "  ✓ version.json（app.version=$Version / version_code=$BuildNumber / apk_sha256 已填真值 / 五个平台 URL 已填写）" -ForegroundColor Green
-
 # 分类规则源码与回归测试单独随包分发，便于审查和独立复跑。
 Write-Step '分类规则源码与回归测试包'
 & (Join-Path $PSScriptRoot 'pack_classifier_sources.ps1') -Version $Version -DistDir $DistDir
+
+$platformPackages = [ordered]@{
+  apk = $apkName
+  ios = "BookSift-ios-v$Version.ipa"
+  windows = "BookSift-windows-x64-v$Version.zip"
+  macos = "BookSift-macos-universal-v$Version.zip"
+  linux = "BookSift-linux-x64-v$Version.tar.gz"
+}
+foreach ($platform in $platformPackages.Keys) {
+  $package = Join-Path $DistDir $platformPackages[$platform]
+  if (Test-Path -LiteralPath $package -PathType Leaf) {
+    $versionJson.app["${platform}_sha256"] = Get-Sha256 $package
+  } else {
+    $versionJson.app["${platform}_url"] = ''
+  }
+}
+$versionJson.assets = [ordered]@{}
+foreach ($name in @($seedName, "classifier-source-v$Version.zip")) {
+  if ([string]::IsNullOrEmpty($name)) { continue }
+  $package = Join-Path $DistDir $name
+  if (-not (Test-Path -LiteralPath $package -PathType Leaf)) { throw "Missing package: $name" }
+  $versionJson.assets[$name] = [ordered]@{
+    url = "https://github.com/LinYuanovo/BookSift/releases/download/v$Version/$name"
+    sha256 = Get-Sha256 $package
+    size = (Get-Item -LiteralPath $package).Length
+  }
+}
+$vjPath = Join-Path $DistDir 'version.json'
+$versionJson | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $vjPath -Encoding utf8
+Write-Host "  ✓ version.json（本版本实际产物的下载地址与 SHA-256 已汇总）" -ForegroundColor Green
 
 # ── 6. 清单 ─────────────────────────────────────────────────────────────
 Write-Step '6/6 dist_release 清单'
@@ -440,7 +462,7 @@ if ($Publish) {
     if (-not (Test-Path -LiteralPath $GhExe)) { Write-Error "gh 不在预期路径: $GhExe"; exit 5 }
     & $GhExe auth status 2>&1 | Out-Null
     if ($LASTEXITCODE -ne 0) { Write-Error 'gh 未登录，先 gh auth login'; exit 5 }
-    # 发布严格使用本版本平台包及其校验文件，不扫入本地演示和旧版本文件。
+    # 发布严格使用本版本平台包及 version.json，不扫入本地演示和旧版本文件。
     . (Join-Path $PSScriptRoot 'release_assets.ps1')
     $assets = @(Get-BookSiftReleaseAssets -DistDir $DistDir -Version $Version -SeedPackVersion $SeedPackVersion)
     if (-not ($assets | Where-Object { [System.IO.Path]::GetFileName($_) -eq "BookSift-android-v$Version.apk" })) {

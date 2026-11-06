@@ -16,6 +16,7 @@ import 'online_search_test.dart'
     show
         ScriptedAdapter,
         gotoOnlineAndSearch,
+        selectSearchSource,
         jsonBody,
         kQuery,
         onlineApp,
@@ -74,7 +75,7 @@ void main() {
       await tester.pumpWidget(onlineApp(repo, adapter, initial: searchRoute(kQuery)));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('贴吧在线'));
+      await selectSearchSource(tester, '贴吧在线');
       await tester.pumpAndSettle();
       expect(find.widgetWithText(CountChip, '时间'), findsNothing, reason: '无已加载结果 → 不出排序行');
 

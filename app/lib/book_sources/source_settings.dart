@@ -7,10 +7,48 @@ import '../data/repo/database_provider.dart';
 import 'forum_source.dart';
 
 class ForumSourceSettings {
-  const ForumSourceSettings({this.base, this.cookie = ''});
+  const ForumSourceSettings({
+    this.base,
+    this.cookie = '',
+    this.username = '',
+    this.password = '',
+  });
   final Uri? base;
   final String cookie;
+  final String username;
+  final String password;
+
+  ForumSourceSettings withCookie(String value) => ForumSourceSettings(
+    base: base,
+    cookie: value,
+    username: username,
+    password: password,
+  );
 }
+
+ForumSourceSettings decodeForumSession(Uri? base, String? raw) {
+  if (base == null || raw == null) return ForumSourceSettings(base: base);
+  try {
+    final data = jsonDecode(raw) as Map<String, dynamic>;
+    if (data['origin'] != base.origin) return ForumSourceSettings(base: base);
+    return ForumSourceSettings(
+      base: base,
+      cookie: data['cookie'] as String? ?? '',
+      username: data['username'] as String? ?? '',
+      password: data['password'] as String? ?? '',
+    );
+  } catch (_) {
+    return ForumSourceSettings(base: base);
+  }
+}
+
+String encodeForumSession(ForumSourceSettings settings) =>
+    jsonEncode(<String, String>{
+      'origin': settings.base!.origin,
+      'cookie': settings.cookie.trim(),
+      'username': settings.username.trim(),
+      'password': settings.password,
+    });
 
 final forumClientProvider = Provider<ForumSourceClient>((ref) {
   final ForumSourceClient client = ForumSourceClient();
@@ -30,26 +68,23 @@ final forumSettingsProvider =
               ))
               .getSingleOrNull();
       final Uri? base = row == null ? null : validateForumBase(row.value);
-      String cookie = '';
       try {
         final String? raw = await ref
             .watch(secretStoreProvider)
             .read('book_source.${source.name}.session');
-        if (raw != null) {
-          final Map<String, dynamic> data =
-              jsonDecode(raw) as Map<String, dynamic>;
-          if (data['origin'] == base?.origin) cookie = data['cookie'] as String;
-        }
+        return decodeForumSession(base, raw);
       } catch (_) {}
-      return ForumSourceSettings(base: base, cookie: cookie);
+      return ForumSourceSettings(base: base);
     });
 
 Future<void> saveForumSettings(
   WidgetRef ref,
   ForumSource source,
   Uri base,
-  String cookie,
-) async {
+  String cookie, {
+  String username = '',
+  String password = '',
+}) async {
   if (cookie.contains('\r') || cookie.contains('\n') || cookie.length > 16384) {
     throw const SourceFailure('Cookie 格式无效');
   }
@@ -57,12 +92,16 @@ Future<void> saveForumSettings(
       .read(secretStoreProvider)
       .write(
         'book_source.${source.name}.session',
-        cookie.trim().isEmpty
+        cookie.trim().isEmpty && username.trim().isEmpty && password.isEmpty
             ? null
-            : jsonEncode(<String, String>{
-                'origin': base.origin,
-                'cookie': cookie.trim(),
-              }),
+            : encodeForumSession(
+                ForumSourceSettings(
+                  base: base,
+                  cookie: cookie,
+                  username: username,
+                  password: password,
+                ),
+              ),
       );
   await ref.read(appDatabaseProvider).customStatement(
     'INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
@@ -70,4 +109,19 @@ Future<void> saveForumSettings(
   );
   ref.invalidate(forumSettingsProvider(source));
   ref.invalidate(forumClientProvider);
+}
+
+Future<void> saveForumSessionCookie(
+  WidgetRef ref,
+  ForumSource source,
+  ForumSourceSettings settings,
+  String cookie,
+) async {
+  await ref
+      .read(secretStoreProvider)
+      .write(
+        'book_source.${source.name}.session',
+        encodeForumSession(settings.withCookie(cookie)),
+      );
+  ref.invalidate(forumSettingsProvider(source));
 }

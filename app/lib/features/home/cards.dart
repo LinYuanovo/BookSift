@@ -19,7 +19,9 @@ import '../../theme/app_typography.dart';
 /// 劈成半个；行内另有 ellipsis 兜底（字阶放大/窄屏时按可用宽再收）。
 String _capRunes(String text, int max) {
   final List<int> runes = text.runes.toList();
-  return runes.length > max ? '${String.fromCharCodes(runes.take(max))}…' : text;
+  return runes.length > max
+      ? '${String.fromCharCodes(runes.take(max))}…'
+      : text;
 }
 
 /// 语义色调（§5.2：推荐绿 / 排雷红 / 求书灰弱标记 / 扫书中性灰 / 中性不标）。
@@ -67,7 +69,11 @@ SemanticTone toneOfEntry(EntryRow e) => switch (e.kindLabel) {
 /// [title] 为空时退化为纯 post_kind 判档（无标题的老数据行为不变）。
 SemanticTone postToneOf({required String? postKind, String? title}) {
   if ((title ?? '').trim().isNotEmpty) {
-    switch (entryKindLabel(category: postKind ?? CategoryKind.scan, flag: 0, title: title)) {
+    switch (entryKindLabel(
+      category: postKind ?? CategoryKind.scan,
+      flag: 0,
+      title: title,
+    )) {
       case kRecommendKind:
         return SemanticTone.recommend;
       case CategoryKind.avoid:
@@ -145,7 +151,14 @@ class SemanticBadge extends StatelessWidget {
             AppIcon(icon, size: 13, color: fg),
             SizedBox(width: AppSpacing.of(context).space1 / 2),
           ],
-          Text(labelOf(tone), style: t.label.copyWith(fontWeight: FontWeight.w600, color: fg, letterSpacing: 0)),
+          Text(
+            labelOf(tone),
+            style: t.label.copyWith(
+              fontWeight: FontWeight.w600,
+              color: fg,
+              letterSpacing: 0,
+            ),
+          ),
         ],
       ),
     );
@@ -158,7 +171,9 @@ class SemanticBadge extends StatelessWidget {
     final AppMotionTheme motion = AppMotionTheme.of(context);
     final Duration delay = motion.staggerDelay;
     final Duration total = motion.pop.duration + delay;
-    final double begin = total == Duration.zero ? 0 : delay.inMicroseconds / total.inMicroseconds;
+    final double begin = total == Duration.zero
+        ? 0
+        : delay.inMicroseconds / total.inMicroseconds;
     return TweenAnimationBuilder<double>(
       tween: Tween<double>(begin: 0, end: 1),
       duration: total,
@@ -208,7 +223,11 @@ class OriginBadge extends StatelessWidget {
           labelOf(origin),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: t.label.copyWith(fontWeight: FontWeight.w600, color: fg, letterSpacing: 0),
+          style: t.label.copyWith(
+            fontWeight: FontWeight.w600,
+            color: fg,
+            letterSpacing: 0,
+          ),
         ),
       ),
     );
@@ -232,13 +251,21 @@ class MetaChip extends StatelessWidget {
       child: Container(
         height: AppMetrics.badgeHeight,
         padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(color: c.surfaceSunken, borderRadius: AppRadius.pillBorder),
+        decoration: BoxDecoration(
+          color: c.surfaceSunken,
+          borderRadius: AppRadius.pillBorder,
+        ),
         // Dynamic Type：外层为 Flexible 时可收缩省略（1.0 缩放下取固有宽，视觉不变）。
         // 居中用 Center(factor 1) 而非 Container.alignment —— 后者在有界约束下膨胀到整宽。
         child: Center(
           widthFactor: 1,
           heightFactor: 1,
-          child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.caption.copyWith(color: c.textSecondary)),
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: t.caption.copyWith(color: c.textSecondary),
+          ),
         ),
       ),
     );
@@ -247,7 +274,13 @@ class MetaChip extends StatelessWidget {
 
 /// 书名 chip（h32 pill · 衬线 bookname · 8% 染底；点击=以书名发起搜索，长按=复制）。
 class BookNameChip extends StatelessWidget {
-  const BookNameChip({super.key, required this.name, this.onTap, this.onLongPress, this.big = false});
+  const BookNameChip({
+    super.key,
+    required this.name,
+    this.onTap,
+    this.onLongPress,
+    this.big = false,
+  });
 
   /// 书名（不含《》；渲染时补全）。
   final String name;
@@ -255,7 +288,8 @@ class BookNameChip extends StatelessWidget {
   final VoidCallback? onLongPress;
   final bool big;
 
-  static String stripBrackets(String name) => name.replaceAll('《', '').replaceAll('》', '').trim();
+  static String stripBrackets(String name) =>
+      name.replaceAll('《', '').replaceAll('》', '').trim();
 
   @override
   Widget build(BuildContext context) {
@@ -290,7 +324,13 @@ class BookNameChip extends StatelessWidget {
 
 /// 左 3px 语义色条内容卡（r20 · 1px border · raised · padding 20，无阴影）。
 class AccentCard extends StatelessWidget {
-  const AccentCard({super.key, required this.tone, required this.child, this.onTap, this.onLongPress});
+  const AccentCard({
+    super.key,
+    required this.tone,
+    required this.child,
+    this.onTap,
+    this.onLongPress,
+  });
 
   final SemanticTone tone;
   final Widget child;
@@ -311,7 +351,12 @@ class AccentCard extends StatelessWidget {
               Container(width: 3, color: barColorOf(context, tone)),
               Expanded(
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(s.space4, s.cardPadding, s.cardPadding, s.cardPadding),
+                  padding: EdgeInsets.fromLTRB(
+                    s.space4,
+                    s.cardPadding,
+                    s.cardPadding,
+                    s.cardPadding,
+                  ),
                   child: child,
                 ),
               ),
@@ -346,10 +391,15 @@ class PostCard extends StatelessWidget {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
     final post = data.post;
-    final SemanticTone tone = postToneOf(postKind: post.postKind, title: post.title);
+    final SemanticTone tone = postToneOf(
+      postKind: post.postKind,
+      title: post.title,
+    );
     final String title = (post.title?.isNotEmpty ?? false)
         ? post.title!
-        : (data.books.isNotEmpty ? '《${BookNameChip.stripBrackets(data.books.first.name)}》' : '无题');
+        : (data.books.isNotEmpty
+              ? '《${BookNameChip.stripBrackets(data.books.first.name)}》'
+              : '无题');
     return AccentCard(
       tone: tone,
       onTap: onTap,
@@ -363,7 +413,12 @@ class PostCard extends StatelessWidget {
               SemanticBadge(tone: tone),
               SizedBox(width: s.space2),
               Expanded(
-                child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.cardTitle.copyWith(color: c.text)),
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.cardTitle.copyWith(color: c.text),
+                ),
               ),
             ],
           ),
@@ -382,8 +437,13 @@ class PostCard extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: <Widget>[
                 for (final BookChip chip in data.books)
-                  BookNameChip(name: chip.name, onTap: () => onBookTap(BookNameChip.stripBrackets(chip.name))),
-                if (data.entryCount > data.books.length) MetaChip(label: '+${data.entryCount - data.books.length}'),
+                  BookNameChip(
+                    name: chip.name,
+                    onTap: () =>
+                        onBookTap(BookNameChip.stripBrackets(chip.name)),
+                  ),
+                if (data.entryCount > data.books.length)
+                  MetaChip(label: '+${data.entryCount - data.books.length}'),
               ],
             ),
           ],
@@ -396,12 +456,22 @@ class PostCard extends StatelessWidget {
               if ((post.author ?? '').isNotEmpty) ...<Widget>[
                 Expanded(
                   flex: 2,
-                  child: Text(post.author!, maxLines: 1, overflow: TextOverflow.ellipsis, style: t.caption.copyWith(color: c.textMuted)),
+                  child: Text(
+                    post.author!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.caption.copyWith(color: c.textMuted),
+                  ),
                 ),
                 SizedBox(width: s.space2),
               ],
               // chips 取固有宽（不套 Flexible，否则弹性槽均分余量会把标签撑宽/挤爆推荐人）。
-              MetaChip(label: post.channel, onTap: onChannelTap == null ? null : () => onChannelTap!(post.channel)),
+              MetaChip(
+                label: post.channel,
+                onTap: onChannelTap == null
+                    ? null
+                    : () => onChannelTap!(post.channel),
+              ),
               SizedBox(width: s.space2),
               OriginBadge(origin: post.origin),
               // 日期槽 = Expanded(flex 5) 紧约束 + textAlign.end：一是贴死行右缘（原 loose 槽比文本宽时
@@ -417,7 +487,9 @@ class PostCard extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.end,
-                  style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted)),
+                  style: AppTypography.tabular(
+                    t.caption.copyWith(color: c.textMuted),
+                  ),
                 ),
               ),
             ],
@@ -485,8 +557,10 @@ class _BookEntryCardState extends State<BookEntryCard> {
     // 折叠态摘录按**字符**截（不是按行数）：行数截断的实际长度随字阶/屏宽漂移，
     // 而这里要的是稳定的「开头 N 字」；按 runes 切才不会把代理对（emoji）劈成半个。
     final List<int> runes = comment.runes.toList();
-    final bool collapsible = widget.expandableComment && runes.length > widget.commentMaxCollapsed;
-    final bool clip = !widget.expandableComment && runes.length > widget.commentMaxCollapsed;
+    final bool collapsible =
+        widget.expandableComment && runes.length > widget.commentMaxCollapsed;
+    final bool clip =
+        !widget.expandableComment && runes.length > widget.commentMaxCollapsed;
     final String shown = (collapsible && !_expanded) || clip
         ? '${String.fromCharCodes(runes.take(widget.commentMaxCollapsed))}…'
         : comment;
@@ -510,7 +584,10 @@ class _BookEntryCardState extends State<BookEntryCard> {
                 padding: EdgeInsets.only(top: s.space1),
                 child: Text(
                   _expanded ? '收起' : '展开全文',
-                  style: t.caption.copyWith(color: c.accentStrong, fontWeight: FontWeight.w600),
+                  style: t.caption.copyWith(
+                    color: c.accentStrong,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
@@ -537,7 +614,11 @@ class _BookEntryCardState extends State<BookEntryCard> {
                 child: widget.hideBookName
                     ? const SizedBox.shrink()
                     : GestureDetector(
-                        onTap: widget.onBookTap == null ? null : () => widget.onBookTap!(BookNameChip.stripBrackets(e.name)),
+                        onTap: widget.onBookTap == null
+                            ? null
+                            : () => widget.onBookTap!(
+                                BookNameChip.stripBrackets(e.name),
+                              ),
                         child: Text(
                           '《${BookNameChip.stripBrackets(e.name)}》',
                           maxLines: 1,
@@ -553,33 +634,47 @@ class _BookEntryCardState extends State<BookEntryCard> {
                   e.date!,
                   maxLines: 1,
                   textAlign: TextAlign.end,
-                  style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted)),
+                  style: AppTypography.tabular(
+                    t.caption.copyWith(color: c.textMuted),
+                  ),
                 ),
             ],
           ),
           if ((e.author ?? '').isNotEmpty) ...<Widget>[
             SizedBox(height: s.space1),
-            Text(e.author!, style: t.secondary.copyWith(color: c.textSecondary)),
+            Text(
+              e.author!,
+              style: t.secondary.copyWith(color: c.textSecondary),
+            ),
           ],
-          if (commentBlock != null) ...<Widget>[SizedBox(height: s.space2), commentBlock],
+          if (commentBlock != null) ...<Widget>[
+            SizedBox(height: s.space2),
+            commentBlock,
+          ],
           SizedBox(height: s.space3),
           Row(
             children: <Widget>[
               // chips 取固有宽（不套 Flexible，避免弹性槽均分余量撑宽标签/挤爆推荐人）；
               // Dynamic Type 收缩由推荐人/原帖文本槽承担（可省略）。
-              if (widget.showRecommender && (e.recommender ?? '').isNotEmpty) ...<Widget>[
+              if (widget.showRecommender &&
+                  (e.recommender ?? '').isNotEmpty) ...<Widget>[
                 // 推荐人（扫书作者名）是这行的主角：弹性份额 20 压过右侧 Spacer 的 8
                 // → 保证 6 个中文字符完整显示（用户口径「最多六个中文字符」），
                 // 超出 6 字才截断（见 _capRunes），不再动辄截成「扫书人…」。
                 Flexible(
                   flex: 20,
                   child: GestureDetector(
-                    onTap: widget.onRecommenderTap == null ? null : () => widget.onRecommenderTap!(e.recommender!),
+                    onTap: widget.onRecommenderTap == null
+                        ? null
+                        : () => widget.onRecommenderTap!(e.recommender!),
                     child: Text(
                       _capRunes(e.recommender!, 6),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: t.caption.copyWith(color: c.accentStrong, fontWeight: FontWeight.w600),
+                      style: t.caption.copyWith(
+                        color: c.accentStrong,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
@@ -594,7 +689,11 @@ class _BookEntryCardState extends State<BookEntryCard> {
                 // 弹性槽与 Spacer 均分余量时槽宽可能小于文案宽而截断，推荐人槽承担收缩）。
                 GestureDetector(
                   onTap: widget.onSourceTap,
-                  child: Text('查看', maxLines: 1, style: t.caption.copyWith(color: c.info)),
+                  child: Text(
+                    '查看',
+                    maxLines: 1,
+                    style: t.caption.copyWith(color: c.info),
+                  ),
                 ),
             ],
           ),
@@ -640,7 +739,9 @@ class CountTrio extends StatelessWidget {
           highlightColor: c.surfaceSunken,
           splashColor: c.surfaceSunken,
           child: Container(
-            constraints: const BoxConstraints(minHeight: AppMetrics.minTouchTarget),
+            constraints: const BoxConstraints(
+              minHeight: AppMetrics.minTouchTarget,
+            ),
             padding: EdgeInsets.symmetric(horizontal: s.space4),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -648,7 +749,12 @@ class CountTrio extends StatelessWidget {
                 Text(
                   '$n',
                   style: AppTypography.tabular(
-                    t.headline.copyWith(fontSize: 17, fontWeight: FontWeight.w700, height: 1, color: fg),
+                    t.headline.copyWith(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                      color: fg,
+                    ),
                   ),
                 ),
                 SizedBox(width: s.space1),
@@ -660,11 +766,15 @@ class CountTrio extends StatelessWidget {
       );
     }
 
-    Widget chip(String label, int n, Color fg, VoidCallback? onTap) => Container(
+    Widget chip(String label, int n, Color fg, VoidCallback? onTap) =>
+        Container(
           decoration: BoxDecoration(
             color: c.surfaceRaised,
             borderRadius: AppRadius.pillBorder,
-            border: Border.all(color: c.borderStrong, width: AppMetrics.hairline),
+            border: Border.all(
+              color: c.borderStrong,
+              width: AppMetrics.hairline,
+            ),
           ),
           child: half(label, n, fg, onTap),
         );
@@ -683,7 +793,13 @@ class CountTrio extends StatelessWidget {
 
 /// 计数对比胶囊「推荐 n ｜ 排雷 m」（count-duo，点击=语义筛选，§5.5/设计系统 §3 #03）。
 class CountDuo extends StatelessWidget {
-  const CountDuo({super.key, required this.recommend, required this.avoid, this.onRecommendTap, this.onAvoidTap});
+  const CountDuo({
+    super.key,
+    required this.recommend,
+    required this.avoid,
+    this.onRecommendTap,
+    this.onAvoidTap,
+  });
 
   final int recommend;
   final int avoid;
@@ -708,8 +824,12 @@ class CountDuo extends StatelessWidget {
           highlightColor: c.surfaceSunken,
           splashColor: c.surfaceSunken,
           child: Container(
-            constraints: const BoxConstraints(minHeight: AppMetrics.minTouchTarget), // CSS 548：min-height 44
-            padding: EdgeInsets.symmetric(horizontal: s.space5), // CSS 548：padding 0 var(--space-5)
+            constraints: const BoxConstraints(
+              minHeight: AppMetrics.minTouchTarget,
+            ), // CSS 548：min-height 44
+            padding: EdgeInsets.symmetric(
+              horizontal: s.space5,
+            ), // CSS 548：padding 0 var(--space-5)
             // 垂直居中由 Row 在 minHeight 约束内默认 crossAxisAlignment.center 承担；
             // 不得用 Container.alignment —— 其会把半边膨胀到整行宽（实测把胶囊撑满屏宽）。
             child: Row(
@@ -719,10 +839,17 @@ class CountDuo extends StatelessWidget {
                 Text(
                   '$n',
                   style: AppTypography.tabular(
-                    t.headline.copyWith(fontSize: 17, fontWeight: FontWeight.w700, height: 1, color: fg),
+                    t.headline.copyWith(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      height: 1,
+                      color: fg,
+                    ),
                   ),
                 ),
-                const SizedBox(width: 6), // CSS 548：gap 6px（组件级几何，无对应 spacing token）
+                const SizedBox(
+                  width: 6,
+                ), // CSS 548：gap 6px（组件级几何，无对应 spacing token）
                 Text(label, style: t.bodyStrong.copyWith(color: c.text)),
               ],
             ),
@@ -736,13 +863,20 @@ class CountDuo extends StatelessWidget {
       decoration: BoxDecoration(
         color: c.surfaceRaised,
         borderRadius: AppRadius.pillBorder,
-        border: Border.all(color: c.borderStrong, width: AppMetrics.hairline), // CSS 545：border-strong
+        border: Border.all(
+          color: c.borderStrong,
+          width: AppMetrics.hairline,
+        ), // CSS 545：border-strong
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           half('推荐', recommend, c.recommend, onRecommendTap),
-          Container(width: AppMetrics.hairline, height: 26, color: c.borderStrong), // CSS 552：sep 1×26 border-strong
+          Container(
+            width: AppMetrics.hairline,
+            height: 26,
+            color: c.borderStrong,
+          ), // CSS 552：sep 1×26 border-strong
           half('排雷', avoid, c.danger, onAvoidTap),
         ],
       ),
@@ -752,11 +886,18 @@ class CountDuo extends StatelessWidget {
 
 /// 分段控件（sunken 容器 pill + 选中 raised；热门榜 4 档时段 / 书聚合语义筛选，§4）。
 class SegmentedPill<T> extends StatelessWidget {
-  const SegmentedPill({super.key, required this.options, required this.selected, required this.onChanged});
+  const SegmentedPill({
+    super.key,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+    this.compact = false,
+  });
 
   final List<(T, String)> options;
   final T selected;
   final ValueChanged<T> onChanged;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -782,9 +923,14 @@ class SegmentedPill<T> extends StatelessWidget {
                 child: AnimatedContainer(
                   duration: motion.switch_.duration,
                   curve: motion.switch_.curve,
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: compact ? AppSpacing.of(context).space2 : 14,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
-                    color: value == selected ? c.surfaceRaised : c.surfaceSunken.withValues(alpha: 0),
+                    color: value == selected
+                        ? c.surfaceRaised
+                        : c.surfaceSunken.withValues(alpha: 0),
                     borderRadius: AppRadius.pillBorder,
                   ),
                   child: Text(
@@ -793,7 +939,9 @@ class SegmentedPill<T> extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: t.caption.copyWith(
                       color: value == selected ? c.text : c.textMuted,
-                      fontWeight: value == selected ? FontWeight.w600 : FontWeight.w400,
+                      fontWeight: value == selected
+                          ? FontWeight.w600
+                          : FontWeight.w400,
                     ),
                   ),
                 ),
@@ -852,7 +1000,9 @@ class CountChip extends StatelessWidget {
     final Color bg = selected
         ? (dangerTint ? c.dangerSoft : c.accentSoft)
         : c.surfaceSunken;
-    final Color fg = selected ? (dangerTint ? c.danger : c.accentStrong) : c.textSecondary;
+    final Color fg = selected
+        ? (dangerTint ? c.danger : c.accentStrong)
+        : c.textSecondary;
     return InkWell(
       onTap: onTap,
       borderRadius: AppRadius.pillBorder,
@@ -863,7 +1013,9 @@ class CountChip extends StatelessWidget {
           color: bg,
           borderRadius: AppRadius.pillBorder,
           border: Border.all(
-            color: selected ? (dangerTint ? c.danger : c.accent) : c.surfaceSunken.withValues(alpha: 0),
+            color: selected
+                ? (dangerTint ? c.danger : c.accent)
+                : c.surfaceSunken.withValues(alpha: 0),
             width: AppMetrics.hairline,
           ),
         ),
@@ -877,7 +1029,10 @@ class CountChip extends StatelessWidget {
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: t.secondary.copyWith(color: fg, fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
+                style: t.secondary.copyWith(
+                  color: fg,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                ),
               ),
             ),
             if (count != null) ...<Widget>[
@@ -885,7 +1040,10 @@ class CountChip extends StatelessWidget {
               Text(
                 formatCount(count!),
                 style: AppTypography.tabular(
-                  t.label.copyWith(color: selected ? fg : c.textMuted, letterSpacing: 0),
+                  t.label.copyWith(
+                    color: selected ? fg : c.textMuted,
+                    letterSpacing: 0,
+                  ),
                 ),
               ),
             ],
@@ -903,7 +1061,12 @@ class CountChip extends StatelessWidget {
 
 /// `[高亮]` 标记摘要渲染（FTS snippet / LIKE 兜底同约定；琥珀荧光笔心智，§5.4）。
 class HighlightText extends StatelessWidget {
-  const HighlightText({super.key, required this.text, required this.style, this.maxLines});
+  const HighlightText({
+    super.key,
+    required this.text,
+    required this.style,
+    this.maxLines,
+  });
 
   final String text;
   final TextStyle style;
@@ -921,7 +1084,12 @@ class HighlightText extends StatelessWidget {
       if (m.start > cursor) {
         spans.add(TextSpan(text: text.substring(cursor, m.start)));
       }
-      spans.add(TextSpan(text: m.group(1), style: style.copyWith(background: bg)));
+      spans.add(
+        TextSpan(
+          text: m.group(1),
+          style: style.copyWith(background: bg),
+        ),
+      );
       cursor = m.end;
     }
     if (cursor < text.length) {
@@ -953,8 +1121,13 @@ class SectionTitle extends StatelessWidget {
         children: <Widget>[
           Text(label, style: t.label.copyWith(color: c.textMuted)),
           SizedBox(width: s.space3),
-          Expanded(child: Container(height: AppMetrics.hairline, color: c.border)),
-          if (trailing != null) ...<Widget>[SizedBox(width: s.space3), trailing!],
+          Expanded(
+            child: Container(height: AppMetrics.hairline, color: c.border),
+          ),
+          if (trailing != null) ...<Widget>[
+            SizedBox(width: s.space3),
+            trailing!,
+          ],
         ],
       ),
     );
@@ -965,7 +1138,13 @@ class SectionTitle extends StatelessWidget {
 enum AppButtonKind { primary, accent, outline }
 
 class AppButton extends StatelessWidget {
-  const AppButton({super.key, required this.label, this.onPressed, this.kind = AppButtonKind.primary, this.svgIcon});
+  const AppButton({
+    super.key,
+    required this.label,
+    this.onPressed,
+    this.kind = AppButtonKind.primary,
+    this.svgIcon,
+  });
 
   final String label;
   final VoidCallback? onPressed;
@@ -981,7 +1160,11 @@ class AppButton extends StatelessWidget {
     final (Color bg, Color fg, BoxBorder? border) = switch (kind) {
       AppButtonKind.primary => (c.ink, c.onInk, null),
       AppButtonKind.accent => (c.accent, c.onAccent, null),
-      AppButtonKind.outline => (c.surfaceRaised, c.text, Border.all(color: c.borderStrong, width: AppMetrics.hairline)),
+      AppButtonKind.outline => (
+        c.surfaceRaised,
+        c.text,
+        Border.all(color: c.borderStrong, width: AppMetrics.hairline),
+      ),
     };
     final bool enabled = onPressed != null;
     return Opacity(
@@ -994,14 +1177,22 @@ class AppButton extends StatelessWidget {
           borderRadius: AppRadius.mdBorder,
           child: Container(
             height: AppMetrics.buttonHeight,
-            padding: EdgeInsets.symmetric(horizontal: AppSpacing.of(context).buttonPaddingH),
-            decoration: BoxDecoration(borderRadius: AppRadius.mdBorder, border: border),
+            padding: EdgeInsets.symmetric(
+              horizontal: AppSpacing.of(context).buttonPaddingH,
+            ),
+            decoration: BoxDecoration(
+              borderRadius: AppRadius.mdBorder,
+              border: border,
+            ),
             // 垂直居中由 Row 在固定高度内默认 crossAxisAlignment.center 承担；
             // 不得用 Container.alignment —— 其会把按钮膨胀到整宽（设计按钮裹内容）。
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
-                if (svgIcon != null) ...<Widget>[AppIcon(svgIcon!, size: 16, color: fg), const SizedBox(width: 6)],
+                if (svgIcon != null) ...<Widget>[
+                  AppIcon(svgIcon!, size: 16, color: fg),
+                  const SizedBox(width: 6),
+                ],
                 Text(label, style: t.bodyStrong.copyWith(color: fg)),
               ],
             ),
@@ -1014,7 +1205,11 @@ class AppButton extends StatelessWidget {
 
 /// 骨架块（sunken r10；扫光动画省略——静态块防测试 pumpAndSettle 悬挂，§6.4 降级实现）。
 class SkeletonBlock extends StatelessWidget {
-  const SkeletonBlock({super.key, this.height = 16, this.width = double.infinity});
+  const SkeletonBlock({
+    super.key,
+    this.height = 16,
+    this.width = double.infinity,
+  });
 
   final double height;
   final double width;
@@ -1024,7 +1219,10 @@ class SkeletonBlock extends StatelessWidget {
     return Container(
       height: height,
       width: width,
-      decoration: BoxDecoration(color: AppColors.of(context).surfaceSunken, borderRadius: AppRadius.smBorder),
+      decoration: BoxDecoration(
+        color: AppColors.of(context).surfaceSunken,
+        borderRadius: AppRadius.smBorder,
+      ),
     );
   }
 }
@@ -1055,16 +1253,31 @@ class AppEmptyState extends StatelessWidget {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
     return Padding(
-      padding: EdgeInsets.symmetric(vertical: s.emptyStatePaddingV, horizontal: s.emptyStatePaddingH),
+      padding: EdgeInsets.symmetric(
+        vertical: s.emptyStatePaddingV,
+        horizontal: s.emptyStatePaddingH,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          AppIcon(svgIcon, size: AppMetrics.emptyStateIconSize, color: c.accent),
+          AppIcon(
+            svgIcon,
+            size: AppMetrics.emptyStateIconSize,
+            color: c.accent,
+          ),
           SizedBox(height: s.space4),
-          Text(title, textAlign: TextAlign.center, style: t.headline.copyWith(color: c.text)),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: t.headline.copyWith(color: c.text),
+          ),
           if (message != null) ...<Widget>[
             SizedBox(height: s.space2),
-            Text(message!, textAlign: TextAlign.center, style: t.secondary.copyWith(color: c.textMuted)),
+            Text(
+              message!,
+              textAlign: TextAlign.center,
+              style: t.secondary.copyWith(color: c.textMuted),
+            ),
           ],
           if (action != null) ...<Widget>[SizedBox(height: s.space5), action!],
         ],
@@ -1078,7 +1291,14 @@ class AppEmptyState extends StatelessWidget {
 /// 内容替换（如热门榜切时段）以 [switchKey] 换键重放；reduceMotion 退化纯 opacity。
 /// [wrap]=true 时以 Wrap 排布（手风琴值 chips，MI-8 组内 stagger）。
 class StaggerPanel extends StatefulWidget {
-  const StaggerPanel({super.key, required this.children, this.switchKey, this.spacing = 0, this.wrap = false, this.runSpacing = 0});
+  const StaggerPanel({
+    super.key,
+    required this.children,
+    this.switchKey,
+    this.spacing = 0,
+    this.wrap = false,
+    this.runSpacing = 0,
+  });
 
   final List<Widget> children;
   final Key? switchKey;
@@ -1090,7 +1310,8 @@ class StaggerPanel extends StatefulWidget {
   State<StaggerPanel> createState() => StaggerPanelState();
 }
 
-class StaggerPanelState extends State<StaggerPanel> with SingleTickerProviderStateMixin {
+class StaggerPanelState extends State<StaggerPanel>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(vsync: this);
   bool _started = false;
   bool _reduceMotion = false;
@@ -1102,7 +1323,10 @@ class StaggerPanelState extends State<StaggerPanel> with SingleTickerProviderSta
     // AnimationController.forward() 在 duration 为 null 时直接断言抛错。
     final AppMotionTheme motion = AppMotionTheme.of(context);
     _controller.duration = motion.enter.duration + motion.staggerAt(7);
-    if (_started && motion.reduceMotion && !_reduceMotion && _controller.isAnimating) {
+    if (_started &&
+        motion.reduceMotion &&
+        !_reduceMotion &&
+        _controller.isAnimating) {
       _controller.value = 1;
     }
     _reduceMotion = motion.reduceMotion;
@@ -1141,22 +1365,28 @@ class StaggerPanelState extends State<StaggerPanel> with SingleTickerProviderSta
         items.add(widget.children[i]);
         continue;
       }
-      final double begin = motion.staggerAt(i).inMicroseconds / total.inMicroseconds;
+      final double begin =
+          motion.staggerAt(i).inMicroseconds / total.inMicroseconds;
       final Animation<double> anim = CurvedAnimation(
         parent: _controller,
         curve: Interval(begin, 1, curve: motion.enter.curve),
       );
-      items.add(AnimatedBuilder(
-        animation: anim,
-        builder: (BuildContext context, Widget? child) {
-          final double v = anim.value;
-          return Opacity(
-            opacity: v,
-            child: Transform.translate(offset: Offset(0, amplitude * (1 - v)), child: child),
-          );
-        },
-        child: widget.children[i],
-      ));
+      items.add(
+        AnimatedBuilder(
+          animation: anim,
+          builder: (BuildContext context, Widget? child) {
+            final double v = anim.value;
+            return Opacity(
+              opacity: v,
+              child: Transform.translate(
+                offset: Offset(0, amplitude * (1 - v)),
+                child: child,
+              ),
+            );
+          },
+          child: widget.children[i],
+        ),
+      );
     }
     if (widget.wrap) {
       return Wrap(
@@ -1190,7 +1420,8 @@ class StaggerItem extends StatefulWidget {
   State<StaggerItem> createState() => _StaggerItemState();
 }
 
-class _StaggerItemState extends State<StaggerItem> with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+class _StaggerItemState extends State<StaggerItem>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late final AnimationController _controller = AnimationController(vsync: this);
   bool _started = false;
   bool _reduceMotion = false;
@@ -1203,8 +1434,12 @@ class _StaggerItemState extends State<StaggerItem> with SingleTickerProviderStat
     super.didChangeDependencies();
     // 同 StaggerPanelState：duration 必须先于 forward() 落定，否则断言抛错。
     final AppMotionTheme motion = AppMotionTheme.of(context);
-    _controller.duration = motion.enter.duration + motion.staggerAt(widget.index);
-    if (_started && motion.reduceMotion && !_reduceMotion && _controller.isAnimating) {
+    _controller.duration =
+        motion.enter.duration + motion.staggerAt(widget.index);
+    if (_started &&
+        motion.reduceMotion &&
+        !_reduceMotion &&
+        _controller.isAnimating) {
       _controller.value = 1;
     }
     _reduceMotion = motion.reduceMotion;
@@ -1233,7 +1468,9 @@ class _StaggerItemState extends State<StaggerItem> with SingleTickerProviderStat
     if (_controller.duration != total) {
       _controller.duration = total;
     }
-    final double begin = total == Duration.zero ? 0 : delay.inMicroseconds / total.inMicroseconds;
+    final double begin = total == Duration.zero
+        ? 0
+        : delay.inMicroseconds / total.inMicroseconds;
     final Animation<double> anim = CurvedAnimation(
       parent: _controller,
       curve: Interval(begin, 1, curve: motion.enter.curve),
@@ -1246,11 +1483,13 @@ class _StaggerItemState extends State<StaggerItem> with SingleTickerProviderStat
         final double v = anim.value;
         return Opacity(
           opacity: v,
-          child: Transform.translate(offset: Offset(0, amplitude * (1 - v)), child: child),
+          child: Transform.translate(
+            offset: Offset(0, amplitude * (1 - v)),
+            child: child,
+          ),
         );
       },
       child: widget.child,
     );
   }
 }
-

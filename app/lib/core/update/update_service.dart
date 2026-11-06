@@ -161,32 +161,31 @@ final class UpdateInfo {
   /// Android APK 直链（GitHub = assets 里 `BookSift-android-v{version}.apk` 约定名；§10.2 浏览器下载）。
   final String? apkUrl;
 
-  /// APK sha256 公示值（§11.1 缺陷 #7 对策；GitHub 源 best-effort 取 `.apk.sha256` 资产，
-  /// 取不到 = null，不因此失败）。
+  /// APK SHA-256；新发布从 version.json 读取，旧发布兼容独立校验文件。
   final String? apkSha256;
 
   /// iOS 安装包 URL（GitHub Release）或 version.json `ios_url`。
   final String? iosUrl;
 
-  /// iOS IPA 的 SHA256；GitHub 源 best-effort 解析 `.ipa.sha256` 资产。
+  /// iOS IPA 的 SHA-256。
   final String? iosSha256;
 
   /// Windows ZIP URL（GitHub Release）或 version.json `windows_url`。
   final String? windowsUrl;
 
-  /// Windows ZIP 的 SHA256；GitHub 源 best-effort 解析 `.zip.sha256` 资产。
+  /// Windows ZIP 的 SHA-256。
   final String? windowsSha256;
 
   /// macOS universal ZIP URL（GitHub Release）或 version.json `macos_url`。
   final String? macosUrl;
 
-  /// macOS ZIP 的 SHA256；GitHub 源 best-effort 解析 `.zip.sha256` 资产。
+  /// macOS ZIP 的 SHA-256。
   final String? macosSha256;
 
   /// Linux tar.gz URL（GitHub Release）或 version.json `linux_url`。
   final String? linuxUrl;
 
-  /// Linux tar.gz 的 SHA256；GitHub 源 best-effort 解析 `.tar.gz.sha256` 资产。
+  /// Linux tar.gz 的 SHA-256。
   final String? linuxSha256;
 
   /// 强更阈值（version.json `app.min_force`）：本地版本 < 该值 → 强制更新。
@@ -275,7 +274,7 @@ int? _intOrNull(Object? v) => switch (v) {
 /// 主源：GitHub Releases API（匿名，无 token）。
 ///
 /// 解析约定：`tag_name` → 版本；`body` → 更新日志；五个平台资产按固定名称匹配，
-/// 对应 `.sha256` 文件 best-effort 取内容首个 64 位 hex。缺失的资产保持 null，互不回退。
+/// version.json 校验版本、资产 URL 与 SHA-256；无清单的旧发布兼容独立校验文件。
 final class GithubReleaseSource implements UpdateSource {
   GithubReleaseSource({
     required this.owner,
@@ -334,23 +333,65 @@ final class GithubReleaseSource implements UpdateSource {
     final String? macosUrl = assetUrl(macosAssetName);
     final String? linuxUrl = assetUrl(linuxAssetName);
 
-    final List<String?> hashes = await Future.wait<String?>(<Future<String?>>[
-      _fetchSha256Asset(
-        apkUrl == null ? null : assetUrl('$apkAssetName.sha256'),
-      ),
-      _fetchSha256Asset(
-        iosUrl == null ? null : assetUrl('$iosAssetName.sha256'),
-      ),
-      _fetchSha256Asset(
-        windowsUrl == null ? null : assetUrl('$windowsAssetName.sha256'),
-      ),
-      _fetchSha256Asset(
-        macosUrl == null ? null : assetUrl('$macosAssetName.sha256'),
-      ),
-      _fetchSha256Asset(
-        linuxUrl == null ? null : assetUrl('$linuxAssetName.sha256'),
-      ),
-    ]);
+    final String? manifestUrl = assetUrl('version.json');
+    final Map<String, String> manifestHashes = <String, String>{};
+    if (manifestUrl != null) {
+      final Map<String, Object?> manifest = await _getJson(manifestUrl);
+      final Object? app = manifest['app'];
+      if (app is! Map || app['version'] != version) {
+        throw const UpdateFetchException(
+          UpdateFetchFailureKind.badPayload,
+          'version.json 的版本与 Release 不一致',
+        );
+      }
+      for (final entry in <String, String?>{
+        'apk': apkUrl,
+        'ios': iosUrl,
+        'windows': windowsUrl,
+        'macos': macosUrl,
+        'linux': linuxUrl,
+      }.entries) {
+        if (entry.value == null) continue;
+        final Object? hash = app['${entry.key}_sha256'];
+        if (app['${entry.key}_url'] != entry.value ||
+            hash is! String ||
+            !RegExp(r'^[0-9a-fA-F]{64}$').hasMatch(hash)) {
+          throw UpdateFetchException(
+            UpdateFetchFailureKind.badPayload,
+            'version.json 的 ${entry.key} 下载地址或 SHA-256 无效',
+          );
+        }
+        manifestHashes[entry.key] = hash.toLowerCase();
+      }
+    }
+    final List<String?> hashes = manifestUrl != null
+        ? <String?>[
+            for (final String platform in <String>[
+              'apk',
+              'ios',
+              'windows',
+              'macos',
+              'linux',
+            ])
+              manifestHashes[platform],
+          ]
+        : await Future.wait<String?>(<Future<String?>>[
+            _fetchSha256Asset(
+              apkUrl == null ? null : assetUrl('$apkAssetName.sha256'),
+            ),
+            _fetchSha256Asset(
+              iosUrl == null ? null : assetUrl('$iosAssetName.sha256'),
+            ),
+            _fetchSha256Asset(
+              windowsUrl == null ? null : assetUrl('$windowsAssetName.sha256'),
+            ),
+            _fetchSha256Asset(
+              macosUrl == null ? null : assetUrl('$macosAssetName.sha256'),
+            ),
+            _fetchSha256Asset(
+              linuxUrl == null ? null : assetUrl('$linuxAssetName.sha256'),
+            ),
+          ]);
 
     return UpdateInfo(
       version: version,

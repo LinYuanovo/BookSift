@@ -33,6 +33,10 @@ class SourceFailure implements Exception {
   String toString() => message;
 }
 
+class ForumAuthenticationRequired extends SourceFailure {
+  const ForumAuthenticationRequired() : super('登录状态已失效，请在应用内重新登录');
+}
+
 class ForumBook {
   const ForumBook(this.title, this.url);
   final String title;
@@ -47,14 +51,24 @@ class BookAttachment {
 }
 
 Uri validateForumBase(String value) {
-  final Uri? uri = Uri.tryParse(value.trim());
+  final String input = value.trim();
+  final bool hasScheme = RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*:').hasMatch(input);
+  final bool hasHostPort = RegExp(r'^[^/?#:@]+:\d+(?:[/?#]|$)').hasMatch(input);
+  final String address = input.startsWith('//')
+      ? 'https:$input'
+      : hasScheme && !hasHostPort
+      ? input
+      : 'https://$input';
+  final Uri? uri = input.isEmpty || RegExp(r'\s').hasMatch(input)
+      ? null
+      : Uri.tryParse(address);
   if (uri == null ||
       uri.scheme != 'https' ||
       uri.host.isEmpty ||
       uri.userInfo.isNotEmpty ||
       uri.hasQuery ||
       uri.hasFragment) {
-    throw const SourceFailure('请输入 HTTPS 论坛首页地址');
+    throw const SourceFailure('请输入有效的论坛首页地址，未填写协议时自动使用 HTTPS');
   }
   return uri.replace(path: uri.path.endsWith('/') ? uri.path : '${uri.path}/');
 }
@@ -152,6 +166,48 @@ class ForumSourceClient {
   static const int maxDownloadBytes = 64 * 1024 * 1024;
   final Map<String, Map<String, String>> _cookies =
       <String, Map<String, String>>{};
+  final Map<String, String> _sessionInputs = <String, String>{};
+
+  void restoreSession(Uri base, String cookie) {
+    if (_sessionInputs[base.origin] == cookie &&
+        _cookies.containsKey(base.origin)) {
+      return;
+    }
+    _sessionInputs[base.origin] = cookie;
+    _cookies[base.origin] = _initialCookies(cookie);
+  }
+
+  String sessionCookie(Uri base) => _cookieHeader(base);
+
+  Future<bool> checkSession(Uri base, String cookie) async {
+    if (cookie.trim().isEmpty) return false;
+    restoreSession(base, cookie);
+    final Response<List<int>> response = await _request(
+      base.resolve('home.php?mod=spacecp'),
+      credentialOrigin: base,
+    );
+    final Document document = html.parse(_decode(response));
+    if (document.querySelector('a[href*="action=logout"], #um .vwmy') != null) {
+      return true;
+    }
+    if (response.realUri.queryParameters['action'] == 'login' ||
+        document.querySelector('iframe[src*="action=login"]') != null) {
+      return false;
+    }
+    if (document.querySelector(
+          'input[type=password], form[action*="action=login"]',
+        ) !=
+        null) {
+      return false;
+    }
+    if (document.querySelector(
+          'a[href*="action=logout"], #um .vwmy, input[name=oldpassword]',
+        ) !=
+        null) {
+      return true;
+    }
+    throw const SourceFailure('暂时无法确认登录状态，请稍后重试');
+  }
 
   Map<String, String> _initialCookies(String value) => <String, String>{
     for (final String part in value.split(';'))
@@ -260,15 +316,21 @@ class ForumSourceClient {
         : utf8.decode(bytes, allowMalformed: true);
   }
 
-  void _checkPage(String source) {
+  void _checkPage(String source, [Uri? uri]) {
+    if (uri?.queryParameters['action'] == 'login') {
+      throw const ForumAuthenticationRequired();
+    }
     final Document document = html.parse(source);
-    if (document.querySelector('input[type=password]') != null) {
-      throw const SourceFailure('此书源需要登录，请在书源设置中保存该地址的登录 Cookie');
+    if (document.querySelector(
+          'input[type=password], iframe[src*="action=login"], form[action*="action=login"]',
+        ) !=
+        null) {
+      throw const ForumAuthenticationRequired();
     }
     final String text = document.body?.text ?? '';
     if (text.contains('验证码') &&
         document.querySelector('input[name*=seccode]') != null) {
-      throw const SourceFailure('网站要求验证码，请在浏览器完成验证后更新登录状态');
+      throw const ForumAuthenticationRequired();
     }
     if (text.contains('搜索间隔') || text.contains('两次搜索')) {
       throw const SourceFailure('搜索过于频繁，请稍后再试');
@@ -336,7 +398,7 @@ class ForumSourceClient {
     String query, {
     String cookie = '',
   }) async {
-    _cookies[base.origin] = _initialCookies(cookie);
+    restoreSession(base, cookie);
     final Uri endpoint = base.resolve('search.php?mod=forum');
     final Response<List<int>> form = await _request(
       endpoint,
@@ -344,7 +406,7 @@ class ForumSourceClient {
       cookie: cookie,
     );
     final String page = _decode(form);
-    _checkPage(page);
+    _checkPage(page, form.realUri);
     final String? token = html
         .parse(page)
         .querySelector('input[name=formhash]')
@@ -374,7 +436,7 @@ class ForumSourceClient {
       referer: endpoint,
     );
     final String result = _decode(response);
-    _checkPage(result);
+    _checkPage(result, response.realUri);
     final List<ForumBook> books = parseForumResults(result, response.realUri);
     if (books.isEmpty &&
         !RegExp(
@@ -390,26 +452,27 @@ class ForumSourceClient {
     ForumBook book, {
     String cookie = '',
   }) async {
-    _cookies.putIfAbsent(base.origin, () => _initialCookies(cookie));
+    restoreSession(base, cookie);
     final Response<List<int>> response = await _request(
       book.url,
       credentialOrigin: base,
       cookie: cookie,
     );
     final String page = _decode(response);
-    _checkPage(page);
+    _checkPage(page, response.realUri);
     final List<BookAttachment> files = parseBookAttachments(
       page,
       response.realUri,
     );
     if (files.isEmpty) {
       if (page.contains('action=attachpay')) {
-        throw const SourceFailure('此帖附件需要站内购买，请先打开原帖确认价格并购买，再返回重试');
+        throw const SourceFailure('此帖附件需要站内购买，请在当前帖子内确认价格并购买后重试');
       }
-      if (page.trimLeft().startsWith('<script') && page.contains('getName.caller')) {
-        throw const SourceFailure('网站要求浏览器验证，请打开原帖完成验证后重试');
+      if (page.trimLeft().startsWith('<script') &&
+          page.contains('getName.caller')) {
+        throw const SourceFailure('网站要求验证，请在当前帖子内完成验证后重试');
       }
-      throw const SourceFailure('没有可直接下载的附件；可能需要购买、回复或更高权限，请打开原帖处理');
+      throw const SourceFailure('没有可直接下载的附件；请在当前帖子内查看购买、回复或权限要求');
     }
     return files;
   }
@@ -426,7 +489,7 @@ class ForumSourceClient {
       throw const SourceFailure('附件地址与当前书源不一致');
     }
     final File target = File('${temporary.path}/attachment.part');
-    _cookies.putIfAbsent(base.origin, () => _initialCookies(cookie));
+    restoreSession(base, cookie);
     Uri current = attachment.url;
     try {
       Response<ResponseBody>? response;

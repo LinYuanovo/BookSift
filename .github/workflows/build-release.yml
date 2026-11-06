@@ -5,11 +5,11 @@
 #   - Actions 页面手动触发并填版本号（不带 v）；tag 不存在时由 action 基于当前提交创建
 #
 # 产物（命名与 tools/make_release.ps1 / make_release_linux.sh、App 内更新检查契约一致）：
-#   BookSift-android-v<版本>.apk          + .sha256        Android（minSdk 24）
-#   BookSift-ios-v<版本>.ipa              + .sha256        iOS（未签名，需接收者自行签名）
-#   BookSift-windows-x64-v<版本>.zip      + .sha256        Windows 10/11 x64
-#   BookSift-macos-universal-v<版本>.zip  + .sha256        macOS（arm64 + x86_64，未签名）
-#   BookSift-linux-x64-v<版本>.tar.gz     + .sha256        Linux x64（Ubuntu 22.04+，GTK3 / libsecret）
+#   BookSift-android-v<版本>.apk                         Android（minSdk 24）
+#   BookSift-ios-v<版本>.ipa                             iOS（未签名，需接收者自行签名）
+#   BookSift-windows-x64-v<版本>.zip                     Windows 10/11 x64
+#   BookSift-macos-universal-v<版本>.zip                 macOS（arm64 + x86_64，未签名）
+#   BookSift-linux-x64-v<版本>.tar.gz                    Linux x64（Ubuntu 22.04+，GTK3 / libsecret）
 #
 # Release 的 tag 必须是 v<版本> 且与 app/pubspec.yaml 的 version 一致：
 # App 的更新检查用 GitHub Releases 的 tag_name 与本地 versionName 比对，对不上会判不出新版本。
@@ -50,6 +50,9 @@ jobs:
 
       - name: 校验 README 与文档版本已同步
         run: node tools/check_docs.js
+
+      - name: 校验 Android 发布清单工具
+        run: python3 -B tools/test_android_release_manifest.py
 
       - name: 解析 tag / 输入，并与 pubspec.yaml 对齐
         id: resolve
@@ -122,26 +125,27 @@ jobs:
         working-directory: app
         run: flutter build apk --release
 
-      - name: 组装产物（契约文件名 + sha256）
+      - name: 组装通用 APK
         run: |
           set -euo pipefail
           mkdir -p dist
           cp app/build/app/outputs/flutter-apk/app-release.apk "dist/BookSift-android-v${VERSION}.apk"
-          (cd dist && sha256sum "BookSift-android-v${VERSION}.apk" | cut -d' ' -f1 > "BookSift-android-v${VERSION}.apk.sha256")
           ls -l dist
 
       - name: 构建按架构精简 APK
         working-directory: app
-        run: flutter build apk --release --split-per-abi
-
-      - name: 组装按架构精简 APK
         run: |
           set -euo pipefail
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          for target in android-arm64:arm64-v8a android-arm:armeabi-v7a android-x64:x86_64; do
+            platform="${target%%:*}"
+            abi="${target#*:}"
+            flutter build apk --release --target-platform "$platform"
             name="BookSift-android-${abi}-v${VERSION}.apk"
-            cp "app/build/app/outputs/flutter-apk/app-${abi}-release.apk" "dist/${name}"
-            (cd dist && sha256sum "${name}" | cut -d' ' -f1 > "${name}.sha256")
+            cp build/app/outputs/flutter-apk/app-release.apk "../dist/${name}"
           done
+
+      - name: 校验 APK 构建号与架构
+        run: python3 tools/android_release_manifest.py --verify-apks dist app/pubspec.yaml
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
@@ -177,14 +181,12 @@ jobs:
         working-directory: app
         run: flutter build windows --release
 
-      - name: 打包 zip + sha256
+      - name: 打包 Windows zip
         shell: pwsh
         run: |
           $pkg = "BookSift-windows-x64-v$env:VERSION"
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Compress-Archive -Path app/build/windows/x64/runner/Release/* -DestinationPath "dist/$pkg.zip"
-          $sha = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$pkg.zip").Hash.ToLower()
-          Set-Content -LiteralPath "dist/$pkg.zip.sha256" -Value $sha -Encoding ascii
           Get-ChildItem dist | Format-Table Name, Length
 
       - name: Upload Windows artifact
@@ -225,7 +227,7 @@ jobs:
         working-directory: app
         run: flutter build linux --release
 
-      - name: 产物闸门 + 打包 tar.gz + sha256
+      - name: 产物闸门 + 打包 Linux tar.gz
         run: |
           set -euo pipefail
           bundle=app/build/linux/x64/release/bundle
@@ -235,7 +237,6 @@ jobs:
           pkg="BookSift-linux-x64-v${VERSION}"
           mkdir -p dist
           tar -czf "dist/$pkg.tar.gz" -C app/build/linux/x64/release --transform "s,^bundle,$pkg," bundle
-          sha256sum "dist/$pkg.tar.gz" | cut -d' ' -f1 > "dist/$pkg.tar.gz.sha256"
           tar -tzf "dist/$pkg.tar.gz" | sed -n '1,5p'
           ls -l dist
 
@@ -270,7 +271,7 @@ jobs:
         working-directory: app
         run: flutter build ios --release --no-codesign
 
-      - name: 组装未签名 IPA + sha256
+      - name: 组装未签名 IPA
         run: |
           set -euo pipefail
           app_path="app/build/ios/iphoneos/Runner.app"
@@ -278,7 +279,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ios-package/Payload" dist
           ditto "$app_path" "$RUNNER_TEMP/ios-package/Payload/Runner.app"
           (cd "$RUNNER_TEMP/ios-package" && ditto -c -k --sequesterRsrc --keepParent Payload "$GITHUB_WORKSPACE/dist/BookSift-ios-v${VERSION}.ipa")
-          shasum -a 256 "dist/BookSift-ios-v${VERSION}.ipa" | awk '{print tolower($1)}' > "dist/BookSift-ios-v${VERSION}.ipa.sha256"
           ls -l dist
 
       - name: Upload iOS artifact
@@ -332,7 +332,7 @@ jobs:
           FLUTTER_XCODE_CODE_SIGN_IDENTITY: ''
         run: flutter build macos --release
 
-      - name: 验证 universal app，打包 zip + sha256
+      - name: 验证 universal app，打包 macOS zip
         run: |
           set -euo pipefail
           products="app/build/macos/Build/Products/Release"
@@ -355,7 +355,6 @@ jobs:
           done < <(find "$app_path" -type f -print0)
           mkdir -p dist
           ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist/BookSift-macos-universal-v${VERSION}.zip"
-          shasum -a 256 "dist/BookSift-macos-universal-v${VERSION}.zip" | awk '{print tolower($1)}' > "dist/BookSift-macos-universal-v${VERSION}.zip.sha256"
           ls -l dist
 
       - name: Upload macOS artifact
@@ -391,9 +390,9 @@ jobs:
           sha_for() {
             local file="$1"
             local value
-            value="$(tr -d '[:space:]\r\n' < "artifacts/$file.sha256")"
+            value="$(sha256sum "artifacts/$file" | cut -d' ' -f1)"
             [[ "$value" =~ ^[0-9a-fA-F]{64}$ ]] || {
-              echo "::error::摘要文件格式异常：artifacts/$file.sha256"
+              echo "::error::无法计算摘要：artifacts/$file"
               exit 1
             }
             printf '%s' "${value,,}"
@@ -423,6 +422,7 @@ jobs:
             }
           }
           JSON
+          python3 tools/android_release_manifest.py artifacts/version.json artifacts
           python3 -m json.tool artifacts/version.json >/dev/null
           cat artifacts/version.json
 
@@ -437,12 +437,16 @@ jobs:
             echo "| 平台 | 文件 | 说明 |"
             echo "| --- | --- | --- |"
             echo "| Android | \`BookSift-android-v${VERSION}.apk\` | 直接安装（Android 7.0+），需允许安装未知应用 |"
+            echo "| Android ARM64 | \`BookSift-android-arm64-v8a-v${VERSION}.apk\` | 大多数现代手机；精简包 |"
+            echo "| Android ARM32 | \`BookSift-android-armeabi-v7a-v${VERSION}.apk\` | 32 位 ARM 设备；精简包 |"
+            echo "| Android x86_64 | \`BookSift-android-x86_64-v${VERSION}.apk\` | x86_64 设备及模拟器；精简包 |"
             echo "| iOS | \`BookSift-ios-v${VERSION}.ipa\` | 未签名包；需使用 Apple Team、证书和描述文件签名后才能安装 |"
             echo "| Windows | \`BookSift-windows-x64-v${VERSION}.zip\` | 完整解压后运行 \`booksift.exe\`（Windows 10/11 64 位） |"
             echo "| macOS | \`BookSift-macos-universal-v${VERSION}.zip\` | arm64 + x86_64 通用包，未签名/公证；Gatekeeper 可能阻止打开 |"
             echo "| Linux | \`BookSift-linux-x64-v${VERSION}.tar.gz\` | 解压后运行 \`booksift\`（Ubuntu 22.04+，需 GTK3 / libsecret） |"
             echo
-            echo "每个平台包都附同名 \`.sha256\`（一行 64 位十六进制摘要），下载后建议核对。"
+            echo "所有安装包的 SHA-256 统一收录于 \`version.json\`，不附独立校验文件。"
+            echo "通用包使用 \`app.*_sha256\`；按架构 Android APK 使用 \`app.android_apks\`，同时包含大小和下载链接。应用内更新继续选择通用 APK。"
             echo "iOS 与 macOS 产物不包含 Apple 签名、provisioning profile 或公证；请在分发安装前自行完成相应签名流程。"
             echo
             echo "## 更新内容"

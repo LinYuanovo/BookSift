@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../collector/tieba_search.dart';
+import '../../book_sources/forum_source.dart';
 import '../../core/external_launch.dart';
 import '../../core/icons.dart';
 import '../../core/nav/overlay_motion.dart';
@@ -57,7 +58,10 @@ const int kSearchCardPreviewChars = 50;
 /// `[高亮]` 标记文本按**可见字数**截断（标记括号不计入；截断补「…」）。
 /// 标记始终保持完整闭合（截断点落在标记内时只保留限内片段），渲染交
 /// [HighlightText]（`[词]` → 琥珀底高亮，与首页卡同管线）。
-String truncateHighlightMarked(String text, {int maxChars = kSearchCardPreviewChars}) {
+String truncateHighlightMarked(
+  String text, {
+  int maxChars = kSearchCardPreviewChars,
+}) {
   final RegExp marker = RegExp(r'\[([^\[\]]*)\]');
   final List<(String, bool)> segments = <(String, bool)>[];
   int cursor = 0;
@@ -107,7 +111,11 @@ String truncateHighlightMarked(String text, {int maxChars = kSearchCardPreviewCh
 ///  - entryCount ← hit.recommendCount（渲染器标签「共 N 条推荐」）；avoidCount ← hit.avoidCount；
 ///  - 摘要 ← hit.preview 去 `[高亮]` 标记后过 [summarizeComment]；排雷 ← hit.bestFlag < 0；
 ///  - 推荐人/单条日期/单条渠道不在 GroupHit 投影内 → null，渲染器自动省略该行。
-BooklistDoc buildSearchResultDoc(SearchOutcome outcome, {String query = '', DateTime? now}) {
+BooklistDoc buildSearchResultDoc(
+  SearchOutcome outcome, {
+  String query = '',
+  DateTime? now,
+}) {
   final String q = query.trim();
   return BooklistDoc(
     kind: BooklistDocKind.favorites,
@@ -125,7 +133,9 @@ BooklistDoc buildSearchResultDoc(SearchOutcome outcome, {String query = '', Date
           recommendations: <ExportRecommendation>[
             ExportRecommendation(
               comment: summarizeComment(
-                hit.preview == null ? null : stripHighlightMarkers(hit.preview!),
+                hit.preview == null
+                    ? null
+                    : stripHighlightMarkers(hit.preview!),
               ),
               avoid: hit.bestFlag < 0,
             ),
@@ -150,7 +160,8 @@ class SearchPage extends ConsumerStatefulWidget {
   ConsumerState<SearchPage> createState() => _SearchPageState();
 }
 
-class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObserver {
+class _SearchPageState extends ConsumerState<SearchPage>
+    with WidgetsBindingObserver {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -165,6 +176,9 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
 
   String? _appliedSignature;
   bool _focused = false;
+  bool _sourcesExpanded = true;
+  final GlobalKey<BookSourcePageState> _forumKey =
+      GlobalKey<BookSourcePageState>();
 
   /// 筛选行当前是否收起（只在已提交且展示本地结果时有意义；其余场景恒为展开）。
   bool _filtersCollapsed = false;
@@ -210,7 +224,9 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _focusNode.addListener(() => setState(() => _focused = _focusNode.hasFocus));
+    _focusNode.addListener(
+      () => setState(() => _focused = _focusNode.hasFocus),
+    );
     _resultsController.addListener(_onResultsScroll);
     // 关 App 重开：先恢复上次草稿（词 + 六维 + 提交态），带路由条件进入时再由 _syncFromParams 覆盖。
     ref.read(searchDraftProvider.notifier).restore();
@@ -221,7 +237,8 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
   /// 否则「滚动完立刻杀 App」会丢掉最后一段位置（400ms 防抖未到点）。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
       _saveDebounce?.cancel();
       _flushPositionSave();
     }
@@ -243,7 +260,9 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
     if (params == null || params.isEmpty) {
       return;
     }
-    final String signature = params.entries.map((MapEntry<String, String> e) => '${e.key}=${e.value}').join('&');
+    final String signature = params.entries
+        .map((MapEntry<String, String> e) => '${e.key}=${e.value}')
+        .join('&');
     if (signature == _appliedSignature) {
       return;
     }
@@ -253,6 +272,17 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         ref.read(searchDraftProvider.notifier).applyFilter(f, submit: true);
+        setState(() => _sourcesExpanded = false);
+        final String? source = params['source'];
+        if (source == 'shangxiang' || source == 'soushu') {
+          ref.read(searchTabProvider.notifier).state = SearchTab.values.byName(
+            source!,
+          );
+          setState(() => _sourcesExpanded = false);
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => _forumKey.currentState?.search(f.query),
+          );
+        }
       }
     });
   }
@@ -299,7 +329,8 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
         _scrollAnchor = pixels;
       }
     } else {
-      if (pixels >= _collapseMinOffset && pixels - _scrollAnchor >= _collapseDelta) {
+      if (pixels >= _collapseMinOffset &&
+          pixels - _scrollAnchor >= _collapseDelta) {
         setState(() {
           _filtersCollapsed = true;
           _scrollAnchor = pixels;
@@ -330,7 +361,8 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
   }
 
   /// 结果列表当前偏移（无 client / 多 client 时按 0 处理）。
-  double _currentOffset() => _resultsController.hasClients && _resultsController.positions.length == 1
+  double _currentOffset() =>
+      _resultsController.hasClients && _resultsController.positions.length == 1
       ? _resultsController.position.pixels
       : 0;
 
@@ -368,7 +400,9 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
     }
     // 等到帧末再跳：本条件的列表已布局完成，maxScrollExtent 才是真值。
     await WidgetsBinding.instance.endOfFrame;
-    if (!mounted || !_resultsController.hasClients || _resultsController.positions.length != 1) {
+    if (!mounted ||
+        !_resultsController.hasClients ||
+        _resultsController.positions.length != 1) {
       return;
     }
     final ScrollPosition position = _resultsController.position;
@@ -406,12 +440,16 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
   void _flushPositionSave() {
     final SearchPositionStore? store = _positionStore;
     final String? signature = _positionSignature;
-    if (store == null || signature == null || _tocJumping || _restoringPosition) {
+    if (store == null ||
+        signature == null ||
+        _tocJumping ||
+        _restoringPosition) {
       return;
     }
     // 列表已不在树上（回搜索台 / 切在线 Tab）时偏移读不到真值，
     // 写个 0 进去反而抹掉真实记忆 → 直接跳过。
-    if (!_resultsController.hasClients || _resultsController.positions.length != 1) {
+    if (!_resultsController.hasClients ||
+        _resultsController.positions.length != 1) {
       return;
     }
     store.save(signature, _resultsController.position.pixels);
@@ -435,6 +473,7 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
 
   Future<void> _submit() async {
     _focusNode.unfocus();
+    setState(() => _sourcesExpanded = false);
     await ref.read(searchDraftProvider.notifier).submit();
     if (!mounted) {
       return;
@@ -442,7 +481,13 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
     setState(_resetFilterCollapse);
     // 在线 Tab 激活时，键盘搜索 = 手动触发一次在线搜索（单请求，无自动批量）。
     if (ref.read(searchTabProvider) == SearchTab.online) {
-      await ref.read(onlineSearchProvider.notifier).search(ref.read(searchDraftProvider).filter.query);
+      await ref
+          .read(onlineSearchProvider.notifier)
+          .search(ref.read(searchDraftProvider).filter.query);
+    } else if (ref.read(searchTabProvider).isForum) {
+      await _forumKey.currentState?.search(
+        ref.read(searchDraftProvider).filter.query,
+      );
     }
   }
 
@@ -459,11 +504,19 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
       if (next.filter.query != _controller.text) {
         _controller.text = next.filter.query;
       }
+      if (next.submitted && !(prev?.submitted ?? false)) {
+        setState(() => _sourcesExpanded = false);
+      }
+    });
+    ref.listen(onlineSearchProvider, (previous, next) {
+      if (next.status == OnlineStatus.loading && next.page == 0) {
+        setState(() => _sourcesExpanded = false);
+      }
     });
     final SearchDraft draft = ref.watch(searchDraftProvider);
     final SearchTab tab = ref.watch(searchTabProvider);
     final String onlineForum = ref.watch(onlineForumProvider);
-    final bool online = draft.submitted && tab == SearchTab.online;
+    final bool online = tab == SearchTab.online;
     final AppMotionTheme motion = AppMotionTheme.of(context);
     // 浏览位置记忆的存储（widget 测试挂具下为 null = 停用，见 searchPositionStoreProvider）。
     _positionStore ??= ref.read(searchPositionStoreProvider);
@@ -473,15 +526,20 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
         titleSpacing: AppSpacing.of(context).space3,
         title: _searchField(context),
         actions: <Widget>[
-          IconButton(tooltip: '书源搜索与下载', icon: const AppIcon('book'),
-            onPressed: () => openBookSourcePage(context, initialQuery: draft.filter.query),
-          ),
+          if (tab.isForum)
+            IconButton(
+              tooltip: '书源设置',
+              icon: const AppIcon('gear'),
+              onPressed: () => _forumKey.currentState?.configure(),
+            ),
         ],
       ),
       body: Column(
         children: <Widget>[
           _SearchTabs(
             tab: tab,
+            expanded: _sourcesExpanded,
+            onExpand: () => setState(() => _sourcesExpanded = true),
             onlineForums: kDefaultForums,
             onlineForum: onlineForum,
             // 切吧 = 旧吧结果作废：清回手动触发入口（不自动发请求，单请求口径）。
@@ -490,18 +548,28 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
               ref.read(onlineSearchProvider.notifier).reset();
             },
             // 筛选动作只在本地库 Tab 显示（在线无六维条件）。
-            showFilters: tab == SearchTab.local,
+            showFilters: !_sourcesExpanded,
             canClear: !draft.filter.isDefault,
-            onClear: () => ref.read(searchDraftProvider.notifier).clearDimensions(),
-            onConfirm: _collapseFilters,
+            onClear: () =>
+                ref.read(searchDraftProvider.notifier).clearDimensions(),
+            onConfirm: tab == SearchTab.local ? _collapseFilters : _submit,
             onChanged: (SearchTab v) {
               ref.read(searchTabProvider.notifier).state = v;
-              setState(_resetFilterCollapse);
+              setState(() {
+                _resetFilterCollapse();
+                _sourcesExpanded = true;
+              });
             },
             // 目录只列**当前 Tab 已加载**的结果行（未加载页不进目录）；
             // 跳转经 _runTocJump 挂起滚动方向启发式，保证落点精确不抖动。
             onToc: () {
-              final _ResultsToc toc = tab == SearchTab.online ? _onlineToc : _localToc;
+              if (tab.isForum) {
+                _forumKey.currentState?.showContents();
+                return;
+              }
+              final _ResultsToc toc = tab == SearchTab.online
+                  ? _onlineToc
+                  : _localToc;
               // 目录位置持久化：本地 Tab 按当前条件签名存取（在线 Tab 无签名 → 仅内存句柄）。
               _showResultsToc(
                 context,
@@ -515,7 +583,7 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
           // 六维筛选只对本地库有意义；在线 Tab 隐藏（口径见 _OnlineResultsView 头部徽标）。
           // 已提交且展示本地结果时，结果列表下滑超阈值 → 收起（高度 0 + 透明）；上滑/回顶展开。
           // 时长/曲线全走 motion token：收起 = exit、展开 = enter（exit-faster-than-enter，§6.2）。
-          if (!online)
+          if (tab == SearchTab.local)
             AnimatedCrossFade(
               key: const ValueKey<String>('search-filter-collapse'),
               firstChild: SearchFilterPanel(
@@ -523,7 +591,9 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
                 onConfirm: _collapseFilters,
               ),
               secondChild: const SizedBox(width: double.infinity, height: 0),
-              crossFadeState: _filtersCollapsed ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+              crossFadeState: _filtersCollapsed
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
               duration: motion.exit.duration,
               reverseDuration: motion.enter.duration,
               firstCurve: motion.standard,
@@ -532,17 +602,29 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
             ),
           const Divider(height: AppMetrics.hairline),
           Expanded(
-            child: !draft.submitted
+            child: tab.isForum
+                ? BookSourcePage(
+                    key: _forumKey,
+                    embedded: true,
+                    source: tab == SearchTab.shangxiang
+                        ? ForumSource.shangxiang
+                        : ForumSource.soushu,
+                    initialQuery: draft.filter.query,
+                  )
+                : !draft.submitted
                 ? _ConsoleView(onSearch: _searchFor)
                 : online
-                    ? _OnlineResultsView(key: const ValueKey<String>('online-results-view'), toc: _onlineToc)
-                    : _ResultsView(
-                        draft: draft,
-                        controller: _resultsController,
-                        toc: _localToc,
-                        onResults: _noteResults,
-                        onScrollEnd: _flushPositionSaveNow,
-                      ),
+                ? _OnlineResultsView(
+                    key: const ValueKey<String>('online-results-view'),
+                    toc: _onlineToc,
+                  )
+                : _ResultsView(
+                    draft: draft,
+                    controller: _resultsController,
+                    toc: _localToc,
+                    onResults: _noteResults,
+                    onScrollEnd: _flushPositionSaveNow,
+                  ),
           ),
         ],
       ),
@@ -561,16 +643,32 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
       decoration: BoxDecoration(
         color: c.surfaceRaised,
         borderRadius: AppRadius.xlBorder,
-        border: Border.all(color: _focused ? c.accent : c.borderStrong, width: AppMetrics.hairline),
+        border: Border.all(
+          color: _focused ? c.accent : c.borderStrong,
+          width: AppMetrics.hairline,
+        ),
         // focus = 3px accent 18% ring（设计系统 §4 输入框）。
         boxShadow: _focused
-            ? <BoxShadow>[BoxShadow(color: c.accent.withValues(alpha: 0.18), spreadRadius: 3)]
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: c.accent.withValues(alpha: 0.18),
+                  spreadRadius: 3,
+                ),
+              ]
             : const <BoxShadow>[],
       ),
       child: Row(
         children: <Widget>[
           // 设计 02 屏字段图标 `.ic sm` i-search（index.html:1281）；聚焦染 accentStrong。
-          AppIcon('search', size: 16, color: _focused ? c.accentStrong : c.textMuted),
+          IconButton(
+            tooltip: '搜索',
+            onPressed: _submit,
+            icon: AppIcon(
+              'search',
+              size: 16,
+              color: _focused ? c.accentStrong : c.textMuted,
+            ),
+          ),
           SizedBox(width: AppSpacing.of(context).space2),
           Expanded(
             child: TextField(
@@ -581,7 +679,8 @@ class _SearchPageState extends ConsumerState<SearchPage> with WidgetsBindingObse
                 ref.read(searchDraftProvider.notifier).setQuery(v);
                 _submit();
               },
-              onChanged: (String v) => ref.read(searchDraftProvider.notifier).setQuery(v),
+              onChanged: (String v) =>
+                  ref.read(searchDraftProvider.notifier).setQuery(v),
               style: t.body.copyWith(color: c.text),
               decoration: InputDecoration(
                 isDense: true,
@@ -620,10 +719,13 @@ class _ConsoleView extends ConsumerWidget {
     final AppTypography t = AppTypography.of(context);
     final AppSpacing s = AppSpacing.of(context);
     final String suggestInput = ref.watch(suggestInputProvider);
-    final List<String> suggests =
-        suggestInput.isEmpty ? const <String>[] : (ref.watch(suggestProvider(suggestInput)).value ?? const <String>[]);
-    final List<SearchHistoryEntry> history = ref.watch(searchHistoryProvider).value ?? const <SearchHistoryEntry>[];
-    final List<HotBook> hot = ref.watch(hotBooksProvider).value ?? const <HotBook>[];
+    final List<String> suggests = suggestInput.isEmpty
+        ? const <String>[]
+        : (ref.watch(suggestProvider(suggestInput)).value ?? const <String>[]);
+    final List<SearchHistoryEntry> history =
+        ref.watch(searchHistoryProvider).value ?? const <SearchHistoryEntry>[];
+    final List<HotBook> hot =
+        ref.watch(hotBooksProvider).value ?? const <HotBook>[];
     return ListView(
       padding: EdgeInsets.fromLTRB(s.pagePadding, 0, s.pagePadding, s.space8),
       children: <Widget>[
@@ -641,8 +743,12 @@ class _ConsoleView extends ConsumerWidget {
                     AppIcon('search', size: 16, color: c.textMuted),
                     SizedBox(width: s.space3),
                     Expanded(
-                      child: Text('《$name》', maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: t.body.copyWith(color: c.bookname)),
+                      child: Text(
+                        '《$name》',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: t.body.copyWith(color: c.bookname),
+                      ),
                     ),
                   ],
                 ),
@@ -655,11 +761,17 @@ class _ConsoleView extends ConsumerWidget {
               ? null
               : TextButton(
                   onPressed: () => ref.read(queriesProvider).clearHistory(),
-                  child: Text('清空', style: t.caption.copyWith(color: c.textMuted)),
+                  child: Text(
+                    '清空',
+                    style: t.caption.copyWith(color: c.textMuted),
+                  ),
                 ),
         ),
         if (history.isEmpty)
-          Text('暂无历史；点击下方热门书名开始', style: t.secondary.copyWith(color: c.textMuted)),
+          Text(
+            '暂无历史；点击下方热门书名开始',
+            style: t.secondary.copyWith(color: c.textMuted),
+          ),
         for (final SearchHistoryEntry h in history) _HistoryRow(entry: h),
         if (hot.isNotEmpty) ...<Widget>[
           SectionTitle(label: '热门书名'),
@@ -667,7 +779,8 @@ class _ConsoleView extends ConsumerWidget {
             spacing: s.chipGap,
             runSpacing: s.space2,
             children: <Widget>[
-              for (final HotBook b in hot) BookNameChip(name: b.name, onTap: () => onSearch(b.name)),
+              for (final HotBook b in hot)
+                BookNameChip(name: b.name, onTap: () => onSearch(b.name)),
             ],
           ),
         ],
@@ -716,7 +829,8 @@ class _HistoryRow extends ConsumerWidget {
       child: SizedBox(
         height: AppMetrics.listRowHeight,
         child: InkWell(
-          onTap: () => ref.read(searchDraftProvider.notifier).applyHistory(entry),
+          onTap: () =>
+              ref.read(searchDraftProvider.notifier).applyHistory(entry),
           onLongPress: () {
             Clipboard.setData(ClipboardData(text: entry.query));
             showAppToast(context, '关键词已复制到剪贴板');
@@ -728,11 +842,20 @@ class _HistoryRow extends ConsumerWidget {
               AppIcon('clock', size: 16, color: c.textMuted),
               SizedBox(width: s.space3),
               Expanded(
-                child: Text(_summary(), maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: t.body.copyWith(color: c.text)),
+                child: Text(
+                  _summary(),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.body.copyWith(color: c.text),
+                ),
               ),
               SizedBox(width: s.space2),
-              Text(dateLabel, style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted))),
+              Text(
+                dateLabel,
+                style: AppTypography.tabular(
+                  t.caption.copyWith(color: c.textMuted),
+                ),
+              ),
             ],
           ),
         ),
@@ -752,7 +875,12 @@ const double _kTocCacheExtentFallback = 1e5;
 
 /// 目录一行（title = 书名/帖标题；subtitle = 最近日期，缺省不显示）。
 class _TocEntry {
-  const _TocEntry({required this.title, this.subtitle, this.rec = 0, this.avoid = 0});
+  const _TocEntry({
+    required this.title,
+    this.subtitle,
+    this.rec = 0,
+    this.avoid = 0,
+  });
 
   final String title;
   final String? subtitle;
@@ -763,8 +891,11 @@ class _TocEntry {
   final int avoid;
 
   /// 标题色（推荐多 = recommend 绿，排雷多 = danger 红，持平/中性 = 常规文本色）。
-  Color titleColor(AppColors c) =>
-      rec > avoid ? c.recommend : avoid > rec ? c.danger : c.text;
+  Color titleColor(AppColors c) => rec > avoid
+      ? c.recommend
+      : avoid > rec
+      ? c.danger
+      : c.text;
 }
 
 /// 结果目录句柄：结果子视图在 build 时登记「**已加载**行」与「按 index 精确跳转」闭包，
@@ -809,8 +940,12 @@ void _showResultsToc(
     showDragHandle: true,
     isScrollControlled: true,
     sheetAnimationStyle: overlayAnimationStyle(context),
-    builder: (BuildContext sheetContext) =>
-        _ResultsTocSheet(toc: toc, onPick: onPick, store: store, signature: signature),
+    builder: (BuildContext sheetContext) => _ResultsTocSheet(
+      toc: toc,
+      onPick: onPick,
+      store: store,
+      signature: signature,
+    ),
   );
 }
 
@@ -871,7 +1006,9 @@ class _ResultsTocSheetState extends State<_ResultsTocSheet> {
         }
       }
       if (saved > 0) {
-        _controller.jumpTo(saved.clamp(0.0, _controller.position.maxScrollExtent));
+        _controller.jumpTo(
+          saved.clamp(0.0, _controller.position.maxScrollExtent),
+        );
       }
     });
   }
@@ -929,10 +1066,13 @@ class _ResultsTocSheetState extends State<_ResultsTocSheet> {
     final AppTypography t = AppTypography.of(context);
     final MediaQueryData mq = MediaQuery.of(context);
     // 可用高度 = 屏高扣掉状态栏 / home indicator（viewPadding 不受键盘影响）。
-    final double available = mq.size.height - mq.viewPadding.top - mq.viewPadding.bottom;
+    final double available =
+        mq.size.height - mq.viewPadding.top - mq.viewPadding.bottom;
     return SafeArea(
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: available * AppMetrics.tocSheetHeightFactor),
+        constraints: BoxConstraints(
+          maxHeight: available * AppMetrics.tocSheetHeightFactor,
+        ),
         child: ValueListenableBuilder<int>(
           valueListenable: widget.toc.revision,
           builder: (BuildContext context, int revision, Widget? child) {
@@ -940,7 +1080,10 @@ class _ResultsTocSheetState extends State<_ResultsTocSheet> {
             if (entries.isEmpty) {
               return Padding(
                 padding: EdgeInsets.all(AppSpacing.of(context).pagePadding),
-                child: Text('尚无已加载的结果行', style: t.secondary.copyWith(color: c.textMuted)),
+                child: Text(
+                  '尚无已加载的结果行',
+                  style: t.secondary.copyWith(color: c.textMuted),
+                ),
               );
             }
             return ListView(
@@ -954,13 +1097,17 @@ class _ResultsTocSheetState extends State<_ResultsTocSheet> {
                       entries[i].title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: t.secondary.copyWith(color: entries[i].titleColor(c)),
+                      style: t.secondary.copyWith(
+                        color: entries[i].titleColor(c),
+                      ),
                     ),
                     trailing: entries[i].subtitle == null
                         ? null
                         : Text(
                             entries[i].subtitle!,
-                            style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted)),
+                            style: AppTypography.tabular(
+                              t.caption.copyWith(color: c.textMuted),
+                            ),
                           ),
                     onTap: () {
                       Navigator.of(context).pop();
@@ -1041,11 +1188,11 @@ mixin _ResultsTocJump<W extends ConsumerStatefulWidget> on ConsumerState<W> {
   Future<void> _reveal(BuildContext target) async {
     final AppMotionTheme motion = AppMotionTheme.of(context);
     Future<void> once() => Scrollable.ensureVisible(
-          target,
-          alignment: _kTocAlignment,
-          duration: motion.transition.duration,
-          curve: motion.transition.curve,
-        );
+      target,
+      alignment: _kTocAlignment,
+      duration: motion.transition.duration,
+      curve: motion.transition.curve,
+    );
     await once();
     if (!mounted || !target.mounted) {
       return;
@@ -1103,7 +1250,11 @@ class _IconSlotButton extends StatelessWidget {
           minimumSize: Size.zero,
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
-        icon: AppIcon(svgIcon, size: 20, color: color ?? AppColors.of(context).textSecondary),
+        icon: AppIcon(
+          svgIcon,
+          size: 20,
+          color: color ?? AppColors.of(context).textSecondary,
+        ),
         onPressed: enabled ? onPressed : null,
       ),
     );
@@ -1143,7 +1294,8 @@ class _ResultsView extends ConsumerStatefulWidget {
   ConsumerState<_ResultsView> createState() => _ResultsViewState();
 }
 
-class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump<_ResultsView> {
+class _ResultsViewState extends ConsumerState<_ResultsView>
+    with _ResultsTocJump<_ResultsView> {
   @override
   ScrollController get resultsController => widget.controller;
 
@@ -1154,8 +1306,13 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
     final AppSpacing s = AppSpacing.of(context);
     final AppMotionTheme motion = AppMotionTheme.of(context);
     final int pages = ref.watch(resultPageProvider);
-    final SearchFilter effective = widget.draft.filter.copyWith(limit: 40 * pages, offset: 0);
-    final AsyncValue<SearchOutcome> async = ref.watch(searchResultProvider(effective));
+    final SearchFilter effective = widget.draft.filter.copyWith(
+      limit: 40 * pages,
+      offset: 0,
+    );
+    final AsyncValue<SearchOutcome> async = ref.watch(
+      searchResultProvider(effective),
+    );
     final SearchOutcome? outcome = async.value;
     final List<GroupHit> items = outcome?.page.items ?? const <GroupHit>[];
 
@@ -1179,7 +1336,8 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
       ..jumpTo = jumpToTocEntry
       // 目录触底自动加载更多（B）：与列表「加载更多」按钮完全同口径（递增 resultPageProvider）。
       ..hasMore = outcome?.page.hasMore ?? false
-      ..loadMore = () => ref.read(resultPageProvider.notifier).state = pages + 1;
+      ..loadMore = () =>
+          ref.read(resultPageProvider.notifier).state = pages + 1;
     // 帧后再通知弹层（build 期 notify 会在构建中改别的 element）。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -1191,8 +1349,10 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
     widget.onResults(effective, outcome != null);
 
     // FTS 异常降级 → SnackBar「已降级为慢速搜索」（§5.3 错误态；MI-4）。
-    ref.listen<AsyncValue<SearchOutcome>>(searchResultProvider(effective),
-        (AsyncValue<SearchOutcome>? prev, AsyncValue<SearchOutcome> next) {
+    ref.listen<AsyncValue<SearchOutcome>>(searchResultProvider(effective), (
+      AsyncValue<SearchOutcome>? prev,
+      AsyncValue<SearchOutcome> next,
+    ) {
       if (next.value?.degraded == true && prev?.value?.degraded != true) {
         showAppToast(context, '已降级为慢速搜索');
       }
@@ -1210,126 +1370,168 @@ class _ResultsViewState extends ConsumerState<_ResultsView> with _ResultsTocJump
           controller: widget.controller,
           // 目录跳转兜底期间临时撑到列表全高（见 _ResultsTocJump），常态 null = 框架默认。
           cacheExtent: tocCacheExtent,
-          padding: EdgeInsets.fromLTRB(s.pagePadding, s.space3, s.pagePadding, s.space8),
-        children: <Widget>[
-          Row(
-            // 同一行「标题 + 命中数 + 图标钮」一律 center 对齐：图标走固定 44dp 方形槽
-            // （_IconSlotButton）做光学居中，20dp 图标与 caption 命中数落在同一中线；
-            // 间距一律 AppSpacing 令牌（原 end 对齐 + IconButton 内边距 → 图标看着低于文本）。
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  widget.draft.filter.query.isEmpty ? '条件浏览' : '"${widget.draft.filter.query}"',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: t.headline.copyWith(color: c.text),
+          padding: EdgeInsets.fromLTRB(
+            s.pagePadding,
+            s.space3,
+            s.pagePadding,
+            s.space8,
+          ),
+          children: <Widget>[
+            Row(
+              // 同一行「标题 + 命中数 + 图标钮」一律 center 对齐：图标走固定 44dp 方形槽
+              // （_IconSlotButton）做光学居中，20dp 图标与 caption 命中数落在同一中线；
+              // 间距一律 AppSpacing 令牌（原 end 对齐 + IconButton 内边距 → 图标看着低于文本）。
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    widget.draft.filter.query.isEmpty
+                        ? '条件浏览'
+                        : '"${widget.draft.filter.query}"',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.headline.copyWith(color: c.text),
+                  ),
                 ),
-              ),
-              SizedBox(width: s.space2),
-              // 命中总数原位切换（motion.switch + tabular，§6.4）；>5000 显示 5000+。
-              AnimatedSwitcher(
-                duration: motion.switch_.duration,
-                switchInCurve: motion.switch_.curve,
-                child: Text(
-                  outcome == null ? '…' : '${outcome.page.total + outcome.postTotal > 5000 ? '5000+' : outcome.page.total + outcome.postTotal} 结果',
-                  key: ValueKey<int>(outcome?.page.total ?? -1),
-                  style: AppTypography.tabular(t.secondary.copyWith(color: c.textMuted)),
-                ),
-              ),
-              if (outcome?.usedFts ?? false) ...<Widget>[
-                SizedBox(width: s.space1),
-                Text('FTS', style: t.label.copyWith(color: c.textMuted, letterSpacing: 0)),
-              ],
-              // P2-4：导出当前搜索结果（分页所及的书目行）；空结果隐藏入口。
-              if (items.isNotEmpty) ...<Widget>[
                 SizedBox(width: s.space2),
-                _IconSlotButton(
-                  tooltip: '导出书单',
-                  svgIcon: 'external',
-                  onPressed: () => showBooklistExportSheet(
-                    context,
-                    buildSearchResultDoc(outcome!, query: widget.draft.filter.query),
-                    service: ref.read(searchExportServiceProvider),
+                // 命中总数原位切换（motion.switch + tabular，§6.4）；>5000 显示 5000+。
+                AnimatedSwitcher(
+                  duration: motion.switch_.duration,
+                  switchInCurve: motion.switch_.curve,
+                  child: Text(
+                    outcome == null
+                        ? '…'
+                        : '${outcome.page.total + outcome.postTotal > 5000 ? '5000+' : outcome.page.total + outcome.postTotal} 结果',
+                    key: ValueKey<int>(outcome?.page.total ?? -1),
+                    style: AppTypography.tabular(
+                      t.secondary.copyWith(color: c.textMuted),
+                    ),
+                  ),
+                ),
+                if (outcome?.usedFts ?? false) ...<Widget>[
+                  SizedBox(width: s.space1),
+                  Text(
+                    'FTS',
+                    style: t.label.copyWith(
+                      color: c.textMuted,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ],
+                // P2-4：导出当前搜索结果（分页所及的书目行）；空结果隐藏入口。
+                if (items.isNotEmpty) ...<Widget>[
+                  SizedBox(width: s.space2),
+                  _IconSlotButton(
+                    tooltip: '导出书单',
+                    svgIcon: 'external',
+                    onPressed: () => showBooklistExportSheet(
+                      context,
+                      buildSearchResultDoc(
+                        outcome!,
+                        query: widget.draft.filter.query,
+                      ),
+                      service: ref.read(searchExportServiceProvider),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            SizedBox(height: s.space3),
+            if (outcome == null && async.isLoading) ...<Widget>[
+              for (int i = 0; i < 5; i++)
+                Padding(
+                  padding: EdgeInsets.only(bottom: s.cardGap),
+                  child: SkeletonBlock(height: 110),
+                ),
+            ],
+            if (outcome == null && async.hasError)
+              AppEmptyState(
+                title: '查询失败',
+                svgIcon: 'alert',
+                action: AppButton(
+                  label: '重试',
+                  kind: AppButtonKind.outline,
+                  onPressed: () =>
+                      ref.invalidate(searchResultProvider(effective)),
+                ),
+              ),
+            if (outcome != null &&
+                outcome.page.items.isEmpty &&
+                outcome.posts.isEmpty)
+              AppEmptyState(
+                title: widget.draft.filter.query.isEmpty
+                    ? '没有符合条件的条目'
+                    : '没有找到与 "${widget.draft.filter.query}" 相关的书',
+                message: '检查错别字 / 减少筛选条件 / 试试 2 字简称',
+                svgIcon: 'search',
+                // §5.3（行 393）：空态给「贴吧在线搜索」入口（P2-2）→ 切在线 Tab 并手动触发一次。
+                action: widget.draft.filter.query.trim().isEmpty
+                    ? null
+                    : AppButton(
+                        label: '贴吧在线搜索',
+                        kind: AppButtonKind.outline,
+                        onPressed: () {
+                          ref.read(searchTabProvider.notifier).state =
+                              SearchTab.online;
+                          ref
+                              .read(onlineSearchProvider.notifier)
+                              .search(widget.draft.filter.query);
+                        },
+                      ),
+              ),
+            if (outcome != null && outcome.page.items.isNotEmpty) ...<Widget>[
+              StaggerPanel(
+                spacing: s.cardGap,
+                switchKey: ValueKey<SearchFilter>(effective),
+                children: <Widget>[
+                  for (int i = 0; i < items.length; i++)
+                    _GroupHitCard(
+                      key: tocKeyAt(i),
+                      hit: items[i],
+                      draft: widget.draft,
+                    ),
+                ],
+              ),
+              if (outcome.page.hasMore) ...<Widget>[
+                SizedBox(height: s.space5),
+                Center(
+                  child: AppButton(
+                    label: '加载更多',
+                    kind: AppButtonKind.outline,
+                    onPressed: () =>
+                        ref.read(resultPageProvider.notifier).state = pages + 1,
                   ),
                 ),
               ],
             ],
-          ),
-          SizedBox(height: s.space3),
-          if (outcome == null && async.isLoading) ...<Widget>[
-            for (int i = 0; i < 5; i++)
-              Padding(
-                padding: EdgeInsets.only(bottom: s.cardGap),
-                child: SkeletonBlock(height: 110),
+            if (outcome != null && outcome.posts.isNotEmpty) ...<Widget>[
+              SizedBox(height: s.space4),
+              Text(
+                '帖子原文 · ${outcome.postTotal}',
+                style: t.headline.copyWith(color: c.text),
               ),
-          ],
-          if (outcome == null && async.hasError)
-            AppEmptyState(
-              title: '查询失败',
-              svgIcon: 'alert',
-              action: AppButton(
-                label: '重试',
-                kind: AppButtonKind.outline,
-                onPressed: () => ref.invalidate(searchResultProvider(effective)),
-              ),
-            ),
-          if (outcome != null && outcome.page.items.isEmpty && outcome.posts.isEmpty)
-            AppEmptyState(
-              title: widget.draft.filter.query.isEmpty
-                  ? '没有符合条件的条目'
-                  : '没有找到与 "${widget.draft.filter.query}" 相关的书',
-              message: '检查错别字 / 减少筛选条件 / 试试 2 字简称',
-              svgIcon: 'search',
-              // §5.3（行 393）：空态给「贴吧在线搜索」入口（P2-2）→ 切在线 Tab 并手动触发一次。
-              action: widget.draft.filter.query.trim().isEmpty
-                  ? null
-                  : AppButton(
-                      label: '贴吧在线搜索',
-                      kind: AppButtonKind.outline,
-                      onPressed: () {
-                        ref.read(searchTabProvider.notifier).state = SearchTab.online;
-                        ref.read(onlineSearchProvider.notifier).search(widget.draft.filter.query);
-                      },
+              SizedBox(height: s.space3),
+              for (final PostCardData post in outcome.posts)
+                Padding(
+                  padding: EdgeInsets.only(bottom: s.cardGap),
+                  child: PostCard(
+                    data: post,
+                    onTap: () => openPostDetail(
+                      context,
+                      ref,
+                      PostSelection(postId: post.post.id, snapshot: effective),
                     ),
-            ),
-          if (outcome != null && outcome.page.items.isNotEmpty) ...<Widget>[
-            StaggerPanel(
-              spacing: s.cardGap,
-              switchKey: ValueKey<SearchFilter>(effective),
-              children: <Widget>[
-                for (int i = 0; i < items.length; i++)
-                  _GroupHitCard(key: tocKeyAt(i), hit: items[i], draft: widget.draft),
-              ],
-            ),
-            if (outcome.page.hasMore) ...<Widget>[
-              SizedBox(height: s.space5),
-              Center(
-                child: AppButton(
-                  label: '加载更多',
-                  kind: AppButtonKind.outline,
-                  onPressed: () => ref.read(resultPageProvider.notifier).state = pages + 1,
+                    onBookTap: (_) {},
+                  ),
                 ),
-              ),
+              if (effective.offset + outcome.posts.length < outcome.postTotal)
+                TextButton(
+                  onPressed: () =>
+                      ref.read(resultPageProvider.notifier).state = pages + 1,
+                  child: const Text('加载更多帖子'),
+                ),
             ],
           ],
-          if (outcome != null && outcome.posts.isNotEmpty) ...<Widget>[
-            SizedBox(height: s.space4),
-            Text('帖子原文 · ${outcome.postTotal}', style: t.headline.copyWith(color: c.text)),
-            SizedBox(height: s.space3),
-            for (final PostCardData post in outcome.posts)
-              Padding(
-                padding: EdgeInsets.only(bottom: s.cardGap),
-                child: PostCard(
-                  data: post,
-                  onTap: () => openPostDetail(context, ref, PostSelection(postId: post.post.id, snapshot: effective)),
-                  onBookTap: (_) {},
-                ),
-              ),
-            if (effective.offset + outcome.posts.length < outcome.postTotal)
-              TextButton(onPressed: () => ref.read(resultPageProvider.notifier).state = pages + 1, child: const Text('加载更多帖子')),
-          ],
-        ],
         ),
       ),
     );
@@ -1352,7 +1554,12 @@ class _KindCount extends StatelessWidget {
       children: <Widget>[
         _CountDot(color: color),
         SizedBox(width: s.space1),
-        Text(label, style: AppTypography.tabular(t.caption.copyWith(color: color, fontWeight: FontWeight.w600))),
+        Text(
+          label,
+          style: AppTypography.tabular(
+            t.caption.copyWith(color: color, fontWeight: FontWeight.w600),
+          ),
+        ),
       ],
     );
   }
@@ -1416,7 +1623,11 @@ class _GroupHitCard extends StatelessWidget {
                 ),
               ),
               if ((hit.author ?? '').isNotEmpty)
-                Text(hit.author!, maxLines: 1, style: t.secondary.copyWith(color: c.textSecondary)),
+                Text(
+                  hit.author!,
+                  maxLines: 1,
+                  style: t.secondary.copyWith(color: c.textSecondary),
+                ),
             ],
           ),
           SizedBox(height: s.space2),
@@ -1431,26 +1642,40 @@ class _GroupHitCard extends StatelessWidget {
                   runSpacing: s.space1,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: <Widget>[
-                    _KindCount(color: c.textSecondary, label: '${hit.scanCount} 扫书'),
-                    _KindCount(color: c.recommend, label: '${hit.recommendCount} 推荐'),
+                    _KindCount(
+                      color: c.textSecondary,
+                      label: '${hit.scanCount} 扫书',
+                    ),
+                    _KindCount(
+                      color: c.recommend,
+                      label: '${hit.recommendCount} 推荐',
+                    ),
                     GestureDetector(
                       onTap: hit.groupId == null
                           ? null
                           : () => openBookDetail(
-                                context,
-                                hit.groupId!,
-                                snapshot: draft.filter,
-                                highlight: draft.filter.query,
-                                initialFilter: SemanticFilter.avoid,
-                              ),
-                      child: _KindCount(color: c.danger, label: '${hit.avoidCount} 排雷'),
+                              context,
+                              hit.groupId!,
+                              snapshot: draft.filter,
+                              highlight: draft.filter.query,
+                              initialFilter: SemanticFilter.avoid,
+                            ),
+                      child: _KindCount(
+                        color: c.danger,
+                        label: '${hit.avoidCount} 排雷',
+                      ),
                     ),
                   ],
                 ),
               ),
               if (hit.latestDate != null) ...<Widget>[
                 SizedBox(width: s.space2),
-                Text(hit.latestDate!, style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted))),
+                Text(
+                  hit.latestDate!,
+                  style: AppTypography.tabular(
+                    t.caption.copyWith(color: c.textMuted),
+                  ),
+                ),
               ],
             ],
           ),
@@ -1470,7 +1695,9 @@ class _GroupHitCard extends StatelessWidget {
             Wrap(
               spacing: s.space2,
               runSpacing: s.space1,
-              children: <Widget>[for (final String ch in hit.channels) MetaChip(label: ch)],
+              children: <Widget>[
+                for (final String ch in hit.channels) MetaChip(label: ch),
+              ],
             ),
           ],
         ],
@@ -1489,6 +1716,8 @@ class _SearchTabs extends StatelessWidget {
     required this.onlineForums,
     required this.onlineForum,
     required this.onForumChanged,
+    required this.expanded,
+    required this.onExpand,
     this.showFilters = false,
     this.canClear = false,
     this.onClear,
@@ -1497,6 +1726,8 @@ class _SearchTabs extends StatelessWidget {
 
   final SearchTab tab;
   final ValueChanged<SearchTab> onChanged;
+  final bool expanded;
+  final VoidCallback onExpand;
 
   /// 本地库才有筛选动作（清除 / 确认）；在线 Tab 不显示。
   final bool showFilters;
@@ -1516,6 +1747,7 @@ class _SearchTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     final AppColors c = AppColors.of(context);
     final AppSpacing s = AppSpacing.of(context);
+    final AppMotionTheme motion = AppMotionTheme.of(context);
     // 动作组（清除 / 确认 / 目录）**贴右对齐**：分段控件与 Spacer 按 8:1 分余量，
     // Expanded(tight) 吃满整份弹性槽 —— 旧写法 Flexible(loose) 用不满时余量会落在
     // 行尾（动作组右侧），动作组看起来不贴右（用户口径：改成居右对齐）。
@@ -1525,7 +1757,10 @@ class _SearchTabs extends StatelessWidget {
     // 行内边距上下同档（space2 / space2）：旧写法下边距 0 → 分段控件与「目录」钮
     // 贴着下方发丝线，看上去没居中（用户口径：这一行上下要对齐）。
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: s.pagePadding, vertical: s.space2),
+      padding: EdgeInsets.symmetric(
+        horizontal: s.pagePadding,
+        vertical: s.space2,
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
@@ -1539,16 +1774,59 @@ class _SearchTabs extends StatelessWidget {
                 spacing: s.space2,
                 runSpacing: s.space2,
                 children: <Widget>[
-                  SegmentedPill<SearchTab>(
-                    options: const <(SearchTab, String)>[
-                      (SearchTab.local, '本地库'),
-                      (SearchTab.online, '贴吧在线'),
-                    ],
-                    selected: tab,
-                    onChanged: onChanged,
+                  AnimatedSize(
+                    duration: motion.reduceMotion
+                        ? Duration.zero
+                        : motion.switch_.duration,
+                    curve: motion.switch_.curve,
+                    alignment: Alignment.centerLeft,
+                    child: AnimatedSwitcher(
+                      duration: motion.switch_.duration,
+                      switchInCurve: motion.enter.curve,
+                      switchOutCurve: motion.exit.curve,
+                      child: expanded
+                          ? SingleChildScrollView(
+                              key: const ValueKey<String>(
+                                'search-sources-expanded',
+                              ),
+                              scrollDirection: Axis.horizontal,
+                              child: SegmentedPill<SearchTab>(
+                                compact: true,
+                                options: <(SearchTab, String)>[
+                                  for (final source in SearchTab.values)
+                                    (source, source.label),
+                                ],
+                                selected: tab,
+                                onChanged: onChanged,
+                              ),
+                            )
+                          : TextButton(
+                              key: const ValueKey<String>(
+                                'search-sources-collapsed',
+                              ),
+                              onPressed: onExpand,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  Flexible(
+                                    child: Text(
+                                      tab.label,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: AppTypography.of(
+                                        context,
+                                      ).caption.copyWith(color: c.text),
+                                    ),
+                                  ),
+                                  SizedBox(width: s.space1),
+                                  AppIcon('chev', size: 16, color: c.textMuted),
+                                ],
+                              ),
+                            ),
+                    ),
                   ),
                   // 吧切换只在在线档出现（本地库检索与吧无关，不占位）。
-                  if (tab == SearchTab.online)
+                  if (tab == SearchTab.online && !expanded)
                     SegmentedPill<String>(
                       options: <(String, String)>[
                         for (final String f in onlineForums) (f, f),
@@ -1560,24 +1838,39 @@ class _SearchTabs extends StatelessWidget {
               ),
             ),
           ),
-          const Spacer(),
-          if (showFilters) ...<Widget>[
-            // 清除 = close / 确认 = check（设计令牌 SVG，AppIcon 单一出口）。
-            _IconSlotButton(
-              tooltip: '清除筛选',
-              svgIcon: 'close',
-              enabled: canClear,
-              onPressed: onClear,
+          SizedBox(width: s.space1),
+          AnimatedSize(
+            duration: motion.reduceMotion
+                ? Duration.zero
+                : motion.switch_.duration,
+            curve: motion.switch_.curve,
+            child: AnimatedSwitcher(
+              duration: motion.switch_.duration,
+              child: !showFilters
+                  ? const SizedBox.shrink()
+                  : Row(
+                      key: const ValueKey<String>('search-filter-actions'),
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        // 清除 = close / 确认 = check（设计令牌 SVG，AppIcon 单一出口）。
+                        _IconSlotButton(
+                          tooltip: '清除筛选',
+                          svgIcon: 'close',
+                          enabled: canClear,
+                          onPressed: onClear,
+                        ),
+                        SizedBox(width: s.space2),
+                        _IconSlotButton(
+                          tooltip: '确认筛选',
+                          svgIcon: 'check',
+                          color: c.accentStrong,
+                          onPressed: onConfirm,
+                        ),
+                        SizedBox(width: s.space1),
+                      ],
+                    ),
             ),
-            SizedBox(width: s.space2),
-            _IconSlotButton(
-              tooltip: '确认筛选',
-              svgIcon: 'check',
-              color: c.accentStrong,
-              onPressed: onConfirm,
-            ),
-            SizedBox(width: s.space1),
-          ],
+          ),
           _IconSlotButton(tooltip: '目录', svgIcon: 'list', onPressed: onToc),
         ],
       ),
@@ -1598,14 +1891,23 @@ class _OnlineBadge extends StatelessWidget {
       height: AppMetrics.badgeHeight,
       // 徽标水平 padding 10（badge 规格 index.html:277，与榜单页 _KindBadge 同源；间距体系无此档）。
       padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(color: c.infoSoft, borderRadius: AppRadius.pillBorder),
+      decoration: BoxDecoration(
+        color: c.infoSoft,
+        borderRadius: AppRadius.pillBorder,
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           AppIcon('wifi', size: 13, color: c.info),
           SizedBox(width: s.space1),
-          Text('实时联网·匿名',
-              style: t.label.copyWith(fontWeight: FontWeight.w600, color: c.info, letterSpacing: 0)),
+          Text(
+            '实时联网·匿名',
+            style: t.label.copyWith(
+              fontWeight: FontWeight.w600,
+              color: c.info,
+              letterSpacing: 0,
+            ),
+          ),
         ],
       ),
     );
@@ -1657,10 +1959,13 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
     final String query = ref.watch(searchDraftProvider).filter.query.trim();
     // 当前选中的吧（结果里记的是产出时的吧名，两者不一致 = 该结果已作废）。
     final String forum = ref.watch(onlineForumProvider);
-    final OnlineSearchNotifier notifier = ref.read(onlineSearchProvider.notifier);
+    final OnlineSearchNotifier notifier = ref.read(
+      onlineSearchProvider.notifier,
+    );
     final OnlineSort sort = ref.watch(onlineSortProvider);
     // 输入词/吧/排序已变而结果尚未跟上 → 回手动触发入口，不拿旧条件结果冒充新条件。
-    final bool stale = online.query != query || online.forum != forum || online.sort != sort;
+    final bool stale =
+        online.query != query || online.forum != forum || online.sort != sort;
     final List<OnlineThread> rows = online.threads;
 
     // 目录登记（P2-5）：只列已加载帖子行，顺序与列表一致（随排序档变化）。
@@ -1683,19 +1988,30 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
         controller: _controller,
         // 目录跳转兜底期间临时撑到列表全高（见 _ResultsTocJump），常态 null = 框架默认。
         cacheExtent: tocCacheExtent,
-        padding: EdgeInsets.fromLTRB(s.pagePadding, s.space3, s.pagePadding, s.space8),
+        padding: EdgeInsets.fromLTRB(
+          s.pagePadding,
+          s.space3,
+          s.pagePadding,
+          s.space8,
+        ),
         children: <Widget>[
           Row(
             children: <Widget>[
               const _OnlineBadge(),
               const Spacer(),
               if (online.status == OnlineStatus.ready && !stale)
-                Text('${rows.length} 条',
-                    style: AppTypography.tabular(t.secondary.copyWith(color: c.textMuted))),
+                Text(
+                  '${rows.length} 条',
+                  style: AppTypography.tabular(
+                    t.secondary.copyWith(color: c.textMuted),
+                  ),
+                ),
             ],
           ),
           SizedBox(height: s.space3),
-          if (online.status == OnlineStatus.loading && online.page == 0 && !stale)
+          if (online.status == OnlineStatus.loading &&
+              online.page == 0 &&
+              !stale)
             // 加载态：骨架卡 ×5（§5.4 同规格）。
             for (int i = 0; i < 5; i++)
               Padding(
@@ -1704,7 +2020,9 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
               )
           else if (online.status == OnlineStatus.error && !stale)
             _OnlineErrorState(online: online, query: query, notifier: notifier)
-          else if ((online.status == OnlineStatus.ready || online.isAppending) && !stale)
+          else if ((online.status == OnlineStatus.ready ||
+                  online.isAppending) &&
+              !stale)
             if (online.threads.isEmpty && !online.isAppending)
               AppEmptyState(
                 title: '贴吧里没有搜到与 "$query" 相关的帖子',
@@ -1717,14 +2035,18 @@ class _OnlineResultsViewState extends ConsumerState<_OnlineResultsView>
               SizedBox(height: s.space3),
               StaggerPanel(
                 spacing: s.cardGap,
-                switchKey: ValueKey<String>('${online.query}#${online.sort.name}#${online.page}'),
+                switchKey: ValueKey<String>(
+                  '${online.query}#${online.sort.name}#${online.page}',
+                ),
                 children: <Widget>[
                   for (int i = 0; i < rows.length; i++)
                     _OnlineThreadCard(key: tocKeyAt(i), thread: rows[i]),
                 ],
               ),
               SizedBox(height: s.space5),
-              Center(child: _OnlineFooter(online: online, notifier: notifier)),
+              Center(
+                child: _OnlineFooter(online: online, notifier: notifier),
+              ),
             ]
           else
             // idle / 过期：手动触发入口（单请求口径，不做自动搜索）。
@@ -1763,6 +2085,7 @@ class _OnlineSortRow extends ConsumerWidget {
         ref.read(onlineSearchProvider.notifier).search(online.query, sort: v);
       }
     }
+
     return Row(
       children: <Widget>[
         CountChip(
@@ -1783,7 +2106,11 @@ class _OnlineSortRow extends ConsumerWidget {
 
 /// 在线错误态（分类文案；format → §8.12 降级矩阵「接口签名/协议变更」行）。
 class _OnlineErrorState extends StatelessWidget {
-  const _OnlineErrorState({required this.online, required this.query, required this.notifier});
+  const _OnlineErrorState({
+    required this.online,
+    required this.query,
+    required this.notifier,
+  });
 
   final OnlineSearchState online;
   final String query;
@@ -1791,23 +2118,27 @@ class _OnlineErrorState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (String title, String message, String svgIcon) = switch (online.errorKind) {
+    final (
+      String title,
+      String message,
+      String svgIcon,
+    ) = switch (online.errorKind) {
       // §8.12：接口变更 → 「贴吧接口似乎已变更」+ 检查更新引导（离线核心不受影响）。
       OnlineErrorKind.format => (
-          '贴吧接口似乎已变更',
-          '在线接口返回结构与归档口径不符（${online.errorDetail}）。离线库检索不受影响；请检查 App 更新，或稍后再试。',
-          'alert'
-        ),
+        '贴吧接口似乎已变更',
+        '在线接口返回结构与归档口径不符（${online.errorDetail}）。离线库检索不受影响；请检查 App 更新，或稍后再试。',
+        'alert',
+      ),
       OnlineErrorKind.rateLimited => (
-          '触发贴吧风控',
-          '匿名通道被限流（${online.errorDetail}）。请稍后再试，无需登录。',
-          'clock'
-        ),
+        '触发贴吧风控',
+        '匿名通道被限流（${online.errorDetail}）。请稍后再试，无需登录。',
+        'clock',
+      ),
       OnlineErrorKind.server => (
-          '贴吧服务异常',
-          online.errorDetail.isEmpty ? '请稍后再试' : online.errorDetail,
-          'alert'
-        ),
+        '贴吧服务异常',
+        online.errorDetail.isEmpty ? '请稍后再试' : online.errorDetail,
+        'alert',
+      ),
       _ => ('网络异常', '请检查网络连接后重试。', 'wifi'),
     };
     return AppEmptyState(
@@ -1877,8 +2208,12 @@ class _OnlineThreadCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
               Expanded(
-                child: Text(title,
-                    maxLines: 2, overflow: TextOverflow.ellipsis, style: t.cardTitle.copyWith(color: c.text)),
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: t.cardTitle.copyWith(color: c.text),
+                ),
               ),
               // 整卡点击已让位给进在线帖子页，「打开原帖」收敛到此显式按钮（避免功能丢失）。
               IconButton(
@@ -1891,7 +2226,10 @@ class _OnlineThreadCard extends StatelessWidget {
           ),
           if (thread.excerpt.isNotEmpty) ...<Widget>[
             SizedBox(height: s.space2),
-            Text(thread.excerpt, style: t.secondary.copyWith(color: c.textSecondary)),
+            Text(
+              thread.excerpt,
+              style: t.secondary.copyWith(color: c.textSecondary),
+            ),
           ],
           SizedBox(height: s.space2),
           Row(
@@ -1902,20 +2240,32 @@ class _OnlineThreadCard extends StatelessWidget {
               ],
               if (thread.author.isNotEmpty) ...<Widget>[
                 Flexible(
-                  child: Text(thread.author,
-                      maxLines: 1, overflow: TextOverflow.ellipsis, style: t.caption.copyWith(color: c.textMuted)),
+                  child: Text(
+                    thread.author,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: t.caption.copyWith(color: c.textMuted),
+                  ),
                 ),
                 SizedBox(width: s.space2),
               ],
               if (thread.replyNum > 0) ...<Widget>[
-                Text('${thread.replyNum} 回复',
-                    style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted))),
+                Text(
+                  '${thread.replyNum} 回复',
+                  style: AppTypography.tabular(
+                    t.caption.copyWith(color: c.textMuted),
+                  ),
+                ),
                 SizedBox(width: s.space2),
               ],
               const Spacer(),
               if (thread.createTime > 0)
-                Text(formatOnlineDate(thread.createTime),
-                    style: AppTypography.tabular(t.caption.copyWith(color: c.textMuted))),
+                Text(
+                  formatOnlineDate(thread.createTime),
+                  style: AppTypography.tabular(
+                    t.caption.copyWith(color: c.textMuted),
+                  ),
+                ),
             ],
           ),
         ],

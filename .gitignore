@@ -13,6 +13,8 @@ tools/*
 !tools/smoke_cli.ps1
 !tools/release_assets.ps1
 !tools/test_release_assets.ps1
+!tools/android_release_manifest.py
+!tools/test_android_release_manifest.py
 !tools/render_docs.js
 !tools/check_docs.js
 !tools/package.json

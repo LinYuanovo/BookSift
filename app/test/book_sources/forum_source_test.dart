@@ -29,6 +29,51 @@ class ForumAdapter implements HttpClientAdapter {
 void main() {
   final Uri base = Uri.parse('https://forum.example/');
 
+  test(
+    'forum addresses add HTTPS for bare domains and preserve ports and paths',
+    () {
+      for (final (String input, String expected) address in <(String, String)>[
+        ('forum.example', 'https://forum.example/'),
+        ('  forum.example/  ', 'https://forum.example/'),
+        ('FORUM.example/books', 'https://forum.example/books/'),
+        ('forum.example:8443/books', 'https://forum.example:8443/books/'),
+        ('//forum.example/books', 'https://forum.example/books/'),
+        ('https://forum.example/books/', 'https://forum.example/books/'),
+      ]) {
+        final Uri normalized = validateForumBase(address.$1);
+        expect(normalized.toString(), address.$2, reason: address.$1);
+        expect(validateForumBase(normalized.toString()), normalized);
+      }
+      expect(validateForumBase('forum.example').origin, base.origin);
+    },
+  );
+
+  test(
+    'address completion keeps malformed addresses and explicit non-HTTPS schemes invalid',
+    () {
+      for (final String input in <String>[
+        '',
+        '   ',
+        '/books',
+        'forum .example',
+        'http://forum.example',
+        'ftp://forum.example',
+        'javascript:alert(1)',
+        'user@forum.example',
+        'forum.example?token=value',
+        'forum.example#section',
+        'https://forum.example?token=value',
+        'https://forum.example#section',
+      ]) {
+        expect(
+          () => validateForumBase(input),
+          throwsA(isA<SourceFailure>()),
+          reason: input,
+        );
+      }
+    },
+  );
+
   test('navigation only accepts labeled HTTPS forum links', () {
     expect(
       navigationTarget(

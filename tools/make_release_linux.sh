@@ -6,7 +6,7 @@
 #   → preflight（flutter 在 PATH / pubspec 在位）
 #   → flutter build linux --release（timeout 墙钟看门狗，日志 tee 到 app/build/release_logs/）
 #   → 产物闸门（booksift 可执行 / lib/libsqlite3.so / data/flutter_assets）
-#   → 打包 dist_release/BookSift-linux-x64-v<VERSION>.tar.gz + .sha256（纯 64 位 hex 一行）
+#   → 打包 dist_release/BookSift-linux-x64-v<VERSION>.tar.gz，校验值写入 version.json
 #   → 打印 dist_release 清单
 #
 # 退出码：0 成功 / 2 preflight 受阻 / 3 构建失败 / 4 产物闸门未过或打包失败
@@ -39,6 +39,9 @@ fail() { printf '✗ %s\n' "$1" >&2; exit "${2:-1}"; }
 step '1/4 版本号与 preflight'
 if ! command -v "$FLUTTER_BIN" >/dev/null 2>&1; then
   fail "找不到 flutter（FLUTTER_BIN=$FLUTTER_BIN）——装好 Flutter SDK 或指定 FLUTTER_BIN=/path/to/flutter 后重跑。" 2
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  fail '缺少 python3，无法生成 version.json。' 2
 fi
 if [[ ! -f "$APP_DIR/pubspec.yaml" ]]; then
   fail "缺 $APP_DIR/pubspec.yaml ——仓库不完整，请确认脚本位于仓库 tools/ 目录内。" 2
@@ -111,13 +114,25 @@ SHA256="$(sha256sum "$TAR_PATH" | awk '{print $1}')"
 if [[ ! "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then
   fail "打包失败：sha256 结果异常 '$SHA256'。" 4
 fi
-# .sha256 口径与 tools/make_release.ps1 的 Write-Sha256File 一致：纯 64 位 hex 一行
-printf '%s\n' "$SHA256" > "$TAR_PATH.sha256"
+python3 - "$DIST_DIR/version.json" "$VERSION" "$TAR_PATH" "$SHA256" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+manifest_path = Path(sys.argv[1])
+version, package, checksum = sys.argv[2:]
+manifest = json.loads(manifest_path.read_text(encoding='utf-8-sig')) if manifest_path.exists() else {}
+if manifest.get('app', {}).get('version') != version:
+    manifest = {'app': {'version': version}}
+manifest['app']['linux_url'] = f'https://github.com/LinYuanovo/BookSift/releases/download/v{version}/{Path(package).name}'
+manifest['app']['linux_sha256'] = checksum
+manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+PY
 echo "  ✓ $PKG_NAME.tar.gz  $(du -h "$TAR_PATH" | cut -f1)"
 echo "    sha256 $SHA256"
 
 # ── 4. 清单 ─────────────────────────────────────────────────────────────
 step '4/4 dist_release 清单'
 ls -lh "$DIST_DIR"
-printf '\n✓ 完成：%s（校验文件 %s.sha256）\n' "$TAR_PATH" "$TAR_PATH"
+printf '\n✓ 完成：%s（校验值见 %s/version.json）\n' "$TAR_PATH" "$DIST_DIR"
 exit 0

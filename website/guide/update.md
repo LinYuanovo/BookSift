@@ -22,15 +22,21 @@ App 程序包更新与种子数据包是**两条独立的线**：换版本不会
 
 更新检查使用两个独立来源：GitHub Releases 是主源，静态 `version.json` 是可配置备源。主源失败时才切换备源；两个来源都失败时不影响 App 的正常使用。两边都按同一套五平台字段与资产命名发布：
 
-| 客户端 | `version.json` 下载字段 | Release 资产名 | 校验字段 / 文件 |
+| 客户端 | `version.json` 下载字段 | Release 资产名 | 校验字段 |
 | --- | --- | --- | --- |
-| Android | `app.apk_url` | `BookSift-android-v{version}.apk` | `app.apk_sha256` / `.sha256` |
-| iOS | `app.ios_url` | `BookSift-ios-v{version}.ipa` | `app.ios_sha256` / `.sha256` |
-| Windows | `app.windows_url` | `BookSift-windows-x64-v{version}.zip` | `app.windows_sha256` / `.sha256` |
-| macOS | `app.macos_url` | `BookSift-macos-universal-v{version}.zip` | `app.macos_sha256` / `.sha256` |
-| Linux | `app.linux_url` | `BookSift-linux-x64-v{version}.tar.gz` | `app.linux_sha256` / `.sha256` |
+| Android | `app.apk_url` | `BookSift-android-v{version}.apk` | `app.apk_sha256` |
+| iOS | `app.ios_url` | `BookSift-ios-v{version}.ipa` | `app.ios_sha256` |
+| Windows | `app.windows_url` | `BookSift-windows-x64-v{version}.zip` | `app.windows_sha256` |
+| macOS | `app.macos_url` | `BookSift-macos-universal-v{version}.zip` | `app.macos_sha256` |
+| Linux | `app.linux_url` | `BookSift-linux-x64-v{version}.tar.gz` | `app.linux_sha256` |
 
-Release 中每个程序包旁都应有同名 `.sha256` 文件；静态 JSON 可提供对应的 `*_sha256` 值。当前平台缺少下载字段或资产时，不会拿其他平台的包代替。
+所有程序包的 SHA-256 统一写入 Release 附件 `version.json`，不再发布独立 `.sha256` 文件。新版更新器读取该清单，要求清单版本与 Release tag 一致、下载地址与对应附件一致且摘要有效；清单异常时报告检查失败或切换备源。当前平台缺少下载字段或资产时，不会拿其他平台的包代替。
+
+新版仍兼容未提供清单的旧 Release 的独立校验文件。已安装的旧客户端仍能检查和下载通用包，但它们不会从 GitHub Release 的 `version.json` 读取摘要，因此第一次过渡更新缺少发布摘要比对；升级后使用新的清单校验逻辑。
+
+Android 另提供 `arm64-v8a`、`armeabi-v7a`、`x86_64` 三种精简 APK。它们不附独立 `.sha256` 文件，下载链接、文件名、字节数和 SHA-256 集中在 `version.json` 的 `app.android_apks` 中，以架构名称为键，对应 `url`、`file_name`、`size`、`sha256` 字段。应用内更新仍精确选择通用 APK，不会把架构包误选为更新包。
+
+精简包通过单独指定 `--target-platform` 构建，和通用 APK 使用相同的 `versionName` / `versionCode`；发布前自动读取实际 APK 元数据，校验包名、版本与架构。这样可以在下次发布时从精简包覆盖升级到通用包，不受 Flutter `--split-per-abi` 的构建号偏移影响。
 
 ## 应用内下载与续传
 
@@ -38,7 +44,7 @@ Release 中每个程序包旁都应有同名 `.sha256` 文件；静态 JSON 可�
 
 - 使用 HTTP `Range` 按区间分块并发下载多个区间；
 - 在应用支持目录下的 `update-cache` 持久化下载 manifest 和 `.part` 分块文件。manifest 记录文件身份与各区间进度；取消下载或断网后，可从已有区间继续，形成断点续传；
-- 所有区间合并后，必须对完整文件做 SHA-256 校验，和发布的 `.sha256` / `*_sha256` 值一致才算下载完成；
+- 所有区间合并后，对完整文件做 SHA-256 校验，和 `version.json` 中的摘要一致才算下载完成；无清单的历史发布仍使用原独立校验文件，缺摘要时沿用历史兼容行为；
 - 同一版本、资产和校验值对应的完整文件已在缓存中时，直接复用完整文件，不重复下载。缓存只保存程序包，不保存或替代 seed 数据包。
 
 下载完成后的动作按平台区分：

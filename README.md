@@ -64,13 +64,13 @@
 
 | 平台 | 文件 | 说明 |
 | --- | --- | --- |
-| Android | [`BookSift-android-v1.0.3.apk`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.3/BookSift-android-v1.0.3.apk) | Android 7.0+，允许安装未知应用 |
-| iOS | [`BookSift-ios-v1.0.3.ipa`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.3/BookSift-ios-v1.0.3.ipa) | 未签名包需使用自己的证书签名 |
-| Windows | [`BookSift-windows-x64-v1.0.3.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.3/BookSift-windows-x64-v1.0.3.zip) | Windows 10/11，完整解压后运行 `booksift.exe` |
-| macOS | [`BookSift-macos-universal-v1.0.3.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.3/BookSift-macos-universal-v1.0.3.zip) | 包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
-| Linux | [`BookSift-linux-x64-v1.0.3.tar.gz`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.3/BookSift-linux-x64-v1.0.3.tar.gz) | Ubuntu 22.04+，需 GTK3 / libsecret |
+| Android | [`BookSift-android-v1.0.4.apk`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.4/BookSift-android-v1.0.4.apk) | Android 7.0+，允许安装未知应用 |
+| iOS | [`BookSift-ios-v1.0.4.ipa`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.4/BookSift-ios-v1.0.4.ipa) | 未签名包需使用自己的证书签名 |
+| Windows | [`BookSift-windows-x64-v1.0.4.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.4/BookSift-windows-x64-v1.0.4.zip) | Windows 10/11，完整解压后运行 `booksift.exe` |
+| macOS | [`BookSift-macos-universal-v1.0.4.zip`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.4/BookSift-macos-universal-v1.0.4.zip) | 包含 arm64 与 x86_64，未签名包可能被 Gatekeeper 拦截 |
+| Linux | [`BookSift-linux-x64-v1.0.4.tar.gz`](https://github.com/LinYuanovo/BookSift/releases/download/v1.0.4/BookSift-linux-x64-v1.0.4.tar.gz) | Ubuntu 22.04+，需 GTK3 / libsecret |
 
-发布页不一定同时提供所有平台的包；每个文件旁都有同名 `.sha256`，建议用 `certutil -hashfile <文件> SHA256` 校验。
+发布页不一定同时提供所有平台的包；所有校验值统一放在 `version.json`，建议用 `certutil -hashfile <文件> SHA256` 计算后与清单比对。
 
 应用内更新详见[在线更新契约](website/guide/update.md)。
 
@@ -136,8 +136,8 @@ pwsh tools/run_tests_safe.ps1
 推送与 `app/pubspec.yaml` 版本一致的 tag 可触发 GitHub Actions 构建与发布：
 
 ```powershell
-git tag v1.0.3
-git push origin v1.0.3
+git tag v1.0.4
+git push origin v1.0.4
 ```
 
 </details>
