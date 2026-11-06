@@ -19,6 +19,8 @@ import '../../data/db/app_database.dart';
 import '../../data/repo/database_provider.dart';
 import '../../data/repo/queries.dart';
 import '../../data/repo/queries_providers.dart';
+import '../../data/reading_session.dart';
+import '../../data/reading_session_provider.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_motion.dart';
 import '../../theme/app_radius.dart';
@@ -365,6 +367,9 @@ class _ContentDetailPageState extends ConsumerState<ContentDetailPage> {
               itemBuilder: (BuildContext context, int i) => _PostBody(
                 key: ValueKey<int>(ids[i]),
                 postId: ids[i],
+                active: i == _index,
+                initialScrollOffset: ids[i] == widget.selection.postId
+                    ? widget.selection.initialScrollOffset : null,
                 // 书签快照要记「结果列表位置」（§5.6）：以进入时的 position 为基准，按 pager 偏移换算。
                 // siblings 即结果 id 序列时 position == initialIndex，结果就是 i；
                 // 单帖进入（无 siblings）则原样保留调用方给的 position。
@@ -405,6 +410,8 @@ class _PostBody extends ConsumerStatefulWidget {
     required this.position,
     required this.selectMode,
     required this.onEnterSelectMode,
+    this.active = true,
+    this.initialScrollOffset,
     this.snapshot,
     this.highlight,
     this.initialFloorSeq,
@@ -412,6 +419,9 @@ class _PostBody extends ConsumerStatefulWidget {
     this.searchWord = '',
     this.searchFocus,
   });
+
+  final bool active;
+  final double? initialScrollOffset;
 
   final int postId;
   final int position;
@@ -443,7 +453,34 @@ class _PostBody extends ConsumerStatefulWidget {
 class _PostBodyState extends ConsumerState<_PostBody> {
   static const double _actionBarHeight = AppMetrics.minTouchTarget + 12;
 
-  final ScrollController _scrollController = ScrollController();
+  late final ScrollController _scrollController = ScrollController(
+    initialScrollOffset: widget.initialScrollOffset ?? 0,
+  );
+  ReadingSessionStore? _sessionStore;
+  bool _recordedInitialPosition = false;
+
+  @override
+  void initState() {
+    super.initState();
+    try {
+      _sessionStore = ref.read(readingSessionProvider);
+    } catch (_) {}
+    _scrollController.addListener(_rememberPosition);
+  }
+
+  void _rememberPosition() {
+    if (!mounted || !widget.active || !_scrollController.hasClients) return;
+    final PostDetailData? data = ref.read(postDetailProvider(widget.postId)).valueOrNull;
+    if (data == null) return;
+    _sessionStore?.record(ReadingSession(
+      savedAt: DateTime.now(),
+      postId: data.post.id,
+      postTid: data.post.tid,
+      title: data.post.title ?? '帖子 #${data.post.id}',
+      offset: _scrollController.offset.clamp(0, 10000000),
+      floorSeq: _firstVisibleFloorSeq(data),
+    ));
+  }
 
   /// 楼层锚点 key，按 floor.id（库内唯一）而非 seq 键控：
   /// 种子数据存在同帖多楼层 seq 相同的情况（大佬贴吧扫书每卡片一记 seq=1），
@@ -466,6 +503,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
 
   @override
   void dispose() {
+    _sessionStore?.flush();
     _scrollController.dispose();
     super.dispose();
   }
@@ -473,6 +511,9 @@ class _PostBodyState extends ConsumerState<_PostBody> {
   @override
   void didUpdateWidget(_PostBody oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _rememberPosition());
+    }
     // 任务 4：页内搜索焦点换楼层 → 定位到所在楼层（复用目录跳转路径）。
     // 只在楼层切换时滚动：同楼层内命中循环不重滚（楼层已在视口，避免长楼层
     // 反复被拽回层顶）；record 按值比较，焦点未动（打字未换首命中楼层）不触发。
@@ -502,6 +543,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     }
     _scheduleInitialFloorJump(data);
     _maybeRefreshImages(data);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _rememberPosition());
   }
 
   /// 书签/评价卡恢复定位（任务 1）：跳到 initialFloorId（floors.id，唯一）或
@@ -510,6 +552,7 @@ class _PostBodyState extends ConsumerState<_PostBody> {
   /// 优先按 [initialFloorId]（多书帖同 seq 下只有 id 能唯一定位到目标书所在楼）；
   /// 无 id 时才回落到 seq（旧书签只存了楼层号）。
   void _scheduleInitialFloorJump(PostDetailData data) {
+    if (widget.initialScrollOffset != null) return;
     final int? floorId = widget.initialFloorId;
     final int? seq = widget.initialFloorSeq;
     if ((floorId == null && seq == null) || _didInitialFloorJump) {
@@ -778,6 +821,10 @@ class _PostBodyState extends ConsumerState<_PostBody> {
     // 直接补一次定位（_scheduleInitialFloorJump 内部有 _didInitialFloorJump 去重，幂等）。
     if (data != null) {
       _scheduleInitialFloorJump(data);
+      if (!_recordedInitialPosition && widget.active) {
+        _recordedInitialPosition = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) => _rememberPosition());
+      }
     }
     return Column(
       children: <Widget>[

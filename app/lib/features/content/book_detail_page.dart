@@ -24,6 +24,7 @@ import '../home/cards.dart';
 import '../share/share_card.dart';
 import '../share/share_sheet.dart';
 import 'detail_slot.dart';
+import '../search/book_source_page.dart';
 
 /// 书聚合详情页（本产品核心差异化页面，§5.5）：
 /// 书名大标题 + 推荐/排雷计数对比（点击=筛选）+ 语义筛选 chips + 评价卡列表。
@@ -273,6 +274,10 @@ class _BookDetailPageState extends ConsumerState<BookDetailPage> {
               )
             : null,
         actions: <Widget>[
+          if (async.value != null)
+            IconButton(tooltip: '搜索下载本书', icon: const AppIcon('book'),
+              onPressed: () => openBookSourcePage(context, initialQuery: async.value!.group.nameDisplay ?? async.value!.group.nameNorm),
+            ),
           // 目录入口（评价条目跳转目录，§5.5 同款帖子目录语义；仅条目非空时显示）。
           if (entries.isNotEmpty)
             IconButton(

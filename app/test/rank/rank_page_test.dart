@@ -135,7 +135,7 @@ void main() {
     // word_count NULL 的《无字数书》出榜。
     expect(find.text('字数榜 · 全时段 Top10'), findsOneWidget);
     expect(find.text('字数'), findsOneWidget);
-    expect(find.text('字数榜仅收录带字数数据的书目；自采书目匹配到内置库同书后自动入榜'), findsOneWidget);
+    expect(find.text('按小说字数排序，提取原文中的明确字数标注；书评长度不计入，未知字数不入榜'), findsOneWidget);
     expect(find.text('《无字数书》'), findsNothing);
     // MAX(word_count) 降序：长剑行(3,000,000→300 万字) 榜首，小城烟火(980,000→98 万字) 次席。
     expect(
@@ -150,7 +150,7 @@ void main() {
     await tester.tap(find.text('字数'));
     await tester.pumpAndSettle();
     expect(find.text('推荐次数榜 · 全时段 Top10'), findsOneWidget);
-    expect(find.text('字数榜仅收录带字数数据的书目；自采书目匹配到内置库同书后自动入榜'), findsNothing);
+    expect(find.text('按小说字数排序，提取原文中的明确字数标注；书评长度不计入，未知字数不入榜'), findsNothing);
     expect(find.text('《无字数书》'), findsOneWidget);
   });
 

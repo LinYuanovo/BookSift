@@ -160,6 +160,7 @@ abstract final class AppMetrics {
   static const double rankRowMinHeight = 64; // §4 榜单行
   static const double emptyStateIconSize = 64; // §4 空态线稿插画 64px
   static const double fontPickerDialogWidth = 420;
+  static const double contentDialogWidth = 420;
   static const double fontPickerDialogHeight = 380;
   static const double fontSlotDropdownMaxWidth = 150;
 

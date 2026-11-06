@@ -12,6 +12,7 @@ import 'core/update/update_controller.dart';
 import 'core/widgets/window_title_bar.dart';
 import 'core/window/window_frame.dart';
 import 'data/seed_import_providers.dart';
+import 'data/reading_session_provider.dart';
 import 'theme/app_accent.dart';
 import 'theme/app_motion.dart';
 import 'theme/appearance_settings.dart';
@@ -68,6 +69,15 @@ class _BookSiftAppState extends ConsumerState<BookSiftApp> with WidgetsBindingOb
   @override
   void didChangeAccessibilityFeatures() {
     setState(() {});
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      try {
+        ref.read(readingSessionProvider).flush();
+      } catch (_) {}
+    }
   }
 
   @override

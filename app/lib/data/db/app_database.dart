@@ -328,13 +328,13 @@ class ContentDocuments extends Table {
 class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
-  /// v5 = 原始内容留档；v4 在 v3（书签楼层位置 bookmarks.floor_seq）之上补齐查询索引
+  /// v6 = FTS 仅监听正文列更新；v5 = 原始内容留档；v4 在 v3 上补齐查询索引
   /// （[_createQueryIndexes]）。此前真机 app.sqlite 全程无索引，检索/榜单/时间线/去重
   /// 均在全表扫（book_entries 5.3 万、floors 16.5 万行）。
   /// 新装用户由 onCreate 直接落 v5；v2/v3 逐级加列（带 DEFAULT/
   /// 可空列的 O(1) 元数据操作），v4 建查询索引，v5 仅新建留档表，无存量回填负担。
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -366,6 +366,20 @@ class AppDatabase extends _$AppDatabase {
       }
       if (from < 5) {
         await m.createTable(contentDocuments);
+      }
+      if (from < 6) {
+        final List<QueryRow> tables = await customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('book_fts','floor_fts')",
+        ).get();
+        final Set<String> names = tables.map((row) => row.read<String>('name')).toSet();
+        if (names.contains(bookFtsTable)) {
+          await customStatement('DROP TRIGGER IF EXISTS book_entries_au');
+          await createBookFtsTriggers(customStatement);
+        }
+        if (names.contains(floorFtsTable)) {
+          await customStatement('DROP TRIGGER IF EXISTS floors_au');
+          await createFloorFtsTriggers(customStatement);
+        }
       }
     },
   );

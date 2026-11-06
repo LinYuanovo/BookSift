@@ -130,6 +130,19 @@ jobs:
           (cd dist && sha256sum "BookSift-android-v${VERSION}.apk" | cut -d' ' -f1 > "BookSift-android-v${VERSION}.apk.sha256")
           ls -l dist
 
+      - name: 构建按架构精简 APK
+        working-directory: app
+        run: flutter build apk --release --split-per-abi
+
+      - name: 组装按架构精简 APK
+        run: |
+          set -euo pipefail
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            name="BookSift-android-${abi}-v${VERSION}.apk"
+            cp "app/build/app/outputs/flutter-apk/app-${abi}-release.apk" "dist/${name}"
+            (cd dist && sha256sum "${name}" | cut -d' ' -f1 > "${name}.sha256")
+          done
+
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:

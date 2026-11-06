@@ -34,6 +34,7 @@ import '../collect/collect_settings.dart';
 import '../home/cards.dart';
 import 'about_page.dart';
 import 'font_manage_page.dart';
+import 'storage_section.dart';
 
 /// 设置页（字体管理 / 主题模式 / 主题色 swatch / 减弱动效开关 / BDUSS / 数据包 / 并发 / 关于）。
 ///
@@ -126,6 +127,7 @@ class SettingsPage extends ConsumerWidget {
             child: Text('数据与存储', style: t.label.copyWith(color: colors.textMuted)),
           ),
           const _FtsIndexSection(),
+          const StorageSection(),
           // ── 关于小节（M3 §10.1：版本显示 / 双源更新检查 / 备源 URL 自定义）──
           Padding(
             padding: EdgeInsets.only(top: space.space8, bottom: space.space3),
@@ -434,7 +436,7 @@ class _FtsIndexSectionState extends ConsumerState<_FtsIndexSection> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              '删除后搜索会变慢（正文约 1–2 秒），并释放约 240 MB 存储。',
+              '删除后搜索会变慢，索引占用的空间将被回收。实际大小随书库内容变化。',
               style: t.body.copyWith(color: c.textSecondary),
             ),
             SizedBox(height: s.space2),
@@ -497,9 +499,9 @@ class _FtsIndexSectionState extends ConsumerState<_FtsIndexSection> {
   }
 
   String _summary(FtsMode mode) => switch (mode) {
-    FtsMode.off => '关闭 · 约 160 MB · 全部 LIKE，正文搜索约 1–2 秒',
-    FtsMode.book => '基础 · 约 255 MB · 书名/作者/评语快，楼层正文走 LIKE',
-    FtsMode.full => '完整 · 约 402 MB · 搜索最快',
+    FtsMode.off => '关闭 · 最省空间 · 逐项匹配全文，搜索可能较慢',
+    FtsMode.book => '基础 · 书名/作者/评语索引 · 楼层正文逐项匹配',
+    FtsMode.full => '完整 · 含楼层正文索引 · 搜索快，占用更多空间',
   };
 
   @override

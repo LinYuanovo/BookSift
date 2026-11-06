@@ -2,6 +2,7 @@ import '../classify/src/engine.dart' show explicitManualKind, kRecommendKind;
 import '../collector/normalization.dart';
 import '../data/repo/queries.dart';
 import 'content_draft.dart';
+import 'novel_word_count.dart';
 
 class ReviewRecognizer {
   const ReviewRecognizer();
@@ -188,20 +189,7 @@ class ReviewRecognizer {
             : RegExp(r'推荐(?:等级|程度)\s*[:：]\s*(?:强推|推荐)').hasMatch(metadataIntent)
             ? kRecommendKind
             : draft.category);
-    final RegExpMatch? words = RegExp(
-      r'(?:本书|小说|最新)?(?:字数|篇幅)(?:/章节)?\s*[:：]\s*(\d+(?:\.\d+)?)\s*(百万|万|千|[wW])?',
-    ).firstMatch(comment);
-    final int? wordCount = words == null
-        ? null
-        : (double.parse(words[1]!) *
-                  switch (words[2]) {
-                    '万' => 10000,
-                    'w' || 'W' => 10000,
-                    '百万' => 1000000,
-                    '千' => 1000,
-                    _ => 1,
-                  })
-              .round();
+    final int? wordCount = extractNovelWordCount(comment, bookName: anchor.name);
     int floorIndex = 0;
     for (int position = 0; position < floorStarts.length; position++) {
       if (floorStarts[position] <= anchor.start) floorIndex = position;

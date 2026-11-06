@@ -8,6 +8,8 @@ library;
 
 import 'dart:convert';
 
+import '../content/novel_word_count.dart';
+
 import 'package:drift/drift.dart';
 
 import '../core/constants.dart';
@@ -525,9 +527,7 @@ BookEntriesCompanion _entryValues({
       floorRef: Value<int?>(floorId),
       srcTid: Value<int?>(rec.tid),
       srcUrl: Value<String?>(_srcUrl(rec.tid)),
-      // word_count = 小说字数；自采拿不到该数据，写 NULL（评论长度≠字数，
-      // 写长度会污染书详情字数副行与字数榜）。同书内置条目经
-      // book_groups.word_count_max = MAX(word_count) 跨条目继承，NULL 不参与。
+      wordCount: Value<int?>(extractNovelWordCount(e.comment, bookName: e.name)),
       quality: Value<int>(e.quality),
       bookGroupId: Value<int?>(gid),
       origin: Value<String>(Origin.collected),

@@ -173,7 +173,7 @@ void main() {
       expect(db.ok, isTrue, reason: db.detail);
       expect(
         db.data['userVersion'],
-        5,
+        6,
         reason: '现行 schema 包含内容原始留档表',
       );
       expect((db.data['rows'] as Map).keys, contains('book_entries'));
@@ -211,7 +211,7 @@ void main() {
 
       expect(check.ok, isFalse);
       expect(check.data['userVersion'], 3);
-      expect(check.data['expectedUserVersion'], 5);
+      expect(check.data['expectedUserVersion'], 6);
       expect(check.detail, contains('未执行迁移'));
       final Database reopened = sqlite3.open(path, mode: OpenMode.readOnly);
       expect(reopened.select('PRAGMA user_version').first['user_version'], 3);
@@ -221,7 +221,7 @@ void main() {
     test('doctor 对同版本但缺应用表的库报告 schema 不完整', () async {
       final String path = '${tmp.path}${Platform.pathSeparator}empty-schema.sqlite';
       final Database empty = sqlite3.open(path);
-      empty.execute('PRAGMA user_version = 5');
+      empty.execute('PRAGMA user_version = 6');
       empty.close();
 
       final DoctorReport report = await HeadlessEnv.doctor(dbPath: path);
@@ -230,11 +230,11 @@ void main() {
       );
 
       expect(check.ok, isFalse);
-      expect(check.data['userVersion'], 5);
+      expect(check.data['userVersion'], 6);
       expect((check.data['missingTables'] as List), contains('book_entries'));
       expect(check.detail, contains('缺少应用表'));
       final Database reopened = sqlite3.open(path, mode: OpenMode.readOnly);
-      expect(reopened.select('PRAGMA user_version').first['user_version'], 5);
+      expect(reopened.select('PRAGMA user_version').first['user_version'], 6);
       reopened.close();
     });
 

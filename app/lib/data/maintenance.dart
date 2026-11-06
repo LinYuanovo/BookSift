@@ -63,6 +63,7 @@ import '../collector/normalization.dart';
 import '../collector/tieba/src/parse.dart' show extractBookNames;
 import '../core/constants.dart';
 import 'db/app_database.dart';
+import 'word_count_maintenance.dart';
 
 // ───────────────────────────── settings 闸门 ─────────────────────────────
 
@@ -1658,9 +1659,15 @@ Future<void> _maintenanceIsolate(_MaintenanceJob job) async {
         );
         return;
       }
-      didWork = stats.entriesRepaired > 0 ||
+      didWork = didWork || stats.entriesRepaired > 0 ||
           stats.bookmarksRepaired > 0 ||
           stats.favoritesRepaired > 0;
+    }
+    final int repairedWords = await repairNovelWordCounts(db, isCancelled: () => cancelled);
+    didWork = didWork || repairedWords > 0;
+    if (cancelled) {
+      job.events.send(const MaintenanceEvent(MaintenanceEventKind.done, cancelled: true));
+      return;
     }
     // 2) 存量自采/种子重复帖合并（legacy_post_dedup_v2 闸门）。
     if (await needsLegacyPostDedup(db)) {

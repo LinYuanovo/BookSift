@@ -24,6 +24,7 @@ import 'package:booksift/collector/normalization.dart';
 import 'package:booksift/core/constants.dart';
 import 'package:booksift/data/db/app_database.dart';
 import 'package:booksift/data/maintenance.dart';
+import 'package:booksift/data/word_count_maintenance.dart';
 
 int _hashSeq = 0;
 
@@ -926,6 +927,55 @@ void main() {
   });
 
   group('runMaintenance（后台 isolate 端到端）', () {
+    test('repairs stale post references before extracting novel counts', () async {
+      final Directory directory = await Directory.systemTemp.createTemp('maintenance_word_order');
+      addTearDown(() => directory.delete(recursive: true));
+      final String path = p.join(directory.path, 'app.sqlite');
+      final AppDatabase setupDatabase = AppDatabase(NativeDatabase(File(path)));
+      late final int entryId;
+      late final int correctPost;
+      try {
+        final int wrongPost = await _addPost(
+          setupDatabase,
+          title: '旧 ID 对应的其他帖子',
+          tid: 10,
+          firstFloor: '字数：900万',
+        );
+        correctPost = await _addPost(
+          setupDatabase,
+          title: '甲书原帖',
+          tid: 20,
+        );
+        final Floor wrongFloor = await _floorOf(setupDatabase, wrongPost);
+        entryId = await _addEntry(
+          setupDatabase,
+          nameNorm: '甲书',
+          comment: '《甲书》字数：120万',
+          postRef: wrongPost,
+          floorRef: wrongFloor.id,
+          srcTid: 20,
+        );
+      } finally {
+        await setupDatabase.close();
+      }
+      final List<MaintenanceEvent> events = await runMaintenance(
+        dbPath: path,
+        dictLines: const <String>[],
+      ).toList();
+      expect(events.last.kind, MaintenanceEventKind.done);
+      expect(events.where((event) => event.kind == MaintenanceEventKind.failed), isEmpty);
+      final AppDatabase verifiedDatabase = AppDatabase(NativeDatabase(File(path)));
+      try {
+        final BookEntry entry = await _entry(verifiedDatabase, entryId);
+        expect(entry.postRef, correctPost);
+        expect(entry.floorRef, isNull);
+        expect(entry.wordCount, 1200000);
+        expect(await needsNovelWordCountRepair(verifiedDatabase), isFalse);
+      } finally {
+        await verifiedDatabase.close();
+      }
+    });
+
     test('文件库：dedup+reclassify 全跑并落闸门，二刷 didWork=false', () async {
       final Directory dir = await Directory.systemTemp.createTemp('maintenance_it');
       addTearDown(() async {

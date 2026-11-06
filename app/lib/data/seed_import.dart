@@ -669,6 +669,7 @@ class DefaultSeedImporter implements SeedImporter {
     bool seedHasKindColumns,
   ) async {
     // 0) 清理上次异常中断可能残留的 temp 表。
+    await _db.customStatement("DELETE FROM settings WHERE key = 'novel_word_count_version'");
     for (final String table in <String>[
       '_ug',
       '_edited_groups',
